@@ -1,0 +1,1844 @@
+
+aux.c,440
+PetscErrorCode ReadParameters(2,23
+PetscErrorCode CaseInitialize(89,6244
+PetscErrorCode IBMInitialize(110,6754
+PetscErrorCode CaseSetup(127,7396
+PetscErrorCode HandleRestart(175,9083
+PetscErrorCode SearchInitialize(345,14515
+PetscErrorCode BC_ICSetup(390,15767
+PetscErrorCode SaveHistoryFields(441,17476
+PetscErrorCode CoupledSolve(481,19068
+PetscErrorCode CalculateMaxError(498,19747
+PetscErrorCode SaveIBM_FSIHistory(527,20382
+
+bcs.c,1457
+PetscReal FluxInSumB[FluxInSumB14,403
+PetscReal FluxInSumB[5],FluxOutSumB[FluxOutSumB14,403
+PetscReal FluxInSumB[5],FluxOutSumB[5],AreaOutB[AreaOutB14,403
+PetscReal FluxInSumB[5],FluxOutSumB[5],AreaOutB[5],OFC[OFC14,403
+PetscInt ts_p_cycle;15,525
+PetscReal *Flux_waveform;Flux_waveform16,546
+Mat Int_matrix;27,1001
+DM  int_packer;28,1017
+Vec U_int,29,1033
+Vec U_int,Umult_int,29,1033
+Vec U_int,Umult_int,Flux_Waveform;29,1033
+#define INLET 36,1518
+#define OUTLET 37,1534
+#define SOLIDWALL 38,1551
+#define SYMMETRIC 39,1571
+#define FARFIELD 40,1591
+#define FLUX_THRESHOLD 42,1611
+PetscErrorCode Flux_Waveform_Read(44,1641
+PetscReal Pulsatile_Plug_Inlet_Flux(75,2702
+Cmpnts InflowCenter(95,3499
+PetscErrorCode InflowFlux(171,5960
+PetscErrorCode OutflowFlux(564,20563
+PetscErrorCode Calc_Correction(773,27100
+PetscErrorCode Block_Blank_Correction_adv(863,29311
+PetscErrorCode Block_Blank_Correction(1231,41287
+PetscErrorCode Block_Interface_Correction(1921,64448
+PetscErrorCode Block_Interface_U(2437,80281
+PetscErrorCode Block_Interface_Q(2969,99261
+PetscErrorCode GhostNodeVelocity(3210,106648
+PetscErrorCode FormBCS(3977,128424
+PetscErrorCode ForceSolidBoundary(5718,185458
+PetscErrorCode fluxin(5871,188161
+PetscErrorCode OutflowVelocity(5948,190344
+PetscErrorCode SetInitialGuessToOne(6068,193650
+PetscErrorCode MomentumJet(6146,196012
+PetscInt lidxLocal1_matrix(6760,224595
+PetscErrorCode Resistance(6776,224968
+
+bcs_samar.c,1080
+PetscReal U_bc;10,271
+#define INLET 22,687
+#define OUTLET 23,703
+#define SOLIDWALL 24,720
+#define SYMMETRIC 25,740
+#define FARFIELD 26,760
+PetscErrorCode InletRead(28,780
+PetscReal InletInterpolation(67,1723
+PetscErrorCode InflowFlux(98,2390
+			#define M_PI 187,5199
+PetscErrorCode OutflowFlux(408,11421
+PetscErrorCode Blank_Interface(482,13016
+PetscErrorCode Calc_Correction(573,15481
+PetscErrorCode Block_Blank_Correction_adv(659,17751
+PetscErrorCode Block_Blank_Correction(1025,29723
+PetscErrorCode Block_Interface_Correction(1713,52916
+PetscErrorCode Block_Interface_U(2290,75484
+PetscErrorCode Block_Interface_U_old(2792,93682
+PetscErrorCode GhostNodeVelocity(3656,123516
+PetscErrorCode FormBCS(4446,145738
+PetscErrorCode fluxin(5970,191840
+PetscErrorCode OutflowVelocity(6048,194025
+PetscErrorCode SetInitialGuessToOne(6163,197319
+  struct comp1{comp16176,197736
+    PetscScalar x,6177,197752
+    PetscScalar x, y,6177,197752
+    PetscScalar x, y, z;6177,197752
+PetscErrorCode MomentumJet(6418,204743
+PetscErrorCode fluxin_novostia(6492,206862
+
+bmv.c,186
+PetscErrorCode Elmt_Move(6,91
+PetscErrorCode Elmt_Init_Cyl(90,2769
+PetscErrorCode Init_Elmt(167,5246
+PetscErrorCode Combine_Elmt(202,6234
+PetscErrorCode InflowWaveFormRead(278,8451
+
+compgeom.c,415
+#define EPSILON 4,43
+#define CROSS(5,70
+#define DOT(10,231
+#define SUB(12,294
+PetscInt intsect_triangle(17,405
+PetscInt ISSameSide2D(55,1131
+PetscInt ISInsideTriangle2D(108,2887
+PetscInt ISPointInTriangle(131,3485
+PetscErrorCode Dis_P_Line(160,4333
+PetscErrorCode triangle_intp2(188,5349
+PetscErrorCode triangle_intp(210,6154
+PetscErrorCode triangle_intpp(229,6901
+PetscInt ISLineTriangleIntp(251,7581
+
+copepod.c,315
+PetscErrorCode ibm_read_cop(8,170
+PetscErrorCode cop_init(419,14856
+PetscErrorCode cop_init_time(826,26683
+PetscErrorCode rotate_cop_app_old(931,31218
+PetscErrorCode deform_antene(1022,33438
+PetscErrorCode rotate_antene(1054,34015
+PetscErrorCode rotate_cop_app(1124,35647
+PetscErrorCode cop_swim(1183,36984
+
+cstart.c,74
+PetscErrorCode read_midpoint(22,744
+PetscErrorCode form_cstart(122,4998
+
+data.c,2068
+static char help[help1,0
+PetscReal  FluxInSum,13,216
+PetscReal  FluxInSum, FluxOutSum;13,216
+PetscInt   ti,14,250
+PetscInt   ti, block_number,14,250
+PetscInt   ti, block_number, Flux_in;14,250
+PetscReal  angle;15,288
+PetscInt   invicid 16,306
+PetscInt   large 17,330
+PetscInt   thin=18,352
+PetscInt   wing=19,371
+PetscReal  CMx_c=20,412
+PetscInt   NumberOfBodies=21,453
+PetscReal  L_dim=22,482
+PetscInt   dgf_z=23,503
+PetscInt   dgf_az=24,539
+PetscReal  St_exp=25,579
+PetscInt   tiout 26,619
+PetscInt   STRONG_COUPLING=27,642
+PetscInt   fish=28,688
+PetscInt   radi=29,744
+PetscInt   visflg=30,827
+char       orient[orient31,848
+  PassiveScalar u,37,961
+  PassiveScalar u, v,37,961
+  PassiveScalar u, v, w,37,961
+  PassiveScalar u, v, w, p;37,961
+} PassiveField;38,989
+  PetscScalar u,41,1023
+  PetscScalar u, v,41,1023
+  PetscScalar u, v, w;41,1023
+} Field;42,1046
+Cmpnts MINUS(47,1163
+Cmpnts Cross(57,1304
+PetscErrorCode ReadCoordinates(69,1569
+PetscErrorCode SetCoordinates3d(293,8106
+PetscErrorCode Contra2Cart(344,9402
+PetscErrorCode VTKOut(530,14942
+PetscErrorCode VTKOutShr(825,25009
+PetscErrorCode VTKOutQ(1295,40839
+PetscErrorCode VTKOutQ_Binary(1812,59722
+PetscErrorCode FormMetrics(3217,102618
+PetscErrorCode Ucont_P_Binary_Input_Ave(3578,113711
+PetscErrorCode Ucont_P_Binary_Input(3947,124754
+PetscErrorCode Ucont_P_Binary_Input1(3988,125570
+PetscErrorCode rotate_force_data(4012,126146
+PetscErrorCode jacobi(4592,145722
+PetscErrorCode eigsrt(4706,147911
+PetscErrorCode QCriteria(4739,148409
+PetscErrorCode MaxVelocity(4959,154614
+PetscErrorCode Pressure_Difference(5043,157042
+PetscErrorCode pressurediff(5096,158471
+PetscErrorCode histogram(5144,159526
+#undef __FUNCT__5222,161360
+#define __FUNCT__ 5223,161377
+int main(5225,161403
+PetscErrorCode SolveCubic(5636,174113
+PetscErrorCode MaxStress(5730,177182
+PetscErrorCode Combine_Elmt(5928,182976
+PetscErrorCode Elmt_Move(6027,185981
+PetscErrorCode Elmt_Move1(6106,188350
+PetscErrorCode fluxin1(6186,190752
+PetscErrorCode shear(6232,191820
+
+data_ibm.c,982
+#define Dist(7,159
+#define Cross(9,260
+#define VecAMinusB(14,427
+PetscInt flagprint 20,539
+PetscReal detmnt(22,564
+PetscErrorCode randomdirection_Z(31,805
+PetscErrorCode randomdirection_Y(63,1604
+PetscErrorCode randomdirection_X(95,2403
+PetscErrorCode ibm_search_advanced(127,3202
+PetscErrorCode ibm_search_advanced_rev(514,13576
+PetscInt point_cell_advanced(958,26516
+PetscInt point_cell_thin(1221,34555
+PetscErrorCode BoundingSphere(1268,35633
+PetscErrorCode nearestcell1(1358,37702
+PetscErrorCode nearestcell(1498,41414
+PetscErrorCode ICP(1636,45087
+PetscErrorCode InterceptionPoint(1730,48062
+PetscErrorCode ICP2(2203,63883
+PetscErrorCode InterceptionPoint2(2297,66879
+PetscErrorCode ibm_interpolation_advanced(2768,83916
+PetscErrorCode ibm_prs_span(3017,90195
+PetscErrorCode ibm_power(3149,94067
+PetscErrorCode ibm_prs_projection(3210,95526
+PetscErrorCode ibm_interpolation_advanced2(3359,99686
+PetscErrorCode ibm_interpolation_advanced_mg(3654,108745
+
+fish.c,459
+PetscReal ampl,6,148
+PetscReal ampl,V_slip,6,148
+PetscReal ampl,V_slip,omega,6,148
+PetscReal ampl,V_slip,omega, kwave,6,148
+PetscReal ampl,V_slip,omega, kwave,alpha;6,148
+PetscReal T_period_fish;7,190
+PetscReal c_0,8,215
+PetscReal c_0,c_1,8,215
+PetscReal c_0,c_1,c_2;8,215
+PetscInt  N_period_fish,9,238
+PetscInt  N_period_fish,pizza;9,238
+PetscErrorCode ibm_read_fish(11,270
+PetscErrorCode fish_init(495,18230
+PetscErrorCode fish_swim(531,19455
+
+fsi.c,2191
+PetscErrorCode FsiInitialize(16,468
+PetscErrorCode SetPressure(114,2524
+PetscErrorCode Closest_NearBndryPt_ToSurfElmt(148,3467
+PetscErrorCode distance(246,6499
+PetscBool ISInsideCell(277,7247
+PetscErrorCode GridCellaroundSurElmt(301,7966
+PetscErrorCode GridCellaround2ndElmt(410,11288
+PetscErrorCode linear_intp(532,15103
+PetscErrorCode triangle_intp_fsi(566,16006
+PetscErrorCode triangle_intp2_fsi(584,16831
+PetscErrorCode fsi_InterceptionPoint(604,17659
+PetscErrorCode Find_fsi_interp_Coeff(903,29612
+PetscErrorCode linear_intpp(1148,40195
+PetscErrorCode triangle_intpp_fsi(1182,41108
+PetscErrorCode triangle_intpp2_fsi(1200,41935
+PetscErrorCode fsi_InterceptionPoint2(1218,42761
+PetscErrorCode Find_fsi_interp_Coeff2(1508,54525
+PetscErrorCode triangle_2nd_intp_fsi(1694,61202
+PetscErrorCode fsi_2nd_InterceptionPoint(1712,62030
+PetscErrorCode Find_fsi_2nd_interp_Coeff(1831,66256
+PetscErrorCode triangle_3rd_intp_fsi(2010,73884
+PetscErrorCode fsi_3rd_InterceptionPoint(2028,74724
+PetscErrorCode Find_fsi_3rd_interp_Coeff(2147,78956
+PetscErrorCode triangle_2nd_intp_fsi2(2301,84937
+PetscErrorCode fsi_2nd_InterceptionPoint2(2317,85586
+PetscErrorCode Find_fsi_2nd_interp_Coeff2(2434,89793
+PetscErrorCode fsi_interpolation_coeff(2584,95677
+PetscErrorCode Calc_fsi_surf_stress(2609,96500
+PetscErrorCode Calc_fsi_surf_stress2(2723,100732
+PetscErrorCode Calc_fsi_surf_stress_advanced(3105,115272
+PetscErrorCode ibm_Surf_stress(3580,133498
+PetscErrorCode Calc_forces(3732,137681
+PetscErrorCode Calc_Moments(3854,141991
+PetscErrorCode Calc_forces_CVM2D(3979,146609
+PetscErrorCode Calc_forces_CVM2D_2(4273,154880
+PetscErrorCode CV_Boundary(4825,172636
+PetscErrorCode Calc_forces_SI_old(4863,173418
+PetscErrorCode Calc_forces_SI2(5339,190875
+PetscErrorCode Calc_forces_SI(7907,274760
+PetscErrorCode Calc_forces_SI_old2(9120,309967
+PetscInt IB_node_total_each_cpu(10449,349847
+PetscErrorCode Initalize_Projecting(10466,350293
+PetscErrorCode Projecting(10478,350742
+PetscErrorCode Finalizing_Projecting(10806,362663
+PetscErrorCode Output_Projecting(10955,368576
+PetscErrorCode Projecting_VTKOut(11055,371583
+PetscErrorCode Projecting_Power(11126,374535
+
+fsi_move.c,1597
+#define CROSS(3,24
+#define DOT(8,185
+#define SUB(10,248
+PetscErrorCode FSI_DATA_Input(27,791
+PetscErrorCode FSI_DATA_Input1(63,2638
+PetscErrorCode FSI_DATA_Output(100,4610
+PetscErrorCode FSI_LinMom(147,7228
+PetscErrorCode FSI_AngMom(199,8795
+PetscErrorCode Calc_FSI_pos(252,10376
+PetscErrorCode Calc_FSI_pos_SC(351,14102
+PetscErrorCode Calc_FSI_pos_intg(444,17144
+PetscErrorCode Calc_FSI_vel_particle(584,21463
+PetscErrorCode Forced_Motion(705,25228
+PetscErrorCode Calc_FSI_Ang(729,25998
+PetscErrorCode Calc_FSI_Ang_intg(867,31176
+PetscErrorCode Calc_FSI_Ang_staggered(1012,36810
+PetscErrorCode Elmt_Move_FSI_TRANS(1074,38503
+PetscErrorCode Elmt_Move_FSI_ROT(1131,40478
+PetscErrorCode CollisionDetectionOfCylinders(1318,47333
+PetscReal Particle_Distance(1494,52261
+  struct POINT{POINT1502,52581
+    PetscReal x;1503,52597
+    PetscReal y;1504,52614
+    PetscReal z;1505,52631
+    PetscReal value;1508,52684
+    PetscInt  index;1509,52705
+PetscInt Bounding_Box(1670,57557
+PetscErrorCode Particle_Rot_Matrix(1737,60379
+PetscErrorCode CollisionDetectionOfParticles(1890,65535
+PetscErrorCode SwingCylinder(2186,76693
+PetscErrorCode LV_beat(2301,80663
+PetscErrorCode LV_Volume_Flux(2654,90774
+PetscErrorCode Bed_Change(2735,92887
+Cmpnts rotate_y(2759,93423
+Cmpnts rotateT_y(2771,93686
+Cmpnts rotate_xyz(2783,93964
+Cmpnts rotateT_xyz(2806,94588
+PetscErrorCode rotate_force(2832,95238
+PetscErrorCode rotate_ibm(2877,96640
+PetscErrorCode wing_motion(2909,97316
+PetscErrorCode LV_beat2(3243,109477
+PetscErrorCode spli 3541,118364
+PetscErrorCode sev 3612,120139
+
+ibm.c,926
+#define Dist(35,1571
+#define Cross(37,1672
+#define VecAMinusB(42,1839
+PetscInt flagprint 48,1951
+PetscReal detmnt(50,1976
+PetscErrorCode randomdirection_Z(59,2217
+PetscErrorCode randomdirection_Y(91,3016
+PetscErrorCode randomdirection_X(123,3815
+PetscErrorCode ibm_search_advanced(155,4614
+PetscErrorCode ibm_search_advanced_rev(639,20164
+PetscInt point_cell_advanced(1083,33102
+PetscInt point_cell_thin(1344,41139
+PetscErrorCode BoundingSphere(1425,43227
+PetscErrorCode nearestcell1(1515,45297
+PetscErrorCode nearestcell(1665,49584
+PetscErrorCode ICP(1809,53632
+PetscErrorCode InterceptionPoint(1909,56911
+PetscErrorCode ICP2(2402,74035
+PetscErrorCode InterceptionPoint2(2502,77322
+PetscErrorCode ibm_interpolation_advanced(2993,94895
+PetscErrorCode ibm_interpolation_advanced_old(3239,104089
+PetscErrorCode ibm_interpolation_advanced2(3692,119457
+PetscErrorCode SetSolidNodeVelocityToZero(4048,131623
+
+ibm_io.c,957
+PetscReal l_x,5,147
+PetscReal l_x,l_y,5,147
+PetscReal l_x,l_y,l_z;5,147
+PetscErrorCode ibm_surface_out(7,171
+PetscErrorCode ibm_surface_VTKOut(66,2167
+PetscErrorCode ibm_volume_VTKOut(126,4936
+PetscErrorCode ibm_read(168,6472
+PetscErrorCode ibm_read_thin(756,28193
+PetscErrorCode ibm_read_tecplot(967,35731
+PetscErrorCode ibm_placement(1415,50026
+PetscErrorCode ibm_read_ucd(1535,54530
+PetscErrorCode ibm_read_ucd_old(2007,71091
+PetscErrorCode ibm_duplicate(2211,77896
+PetscErrorCode  Random_Particle(2379,82689
+PetscErrorCode  Duplicate_Particle(2512,86057
+PetscErrorCode ibm_read_Ansys(2579,87987
+PetscErrorCode ibm_read_Ansys_vol(3084,105263
+PetscErrorCode ibm_read_Icem(3450,117775
+PetscErrorCode ibm_scale(3902,136910
+PetscErrorCode calc_ibm_normal(3982,138524
+PetscErrorCode calc_ibm_velocity(4043,140658
+#define CROSS(4071,141412
+#define DOT(4076,141573
+#define SUB(4078,141636
+PetscErrorCode calc_ibm_volumeFlux(4083,141747
+
+implicitsolver.c,2923
+  Vec diag;44,1561
+} SampleShellPC;45,1573
+SampleShellPC  *shell;shell46,1590
+PetscInt BSize[BSize51,1878
+PetscInt BSize[5],BlSize[BlSize51,1878
+PetscInt counter=54,1974
+PetscReal cput=55,1994
+PetscErrorCode MySNESMonitor(57,2015
+PetscErrorCode RungeKutta(64,2193
+PetscErrorCode ImplicitSolverLHSnew03(167,5272
+PetscErrorCode ImplicitSolverLHSnew04(1194,31059
+PetscErrorCode Update_Metrics_PBC(2220,59524
+PetscErrorCode Update_U_Cont_PBC(2545,69884
+PetscErrorCode CopyUContPBC(2661,72408
+PetscErrorCode ImplicitSolverLHSnew05(2748,74329
+PetscErrorCode GetPsuedoTime(3781,105299
+PetscErrorCode ImplicitMomentumSolver(3872,108402
+PetscErrorCode ImplicitMomentumSolver1(4255,118274
+PetscErrorCode ImplicitSolverLHSnew06(4623,128781
+PetscErrorCode ImplicitSolverLHS_visc(5708,158172
+PetscErrorCode CalcRHS(6493,177883
+PetscErrorCode LineSearch_QNewton(6776,184613
+PetscErrorCode ImpRK(7125,194170
+PetscErrorCode ImplicitSmoother(7307,199494
+PetscReal LinearInterpolation(7614,208113
+PetscReal BilinearInterpolation(7627,208434
+PetscReal TrilinearInterpolation(7669,209499
+PetscErrorCode MgRestrictionP(7727,211565
+PetscErrorCode MgGridInterpolation(7840,214666
+PetscErrorCode MgInterpolationdU_old(7878,215249
+PetscErrorCode MgInterpolationdU(7983,217662
+PetscErrorCode MgFieldRestriction(8117,221031
+PetscErrorCode MGCYC(8310,227043
+PetscReal deltf(8397,230112
+PetscErrorCode ConvectiveJacobian(8405,230213
+PetscErrorCode ConvectiveJacobian_u(8421,230550
+PetscErrorCode SetRHSBc(8442,230949
+PetscErrorCode FormFunction_SNES(8585,233839
+PetscErrorCode PFormFunction_SNES(8669,235881
+int snes_created=8779,238230
+PetscErrorCode Implicit_MatrixFree(8781,238251
+PetscErrorCode  Implicit_SNES(8975,245179
+PetscErrorCode ModifyJacobian(9123,250155
+ PetscErrorCode FormJacobian_FD(9333,254550
+ PetscErrorCode FormJacobian_MF(9374,255541
+PetscErrorCode FormJacobian(9554,263630
+PetscErrorCode FormJacobian_Diagonal(10123,283052
+PetscErrorCode FormJacobian_Diagonal_MF(10281,288904
+PetscErrorCode FormJacobian_Full_Diagonal(10429,294404
+PetscErrorCode SampleShellPCCreate(10604,302165
+PetscErrorCode SampleShellPCSetUp(10614,302343
+PetscErrorCode SampleShellPCApply(10628,302651
+PetscErrorCode SampleShellPCDestroy(10638,302837
+PetscErrorCode  Implicit_SNES_Packer(10651,303129
+PetscErrorCode SNESSetInitialGuess_Packer(10774,306741
+PetscErrorCode FormFunction_SNES_Packer(10795,307230
+PetscErrorCode  SNESFormFinal_Packer(10879,309796
+PetscErrorCode FormJacobian_Diagonal_Packer_All(10906,310511
+PetscErrorCode FormJacobian_Diagonal_Packer(10954,311638
+PetscErrorCode FormJacobian_Packer(11122,317754
+PetscErrorCode CheckRow_packer(11729,339019
+PetscErrorCode CheckRowDiagonal_packer(11885,344728
+PetscErrorCode CheckCol_packer(11907,345334
+PetscErrorCode ComputelNface(11974,347064
+PetscErrorCode ModifyJacobian_packer(12030,348319
+PetscInt lidxLocal(12240,352902
+
+init.c,149
+PetscErrorCode FormInitialize(20,635
+PetscErrorCode MGDACreate(84,2354
+PetscErrorCode MG_Initial(342,12095
+PetscErrorCode MG_Finalize(1217,46695
+
+interpolation.c,1705
+static char help[help1,0
+PetscInt np 13,261
+PetscInt ti 14,297
+PetscReal L_dim 15,314
+PetscInt block_number 16,346
+PetscInt visflg 17,373
+PetscErrorCode ParticleVectorCreate(25,699
+PetscErrorCode ParticleVectorInsert(104,4487
+PetscErrorCode ParticleVectorInitialize(156,6456
+PetscErrorCode WriteBoundingBox(359,14922
+PetscBool  CPUPointIntersectCheck(478,20382
+PetscReal distance_search(504,21512
+PetscErrorCode CellPointInterceptCalculate(535,22261
+PetscErrorCode CellValuesGet(554,23035
+PetscBool CellIntersectCheck(568,23445
+PetscErrorCode  InterpolationWeightsCalculate(581,23661
+PetscErrorCode CellIndexUpdate(589,23829
+PetscErrorCode WalkingSearch(613,24197
+PetscErrorCode ParticlesLocate(677,26275
+PetscErrorCode InterpolationCoefficientsCalculate(744,28886
+PetscErrorCode InterpolationMatrixInitialize(765,29343
+PetscErrorCode InterpolationMatrixPopulate(787,29770
+PetscErrorCode InterpolationVectorCreate(823,30768
+PetscErrorCode Interpolate(872,31921
+PetscErrorCode ParticleVelocityUpdate(892,32296
+PetscErrorCode InterpolationMatrixDestroy(916,32908
+PetscErrorCode InterpolationVectorDestroy(925,33014
+PetscErrorCode Ucat_Binary_Input(937,33181
+PetscErrorCode ReadCoordinates(964,33825
+PetscErrorCode ParticleSwarmCreate(1244,42906
+PetscErrorCode InitializeParticles(1343,47070
+PetscErrorCode ParticleSwarmViewPositions(1397,49267
+PetscErrorCode ParticleSwarmViewCoors(1426,50329
+#undef __FUNCT__1459,51562
+#define __FUNCT__ 1460,51579
+int main(1462,51605
+ ierr 1547,53960
+ ierr 1558,54250
+ ierr 1568,54604
+ ierr 1578,54978
+ for(bi = 0; bi < block_number;1612,55770
+   DMDestroy(&(user[bi].fda)fda1614,55814
+   DMDestroy(&(user[bi].da)da1616,55846
+
+io.c,89
+PetscErrorCode Ucont_P_Binary_Input(5,71
+PetscErrorCode Ucont_P_Binary_Output(136,4127
+
+itfcsearch.c,2824
+static char help[help1,0
+  PetscScalar x,10,172
+  PetscScalar x, y,10,172
+  PetscScalar x, y, z;10,172
+} Cmpnts;11,195
+typedef struct node 13,206
+  PetscInt Node;14,228
+  struct node *next;next15,245
+} node;16,266
+typedef struct list{list18,275
+  node *head;head19,296
+} List;20,310
+  DM	da,23,336
+  DM	da, fda;23,336
+  PetscInt IM,24,350
+  PetscInt IM, JM,24,350
+  PetscInt IM, JM, KM;24,350
+  Vec	Coor,25,373
+  Vec	Coor, Cent,25,373
+  Vec	Coor, Cent, BCS,25,373
+  Vec	Coor, Cent, BCS, Nvert;25,373
+  PetscInt bctype[bctype28,519
+  PetscInt itfcptsnumber;29,541
+  PetscInt *itfcI,itfcI30,567
+  PetscInt *itfcI, *itfcJ,itfcJ30,567
+  PetscInt *itfcI, *itfcJ, *itfcK;itfcK30,567
+  PetscInt *itfchostI,itfchostI31,602
+  PetscInt *itfchostI, *itfchostJ,itfchostJ31,602
+  PetscInt *itfchostI, *itfchostJ, *itfchostK,itfchostK31,602
+  PetscInt *itfchostI, *itfchostJ, *itfchostK, *itfchostB;itfchostB31,602
+  PetscReal *itfchostx,itfchostx32,661
+  PetscReal *itfchostx, *itfchosty,itfchosty32,661
+  PetscReal *itfchostx, *itfchosty, *itfchostz;itfchostz32,661
+  DMDALocalInfo info;33,709
+  PetscReal Max_X,34,731
+  PetscReal Max_X,Max_Y,34,731
+  PetscReal Max_X,Max_Y,Max_Z,34,731
+  PetscReal Max_X,Max_Y,Max_Z,Min_X,34,731
+  PetscReal Max_X,Max_Y,Max_Z,Min_X,Min_Y,34,731
+  PetscReal Max_X,Max_Y,Max_Z,Min_X,Min_Y,Min_Z;34,731
+  PetscReal ddx,35,780
+  PetscReal ddx, ddy,35,780
+  PetscReal ddx, ddy, ddz;35,780
+} UserCtx;37,810
+  PetscInt	nbnumber;40,839
+  PetscInt	n_v,41,860
+  PetscInt	n_v, n_elmt;41,860
+  PetscInt	*nv1,nv142,929
+  PetscInt	*nv1, *nv2,nv242,929
+  PetscInt	*nv1, *nv2, *nv3;nv342,929
+  PetscReal	*nf_x,nf_x43,989
+  PetscReal	*nf_x, *nf_y,nf_y43,989
+  PetscReal	*nf_x, *nf_y, *nf_z;nf_z43,989
+  PetscReal	*x_bp,x_bp44,1042
+  PetscReal	*x_bp, *y_bp,y_bp44,1042
+  PetscReal	*x_bp, *y_bp, *z_bp;z_bp44,1042
+  Cmpnts *qvec;qvec47,1134
+  PetscReal *radvec;radvec48,1150
+} IBMNodes;49,1172
+  PetscInt *is,is53,1203
+  PetscInt *is, *ie,ie53,1203
+  PetscInt *is, *ie, *js,js53,1203
+  PetscInt *is, *ie, *js, *je,je53,1203
+  PetscInt *is, *ie, *js, *je, *ks,ks53,1203
+  PetscInt *is, *ie, *js, *je, *ks, *ke;ke53,1203
+} SearchRange;54,1244
+struct list_node 56,1260
+  PetscInt i,57,1279
+  PetscInt i, j,57,1279
+  PetscInt i, j, k,57,1279
+  PetscInt i, j, k, bi;57,1279
+  struct list_node *next;next58,1303
+typedef struct list_node llnode;61,1333
+llnode *list_add(list_add63,1367
+PetscErrorCode distance(74,1558
+PetscBool ISInsideCell(105,2305
+PetscErrorCode randomdirection(129,3024
+PetscInt point_cell_advanced(162,3823
+PetscErrorCode blank_search_advanced(280,7274
+PetscErrorCode CenterNodeCoor(520,13785
+PetscErrorCode ibm_read_ucd(849,23744
+PetscErrorCode CreateTriGrid(992,28529
+int main(1268,38450
+
+k-omega.c,927
+double solid=17,640
+double innerblank=18,658
+const double C1=20,681
+double a1=22,731
+double beta1 23,796
+double alpha1 24,834
+const double sigma_k1 25,872
+const double sigma_o1 26,918
+#define wall_omega(28,967
+double Upwind(37,1310
+void Get_alpha_beta_star(43,1397
+void Compute_du_i 56,1930
+void Compute_du_j 134,6303
+void Compute_du_k 207,10211
+void Compute_du_center 279,14125
+void Compute_dkdo_center 402,19382
+void Compute_dscalar_center 499,23427
+void Compute_du_dxyz 574,25670
+void Compute_dkdo_dxyz 589,26628
+void Compute_dscalar_dxyz 601,27324
+void RHS_K_Omega(609,27758
+void K_Omega_IC(1291,58099
+void K_Omega_BC(1350,59647
+PetscErrorCode FormFunction_K_omega(1645,69215
+int snes_ko_created=1725,71457
+Vec r_ko;1726,71480
+Mat J_ko;1727,71490
+SNES snes_two_eq;1728,71500
+void Solve_K_Omega(1730,71519
+void K_Omega_Set_Constant(1854,75417
+PetscErrorCode Block_Interface_K_Omega(2030,82038
+
+les.c,190
+const double eps=23,871
+void Compute_Smagorinsky_Constant_1(25,896
+void Compute_eddy_viscosity_LES(1386,41993
+PetscErrorCode Do_averaging(1579,47485
+PetscErrorCode KE_Output(1782,55286
+
+main.c,2842
+static char help[help4,47
+PetscInt ti,5,92
+PetscInt ti,tistart=5,92
+PetscReal	Flux_in 6,115
+PetscInt tiout 7,160
+PetscInt block_number;8,181
+PetscReal FluxInSum,9,204
+PetscReal FluxInSum, FluxOutSum,9,204
+PetscReal FluxInSum, FluxOutSum,FluxOutSumcont;9,204
+PetscInt immersed 16,478
+PetscInt invicid 17,511
+PetscInt movefsi 18,547
+PetscBool rstart_flg;19,618
+PetscInt implicit 20,640
+PetscInt imp_MAX_IT 21,679
+PetscInt radi=22,706
+PetscInt inletface=23,724
+PetscInt inletprofile=24,759
+PetscReal CMx_c=25,803
+PetscInt  mg_MAX_IT=26,843
+PetscReal imp_atol=27,902
+PetscInt TwoD 28,958
+PetscInt STRONG_COUPLING=29,977
+PetscInt rstart_fsi=30,1005
+PetscInt cop=32,1053
+PetscInt fish=33,1118
+PetscInt wing=34,1213
+PetscReal St_exp=35,1239
+PetscInt MHV=36,1277
+PetscInt LVAD=37,1298
+PetscReal max_angle 38,1325
+PetscInt thin=39,1385
+PetscInt dgf_z=40,1402
+PetscInt dgf_az=41,1436
+PetscInt NumberOfBodies=42,1474
+PetscInt moveframe=43,1501
+PetscReal L_dim;44,1546
+PetscInt les=45,1563
+PetscInt numParticles 46,1587
+PetscInt wallfunction=47,1614
+PetscInt averaging=48,1639
+int mixed=49,1661
+int clark=50,1674
+int dynamic_freq=51,1687
+int poisson=52,1707
+int periodic=53,1722
+PetscReal max_cs=54,1738
+int grid1d=55,1760
+PetscInt fdf=56,1774
+int i_periodic=57,1790
+int j_periodic=58,1808
+int k_periodic=59,1826
+PetscInt blkpbc=60,1844
+int pseudo_periodic=61,1864
+int testfilter_ik=62,1887
+int testfilter_1d=63,1908
+int i_homo_filter=64,1929
+int j_homo_filter=65,1950
+int k_homo_filter=66,1971
+double poisson_tol=67,1992
+PetscReal  E=69,2085
+PetscInt   dof=70,2144
+PetscInt   nbody=71,2244
+double time_flow[time_flow73,2385
+double time_flow[3000],flux_flow[flux_flow73,2385
+double PI 75,2448
+PetscInt platelet=77,2519
+PetscInt STEPS=78,2540
+PetscInt LVV=79,2582
+char orient[orient82,2647
+char gridrotorient[gridrotorient83,2671
+PetscErrorCode Ucont_P_Binary_Input(88,2734
+PetscErrorCode Ucont_P_Binary_Output(219,6790
+PetscErrorCode Divergence(321,9930
+PetscErrorCode GridDivergence(469,13962
+#undef __FUNCT__596,16740
+#define __FUNCT__ 597,16757
+int main(599,16783
+  else  L_dim=717,23820
+  MG_Initial(&usermg, ibm)726,24336
+  level 752,25889
+  user 753,25918
+  PetscInt bis=902,30937
+  ti 933,32011
+ for (bi=0; bi<block_number;block_number961,33216
+  PetscInt tisteps 978,34310
+  for (ti = tistart; ti<tistart + tisteps;983,34743
+  DoSCLoop=986,34964
+  DoSCLoop= PETSC_TRUE ; itr_sc 986,34964
+    level 996,35424
+    user 997,35455
+    for (bi=0; bi<block_number;block_number998,35492
+    Vec Error;1021,36755
+    PetscReal error=1022,36770
+    for (bi=0; bi<block_number;block_number1023,36795
+      VecDestroy(&Error)Error1030,37179
+  PetscTime(&time_end)time_end1081,38934
+  compute_time=1082,38958
+  MG_Finalize(&usermg)usermg1084,39070
+
+metrics.c,370
+PetscErrorCode FormMetrics(5,49
+Cmpnts DIVC(1256,39585
+Cmpnts PLUS(1266,39709
+Cmpnts MINUS(1276,39848
+Cmpnts AVERAGE(1286,39988
+Cmpnts AVERAGE4(1296,40171
+Cmpnts Cross(1306,40381
+PetscErrorCode CalculateTrinagleArea(1317,40597
+PetscErrorCode FormAreaMoment(1354,41488
+PetscErrorCode MomentAreaDivergence(1489,45009
+PetscErrorCode MetricsDivergence(1569,47165
+
+platlet.c,156
+PetscErrorCode platelet_activation(6,84
+PetscErrorCode shear(276,7859
+PetscErrorCode interpolate(454,13518
+PetscErrorCode ibm_interpolation_Q(532,16067
+
+poisson.c,1701
+PetscErrorCode MyKSPMonitor(19,640
+PetscInt Gidx(85,2361
+PetscErrorCode GridRestriction(101,2645
+PetscErrorCode MyRestriction(129,3013
+#define GridInterpolation(228,5381
+PetscErrorCode MyInterpolation(265,6306
+PetscErrorCode PoissonNullSpaceFunction(372,8561
+PetscErrorCode mymatmultadd(565,12717
+#define CP 577,12891
+#define EP 578,12905
+#define WP 579,12919
+#define NP 580,12933
+#define SP 581,12947
+#define TP 582,12961
+#define BP 583,12975
+#define NE 584,12989
+#define SE 585,13003
+#define NW 586,13017
+#define SW 587,13031
+#define TN 588,13046
+#define BN 589,13061
+#define TS 590,13076
+#define BS 591,13091
+#define TE 592,13106
+#define BE 593,13121
+#define TW 594,13136
+#define BW 595,13151
+PetscErrorCode PoissonLHSNew(600,13170
+PetscErrorCode PoissonRHS(1509,48441
+  struct Components{Components1519,48806
+    PetscReal x;1520,48827
+    PetscReal y;1521,48844
+    PetscReal z;1522,48861
+PetscErrorCode FullyBlocked(1578,50157
+PetscErrorCode MyNvertRestriction(1661,52087
+PetscErrorCode PoissonSolver_MG(1769,55076
+PetscErrorCode PoissonSolver_MG_old(2018,63082
+PetscErrorCode Projection(2280,70537
+PetscErrorCode UpdatePressure(2907,92131
+PetscErrorCode VolumeFlux(3210,100596
+  struct Components 3245,101487
+    PetscReal x;3246,101509
+    PetscReal y;3247,101526
+    PetscReal z;3248,101543
+PetscErrorCode VolumeFlux_rev(3669,114646
+PetscErrorCode MaxPosition(3902,122000
+#define Epsilon_Eq 3923,122483
+#define Float_Eq(3925,122567
+PetscErrorCode MyNFaceFine(3927,122657
+PetscErrorCode MyNFaceRestrict(3990,124140
+PetscErrorCode MyNFaceInit(4100,126835
+PetscErrorCode MyNFaceFinalize(4124,127267
+PetscErrorCode PoissonLHSNew2(4138,127499
+
+poisson_hypre.c,1567
+#define lidx2(14,293
+HYPRE_Solver *pcg_solver_p,pcg_solver_p26,745
+HYPRE_Solver *pcg_solver_p, *precon_p;precon_p26,745
+HYPRE_IJMatrix *Ap;Ap27,784
+HYPRE_ParCSRMatrix *par_Ap;par_Ap28,804
+HYPRE_IJVector *Vec_p,Vec_p29,832
+HYPRE_IJVector *Vec_p, *Vec_p_rhs;Vec_p_rhs29,832
+HYPRE_ParVector *par_Vec_p,par_Vec_p30,867
+HYPRE_ParVector *par_Vec_p, *par_Vec_p_rhs;par_Vec_p_rhs30,867
+PetscBool      hypre_symmetric;31,911
+PetscErrorCode Initialize_Hypre_Var(34,945
+double time_coeff(48,1439
+void Convert_Phi2_Phi(56,1564
+PetscInt setup_lidx2(148,4051
+#define CP 297,8071
+#define EP 298,8084
+#define WP 299,8097
+#define NP 300,8110
+#define SP 301,8123
+#define TP 302,8136
+#define BP 303,8149
+#define NE 304,8162
+#define SE 305,8175
+#define NW 306,8188
+#define SW 307,8201
+#define TN 308,8215
+#define BN 309,8229
+#define TS 310,8243
+#define BS 311,8257
+#define TE 312,8271
+#define BE 313,8285
+#define TW 314,8299
+#define BW 315,8313
+#define AA 317,8328
+#define BB 318,8342
+#define CC 319,8356
+#define DD 320,8370
+#define EE 321,8384
+#define FF 322,8398
+#define GG 323,8412
+#define HH 324,8427
+double buffer[buffer326,8442
+#define	SetValue(328,8468
+#define AddValue(329,8522
+PetscErrorCode PoissonLHS_HYPRE(331,8578
+PetscErrorCode PoissonRHS2(1084,37716
+void Create_Hypre_Solver(1209,40794
+void myMatHYPRE_IJMatrixCopy(1270,43943
+void Petsc_to_Hypre_Vector(1289,44424
+void Hypre_to_Petsc_Vector(1317,45206
+void Create_Hypre_Matrix(1346,45969
+void Create_Hypre_Vector(1370,46824
+void PoissonSolver_Hypre(1397,47688
+
+rheology.c,492
+PetscReal     Sigma_yz=4,110
+PetscReal     S_yz=5,180
+PetscReal     Rey_yz=6,297
+PetscReal     AInertia_yz=7,356
+PetscErrorCode Reynolds_Stress(9,453
+PetscErrorCode Inertia(136,5177
+PetscErrorCode Stresslet(256,9099
+PetscErrorCode Viscosity(884,31928
+PetscErrorCode ibmv_cent_of_mass(1011,36060
+PetscErrorCode calc_quarternion(1147,40371
+PetscErrorCode rotate_quarternion(1370,48486
+PetscErrorCode Particle_Duplicate_Indentify 1419,49739
+PetscErrorCode Particle_Clone 1487,52033
+
+rhs2.c,640
+int allocated_levelset=9,135
+int wall_distance=10,161
+double limiter(18,433
+double PPM(30,670
+int nfree(46,1117
+double integrate_testfilter_ik(762,26898
+double integrate_testfilter(786,27684
+double integrate_gridfilter(842,32160
+double integrate_gridfilter_1d(879,34984
+void Calculate_Covariant_metrics(912,35886
+void Calculate_normal(931,36669
+void Calculate_normal_and_area(966,37935
+void Calculate_dxdydz(1001,39240
+void Calculate_Covariant_tensor(1019,39802
+double weno2(1033,40472
+double lforce_ibm,1380,53713
+double lforce_ibm, force_ibm;1380,53713
+double larea_ibm,1381,53743
+double larea_ibm, area_ibm;1381,53743
+
+rhs.c,317
+PetscErrorCode Contra2Cart(25,718
+PetscErrorCode CalcFrameVelocity(146,4420
+PetscErrorCode CalcFrameVelocity_old(471,12681
+PetscErrorCode Convection_MV(787,22636
+PetscErrorCode Convection(1463,54624
+PetscErrorCode Viscous(1947,76658
+PetscErrorCode FormFunction1(2567,99877
+PetscErrorCode Spectral(3353,125031
+
+solvers.c,116
+PetscErrorCode Struc_Solver(19,786
+PetscErrorCode Struc_predictor(865,25727
+PetscErrorCode Flow_Solver(925,27477
+
+spline.c,99
+PetscErrorCode spline 25,671
+double seval 239,6823
+double Sval 317,8891
+double deriv 399,11155
+
+temp2.c,34
+PetscErrorCode HandleRestart(1,0
+
+temp.c,28
+  level 2,83
+  user 3,112
+
+utils.c,2379
+Mat Int_matrix;20,646
+DM  int_packer;21,662
+Vec U_int,22,678
+Vec U_int,Umult_int;22,678
+PetscInt *dg_start,dg_start32,1153
+PetscInt *dg_start,**dl_start_blk;dl_start_blk32,1153
+PetscInt **cpu_xs;cpu_xs34,1191
+PetscInt **cpu_xs;PetscInt **cpu_xm;cpu_xm34,1191
+PetscInt **cpu_ys;cpu_ys35,1228
+PetscInt **cpu_ys;PetscInt **cpu_ym;cpu_ym35,1228
+PetscInt **cpu_zs;cpu_zs36,1265
+PetscInt **cpu_zs;PetscInt **cpu_zm;cpu_zm36,1265
+PetscBool  CPUPointIntersectCheck(42,1553
+void findOBB(109,3266
+int obbIntersectCheck(399,10013
+void writebbox(508,11979
+int cpuOBBPointIntersectCheck(558,13027
+PetscErrorCode distance_search(583,13866
+PetscBool ISInsideCell_search(616,14622
+void getQueryPoints(637,15267
+void sendRecvPackets(774,18678
+void sendRecvPacketsRev(860,20663
+void setMap(966,23133
+void getMap(1001,23939
+void clearPackets(1012,24065
+void initPackets(1041,24835
+void clearPacketsAll(1063,25266
+void initPacketsAll(1095,26242
+void copyPacketAll(1120,26798
+void copyPacketAllRev(1180,28692
+void ReturnCoeff(1208,29509
+void find_sb(1230,30011
+void find_host(1247,30431
+PetscErrorCode CenterNodeCoor(1436,37312
+void getQueryPoints_rank(1934,50980
+void move_grid(2045,53919
+void move_grid_ibm(2095,55265
+void grid_out(2146,56686
+PetscErrorCode Interpolation_matrix(2198,57884
+PetscInt find_cpu(2484,67411
+PetscInt lidxLocal_matrix(2502,67837
+PetscInt lidxLocal1_matrix(2510,68131
+PetscErrorCode Interpolation_matrix_rank(2526,68508
+PetscErrorCode create_matrix 2806,76489
+PetscErrorCode init_matrix 2848,77715
+PetscErrorCode da_info 2858,77839
+PetscErrorCode destroy_matrix 2966,81332
+PetscErrorCode destroy_Info 2971,81408
+PetscErrorCode destroy_Interpolation 2994,81932
+PetscErrorCode Block_Interface_U(3005,82097
+PetscErrorCode Interface_Rotation_matrix(3579,98347
+PetscErrorCode mat_ass 3795,104363
+PetscErrorCode blank_randomdirection(3815,104880
+PetscInt blank_point_cell_advanced(3848,105685
+PetscErrorCode blank_change_nvert(3966,109153
+PetscErrorCode blank_reset_nvert(4022,110948
+PetscErrorCode blank_search_advanced(4070,112050
+PetscErrorCode blank_boundary_nvert(4272,117797
+PetscErrorCode blank_ibm_read_ucd(4380,120636
+PetscErrorCode blank_ibm_read_Icem(4617,127648
+PetscErrorCode Blank_Pressure_Correction(4862,135139
+PetscErrorCode Copy_Coor(4958,137351
+PetscErrorCode Blank_flux_calc(5005,138561
+
+variables.c,140
+void initlist(3,24
+void insertnode(7,84
+void destroy(30,507
+void InitIBMList(40,671
+void AddIBMNode(44,737
+void DestroyIBMList(53,911
+
+wallfunction.c,680
+double kappa=10,256
+void noslip 12,283
+void freeslip 29,768
+double E_coeff 49,1398
+double u_hydset_roughness(58,1695
+double f_hydset(69,1978
+double df_hydset 78,2218
+double find_utau_hydset(85,2409
+double nu_t(102,2966
+double integrate_1(106,3081
+double taw(129,3517
+double u_Cabot(137,3738
+double u_Werner(144,3921
+double f_Werner(153,4111
+double df_Werner(162,4443
+double f_Cabot(168,4614
+double df_Cabot(173,4761
+void find_utau_Cabot(190,5407
+double find_utau_Werner(209,5917
+double sign(226,6259
+double u_loglaw(234,6347
+double find_utau_loglaw(239,6471
+void wall_function 244,6592
+void wall_function_loglaw 274,7504
+void wall_function_Cabot 320,9092
+
+cop_variables.h,7458
+PetscInt n1_min,5,74
+PetscInt n1_min,n1_max;5,74
+PetscInt n2_min,6,98
+PetscInt n2_min,n2_max;6,98
+PetscInt n3_min,7,122
+PetscInt n3_min,n3_max;7,122
+PetscInt n4_min,8,146
+PetscInt n4_min,n4_max;8,146
+PetscInt n5_min,9,170
+PetscInt n5_min,n5_max;9,170
+PetscInt n6_min,10,194
+PetscInt n6_min,n6_max;10,194
+PetscInt n7_min,11,218
+PetscInt n7_min,n7_max;11,218
+PetscInt n8_min,12,242
+PetscInt n8_min,n8_max;12,242
+PetscInt n9_min,13,266
+PetscInt n9_min,n9_max;13,266
+PetscInt n10_min,14,290
+PetscInt n10_min,n10_max;14,290
+PetscInt n11_min,15,316
+PetscInt n11_min,n11_max;15,316
+PetscInt n12_min,16,342
+PetscInt n12_min,n12_max;16,342
+PetscInt n_antene_mn,19,379
+PetscInt n_antene_mn,n_antene_mx;19,379
+PetscInt n_antene_0,20,413
+PetscInt n_antene_0,n_antene_1,20,413
+PetscInt n_antene_0,n_antene_1,n_antene_2,20,413
+PetscInt n_antene_0,n_antene_1,n_antene_2,n_antene_3;20,413
+PetscReal x_antene_2,21,467
+PetscReal x_antene_2,z_antene_0,21,467
+PetscReal x_antene_2,z_antene_0,z_antene_1;21,467
+PetscInt nib_tail,23,538
+PetscInt nib_tail,nib_antene,23,538
+PetscInt nib_tail,nib_antene,nib_leg12,23,538
+PetscInt nib_tail,nib_antene,nib_leg12,nib_leg34,23,538
+PetscInt nib_tail,nib_antene,nib_leg12,nib_leg34,nib_leg56,23,538
+PetscInt nib_tail,nib_antene,nib_leg12,nib_leg34,nib_leg56,nib_leg78;23,538
+PetscInt n_tail_0;26,618
+PetscReal x_tail_0;27,637
+PetscInt n_bot_0,30,665
+PetscInt n_bot_0,n_bot_1,30,665
+PetscInt n_bot_0,n_bot_1,n_bot_2;30,665
+PetscReal z_bot_0,31,699
+PetscReal z_bot_0,z_bot_1,31,699
+PetscReal z_bot_0,z_bot_1,z_bot_2;31,699
+PetscInt n_leg_1_rot,34,757
+PetscInt n_leg_1_rot,n_leg_2_rot,34,757
+PetscInt n_leg_1_rot,n_leg_2_rot,n_leg_3_rot;34,757
+PetscInt n_leg_4_rot,35,803
+PetscInt n_leg_4_rot,n_leg_5_rot,35,803
+PetscInt n_leg_4_rot,n_leg_5_rot,n_leg_6_rot;35,803
+PetscInt n_leg_7_rot,36,849
+PetscInt n_leg_7_rot,n_leg_8_rot,36,849
+PetscInt n_leg_7_rot,n_leg_8_rot,n_leg_9_rot;36,849
+PetscInt n_leg_10_rot,37,895
+PetscInt n_leg_10_rot,n_leg_11_rot,37,895
+PetscInt n_leg_10_rot,n_leg_11_rot,n_leg_12_rot;37,895
+PetscReal sx_tail,40,972
+PetscReal sx_tail,sy_tail,40,972
+PetscReal sx_tail,sy_tail,sz_tail;40,972
+PetscReal sx_antene,41,1007
+PetscReal sx_antene,sy_antene,41,1007
+PetscReal sx_antene,sy_antene,sz_antene;41,1007
+PetscReal sx_l1,42,1048
+PetscReal sx_l1,sy_l1,42,1048
+PetscReal sx_l1,sy_l1,sz_l1;42,1048
+PetscReal sx_l2,43,1077
+PetscReal sx_l2,sy_l2,43,1077
+PetscReal sx_l2,sy_l2,sz_l2;43,1077
+PetscReal sx_l3,44,1106
+PetscReal sx_l3,sy_l3,44,1106
+PetscReal sx_l3,sy_l3,sz_l3;44,1106
+PetscReal sx_l4,45,1135
+PetscReal sx_l4,sy_l4,45,1135
+PetscReal sx_l4,sy_l4,sz_l4;45,1135
+PetscReal sx_l5,46,1164
+PetscReal sx_l5,sy_l5,46,1164
+PetscReal sx_l5,sy_l5,sz_l5;46,1164
+PetscReal sx_l6,47,1193
+PetscReal sx_l6,sy_l6,47,1193
+PetscReal sx_l6,sy_l6,sz_l6;47,1193
+PetscReal sx_l7,48,1222
+PetscReal sx_l7,sy_l7,48,1222
+PetscReal sx_l7,sy_l7,sz_l7;48,1222
+PetscReal sx_l8,49,1251
+PetscReal sx_l8,sy_l8,49,1251
+PetscReal sx_l8,sy_l8,sz_l8;49,1251
+PetscReal sx_l9,50,1280
+PetscReal sx_l9,sy_l9,50,1280
+PetscReal sx_l9,sy_l9,sz_l9;50,1280
+PetscReal sx_l10,51,1309
+PetscReal sx_l10,sy_l10,51,1309
+PetscReal sx_l10,sy_l10,sz_l10;51,1309
+PetscReal sx_l11,52,1341
+PetscReal sx_l11,sy_l11,52,1341
+PetscReal sx_l11,sy_l11,sz_l11;52,1341
+PetscReal sx_l12,53,1373
+PetscReal sx_l12,sy_l12,53,1373
+PetscReal sx_l12,sy_l12,sz_l12;53,1373
+PetscInt n_tail;56,1455
+PetscInt n_antene;57,1472
+PetscInt n_leg1,58,1491
+PetscInt n_leg1,n_leg2,58,1491
+PetscInt n_leg1,n_leg2,n_leg3;58,1491
+PetscInt n_leg4,59,1522
+PetscInt n_leg4,n_leg5,59,1522
+PetscInt n_leg4,n_leg5,n_leg6;59,1522
+PetscInt n_leg7,60,1553
+PetscInt n_leg7,n_leg8,60,1553
+PetscInt n_leg7,n_leg8,n_leg9;60,1553
+PetscInt n_leg10,61,1584
+PetscInt n_leg10,n_leg11,61,1584
+PetscInt n_leg10,n_leg11,n_leg12;61,1584
+PetscInt *nv_tail,nv_tail64,1656
+PetscInt *nv_tail, *nv_antene;nv_antene64,1656
+PetscInt *nv_leg1,nv_leg165,1687
+PetscInt *nv_leg1, *nv_leg2,nv_leg265,1687
+PetscInt *nv_leg1, *nv_leg2, *nv_leg3;nv_leg365,1687
+PetscInt *nv_leg4,nv_leg466,1726
+PetscInt *nv_leg4, *nv_leg5,nv_leg566,1726
+PetscInt *nv_leg4, *nv_leg5, *nv_leg6;nv_leg666,1726
+PetscInt *nv_leg7,nv_leg767,1765
+PetscInt *nv_leg7, *nv_leg8,nv_leg867,1765
+PetscInt *nv_leg7, *nv_leg8, *nv_leg9;nv_leg967,1765
+PetscInt *nv_leg10,nv_leg1068,1804
+PetscInt *nv_leg10, *nv_leg11,nv_leg1168,1804
+PetscInt *nv_leg10, *nv_leg11, *nv_leg12;nv_leg1268,1804
+PetscReal nfrq,74,1971
+PetscReal nfrq,T_period,74,1971
+PetscReal nfrq,T_period,N_period;74,1971
+PetscReal t1_t,77,2014
+PetscReal t1_t,t2_t,77,2014
+PetscReal t1_t,t2_t,t3_t,77,2014
+PetscReal t1_t,t2_t,t3_t,t4_t;77,2014
+PetscReal t1_a,79,2055
+PetscReal t1_a,t2_a,79,2055
+PetscReal t1_a,t2_a,t2d_a,79,2055
+PetscReal t1_a,t2_a,t2d_a,t2R_a,79,2055
+PetscReal t1_a,t2_a,t2d_a,t2R_a,t3_a,79,2055
+PetscReal t1_a,t2_a,t2d_a,t2R_a,t3_a,t3d1_a,79,2055
+PetscReal t1_a,t2_a,t2d_a,t2R_a,t3_a,t3d1_a,t3d2_a,79,2055
+PetscReal t1_a,t2_a,t2d_a,t2R_a,t3_a,t3d1_a,t3d2_a,t3d3_a,79,2055
+PetscReal t1_a,t2_a,t2d_a,t2R_a,t3_a,t3d1_a,t3d2_a,t3d3_a,t3Rs_a,79,2055
+PetscReal t1_a,t2_a,t2d_a,t2R_a,t3_a,t3d1_a,t3d2_a,t3d3_a,t3Rs_a,t3Re_a,79,2055
+PetscReal t1_a,t2_a,t2d_a,t2R_a,t3_a,t3d1_a,t3d2_a,t3d3_a,t3Rs_a,t3Re_a,t4_a;79,2055
+PetscReal t1_l12,81,2141
+PetscReal t1_l12,t2_l12,81,2141
+PetscReal t1_l12,t2_l12,t3_l12,81,2141
+PetscReal t1_l12,t2_l12,t3_l12,t4_l12;81,2141
+PetscReal t1_l34,82,2180
+PetscReal t1_l34,t2_l34,82,2180
+PetscReal t1_l34,t2_l34,t3_l34,82,2180
+PetscReal t1_l34,t2_l34,t3_l34,t4_l34;82,2180
+PetscReal t1_l56,83,2219
+PetscReal t1_l56,t2_l56,83,2219
+PetscReal t1_l56,t2_l56,t3_l56,83,2219
+PetscReal t1_l56,t2_l56,t3_l56,t4_l56;83,2219
+PetscReal t1_l78,84,2258
+PetscReal t1_l78,t2_l78,84,2258
+PetscReal t1_l78,t2_l78,t3_l78,84,2258
+PetscReal t1_l78,t2_l78,t3_l78,t4_l78;84,2258
+PetscReal t1_l910,85,2297
+PetscReal t1_l910,t2_l910,85,2297
+PetscReal t1_l910,t2_l910,t3_l910,85,2297
+PetscReal t1_l910,t2_l910,t3_l910,t4_l910;85,2297
+PetscReal t1_l1112,86,2340
+PetscReal t1_l1112,t2_l1112,86,2340
+PetscReal t1_l1112,t2_l1112,t3_l1112,86,2340
+PetscReal t1_l1112,t2_l1112,t3_l1112,t4_l1112;86,2340
+PetscReal tet_t,88,2388
+PetscReal tet_t, tet_a;88,2388
+PetscReal tet_l12,89,2412
+PetscReal tet_l12,tet_l34,89,2412
+PetscReal tet_l12,tet_l34,tet_l56,89,2412
+PetscReal tet_l12,tet_l34,tet_l56,tet_l78,89,2412
+PetscReal tet_l12,tet_l34,tet_l56,tet_l78,tet_l910,89,2412
+PetscReal tet_l12,tet_l34,tet_l56,tet_l78,tet_l910,tet_l1112;89,2412
+PetscReal tet_tmin,90,2474
+PetscReal tet_tmin,tet_tmax;90,2474
+PetscReal tet_amin,91,2503
+PetscReal tet_amin,tet_amax,91,2503
+PetscReal tet_amin,tet_amax,tet_adif;91,2503
+PetscReal tet_l12min,92,2541
+PetscReal tet_l12min,tet_l34min,92,2541
+PetscReal tet_l12min,tet_l34min,tet_l56min,92,2541
+PetscReal tet_l12min,tet_l34min,tet_l56min,tet_l78min,92,2541
+PetscReal tet_l12min,tet_l34min,tet_l56min,tet_l78min,tet_l910min,92,2541
+PetscReal tet_l12min,tet_l34min,tet_l56min,tet_l78min,tet_l910min,tet_l1112min;92,2541
+PetscReal tet_l12max,93,2621
+PetscReal tet_l12max,tet_l34max,93,2621
+PetscReal tet_l12max,tet_l34max,tet_l56max,93,2621
+PetscReal tet_l12max,tet_l34max,tet_l56max,tet_l78max,93,2621
+PetscReal tet_l12max,tet_l34max,tet_l56max,tet_l78max,tet_l910max,93,2621
+PetscReal tet_l12max,tet_l34max,tet_l56max,tet_l78max,tet_l910max,tet_l1112max;93,2621
+
+variables.h,23446
+  PetscScalar x,19,318
+  PetscScalar x, y,19,318
+  PetscScalar x, y, z;19,318
+} Cmpnts;20,341
+  PetscReal t,23,369
+  PetscReal t, f;23,369
+} FlowWave;24,387
+	PetscScalar	x,27,417
+	PetscScalar	x, y;27,417
+} Cmpnts2;28,436
+  PetscReal	x,31,465
+  PetscReal	x, y;31,465
+} Cpt2D;32,483
+  Vec	Ubcs;35,510
+  } BCS;36,555
+  Vec  Res,39,582
+  Vec  Res, x,39,582
+  Vec  Res, x, Fext,39,582
+  Vec  Res, x, Fext, Fint,39,582
+  Vec  Res, x, Fext, Fint, Fdyn,39,582
+  Vec  Res, x, Fext, Fint, Fdyn, disp,39,582
+  Vec  Res, x, Fext, Fint, Fdyn, disp, FJ,39,582
+  Vec  Res, x, Fext, Fint, Fdyn, disp, FJ, dis,39,582
+  Vec  Res, x, Fext, Fint, Fdyn, disp, FJ, dis, V;39,582
+  Vec  xn,40,633
+  Vec  xn, xnm1,40,633
+  Vec  xn, xnm1, xd,40,633
+  Vec  xn, xnm1, xd, xdsc,40,633
+  Vec  xn, xnm1, xd, xdsc, xdd,40,633
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc,40,633
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx,40,633
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn,40,633
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc,40,633
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc, xnsc,40,633
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc, xnsc, y,40,633
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc, xnsc, y, yn,40,633
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc, xnsc, y, yn, xninner,40,633
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc, xnsc, y, yn, xninner, yninner;40,633
+  PetscReal  *StrainM,StrainM42,756
+  PetscReal  *StrainM, *StressM,StressM42,756
+  PetscReal  *StrainM, *StressM, *StrainB,StrainB42,756
+  PetscReal  *StrainM, *StressM, *StrainB, *StressB,StressB42,756
+  PetscReal  *StrainM, *StressM, *StrainB, *StressB, *Pf,Pf42,756
+  PetscReal  *StrainM, *StressM, *StrainB, *StressB, *Pf, *Pfn;Pfn42,756
+  PetscReal  dt,43,820
+  PetscReal  dt, wAit;43,820
+  Vec  Mass,45,844
+  Vec  Mass, Dissip;45,844
+    Vec        Fcnt;47,878
+    Cmpnts     *qvec;qvec48,899
+    PetscReal  *radvec;radvec49,921
+    PetscInt   *ire,ire51,960
+    PetscInt   *ire, *irv,irv51,960
+    PetscInt   *ire, *irv, *val,val51,960
+    PetscInt   *ire, *irv, *val, *patch;patch51,960
+    PetscReal  *G,G52,1034
+    PetscReal  *G, *G1,G152,1034
+    PetscReal  *G, *G1, *G2;G252,1034
+    PetscInt   *contact;contact53,1063
+    PetscInt   n_v,55,1102
+    PetscInt   n_v, n_elmt,55,1102
+    PetscInt   n_v, n_elmt, ibi,55,1102
+    PetscInt   n_v, n_elmt, ibi, n_edge,55,1102
+    PetscInt   n_v, n_elmt, ibi, n_edge, sum_n_bnodes,55,1102
+    PetscInt   n_v, n_elmt, ibi, n_edge, sum_n_bnodes, n_ghosts;55,1102
+    PetscReal  *x_bp,x_bp56,1167
+    PetscReal  *x_bp, *y_bp,y_bp56,1167
+    PetscReal  *x_bp, *y_bp, *z_bp,z_bp56,1167
+    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0,x_bp056,1167
+    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0, *y_bp0,y_bp056,1167
+    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0, *y_bp0, *z_bp0,z_bp056,1167
+    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0, *y_bp0, *z_bp0, *x_bpr,x_bpr56,1167
+    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0, *y_bp0, *z_bp0, *x_bpr, *y_bpr,y_bpr56,1167
+    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0, *y_bp0, *z_bp0, *x_bpr, *y_bpr, *z_bpr;z_bpr56,1167
+    PetscReal  *p4x,p4x57,1251
+    PetscReal  *p4x, *p4y,p4y57,1251
+    PetscReal  *p4x, *p4y, *p4z,p4z57,1251
+    PetscReal  *p4x, *p4y, *p4z, *p5x,p5x57,1251
+    PetscReal  *p4x, *p4y, *p4z, *p5x, *p5y,p5y57,1251
+    PetscReal  *p4x, *p4y, *p4z, *p5x, *p5y, *p5z,p5z57,1251
+    PetscReal  *p4x, *p4y, *p4z, *p5x, *p5y, *p5z, *p6x p6x57,1251
+    PetscReal  *p4x, *p4y, *p4z, *p5x, *p5y, *p5z, *p6x ,*p6y,p6y57,1251
+    PetscReal  *p4x, *p4y, *p4z, *p5x, *p5y, *p5z, *p6x ,*p6y, *p6z;p6z57,1251
+    PetscReal  *p4x0,p4x058,1320
+    PetscReal  *p4x0, *p4y0,p4y058,1320
+    PetscReal  *p4x0, *p4y0, *p4z0,p4z058,1320
+    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0,p5x058,1320
+    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0, *p5y0,p5y058,1320
+    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0, *p5y0, *p5z0,p5z058,1320
+    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0, *p5y0, *p5z0, *p6x0,p6x058,1320
+    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0, *p5y0, *p5z0, *p6x0, *p6y0,p6y058,1320
+    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0, *p5y0, *p5z0, *p6x0, *p6y0, *p6z0;p6z058,1320
+    PetscReal  *kve0,kve059,1398
+    PetscReal  *kve0, *kve;kve59,1398
+    PetscInt   *nv1,nv160,1426
+    PetscInt   *nv1, *nv2,nv260,1426
+    PetscInt   *nv1, *nv2, *nv3,nv360,1426
+    PetscInt   *nv1, *nv2, *nv3, *nv4,nv460,1426
+    PetscInt   *nv1, *nv2, *nv3, *nv4, *nv5,nv560,1426
+    PetscInt   *nv1, *nv2, *nv3, *nv4, *nv5, *nv6;nv660,1426
+    Cmpnts     *n_fib;n_fib61,1477
+    PetscInt   *bnodes,bnodes62,1500
+    PetscInt   *bnodes, *n_bnodes,n_bnodes62,1500
+    PetscInt   *bnodes, *n_bnodes, *belmts,belmts62,1500
+    PetscInt   *bnodes, *n_bnodes, *belmts, *edgefrontnodes,edgefrontnodes62,1500
+    PetscInt   *bnodes, *n_bnodes, *belmts, *edgefrontnodes, *edgefrontnodesI,edgefrontnodesI62,1500
+    PetscInt   *bnodes, *n_bnodes, *belmts, *edgefrontnodes, *edgefrontnodesI, *belmtsedge;belmtsedge62,1500
+    PetscReal  *nf_x,nf_x63,1592
+    PetscReal  *nf_x, *nf_y,nf_y63,1592
+    PetscReal  *nf_x, *nf_y, *nf_z,nf_z63,1592
+    PetscReal  *nf_x, *nf_y, *nf_z, *Nf_x,Nf_x63,1592
+    PetscReal  *nf_x, *nf_y, *nf_z, *Nf_x, *Nf_y,Nf_y63,1592
+    PetscReal  *nf_x, *nf_y, *nf_z, *Nf_x, *Nf_y, *Nf_z;Nf_z63,1592
+    PetscReal  *dA,dA64,1670
+    PetscReal  *dA, *dA0;dA064,1670
+  } FE;65,1726
+  PetscInt	i1,68,1752
+  PetscInt	i1, j1,68,1752
+  PetscInt	i1, j1, k1;68,1752
+  PetscInt	i2,69,1775
+  PetscInt	i2, j2,69,1775
+  PetscInt	i2, j2, k2;69,1775
+  PetscInt	i3,70,1798
+  PetscInt	i3, j3,70,1798
+  PetscInt	i3, j3, k3;70,1798
+  PetscReal	cr1,71,1821
+  PetscReal	cr1, cr2,71,1821
+  PetscReal	cr1, cr2, cr3;71,1821
+  PetscReal	d_i;72,1864
+  PetscInt	imode;73,1929
+  PetscInt	ni,75,1969
+  PetscInt	ni, nj,75,1969
+  PetscInt	ni, nj, nk;75,1969
+  PetscReal	d_s;76,1992
+  Cmpnts	pmin;77,2048
+  PetscInt	cell;78,2063
+  PetscReal	cs1,79,2114
+  PetscReal	cs1, cs2,79,2114
+  PetscReal	cs1, cs2, cs3;79,2114
+  PetscInt	i11,81,2142
+  PetscInt	i11, j11,81,2142
+  PetscInt	i11, j11, k11;81,2142
+  PetscInt	i22,82,2168
+  PetscInt	i22, j22,82,2168
+  PetscInt	i22, j22, k22;82,2168
+  PetscInt	i33,83,2194
+  PetscInt	i33, j33,83,2194
+  PetscInt	i33, j33, k33;83,2194
+  PetscReal	cr11,84,2220
+  PetscReal	cr11, cr22,84,2220
+  PetscReal	cr11, cr22, cr33;84,2220
+  PetscReal	d_ii;85,2266
+  PetscInt	iimode;86,2332
+  PetscReal	cs11,87,2372
+  PetscReal	cs11, cs22,87,2372
+  PetscReal	cs11, cs22, cs33;87,2372
+  PetscInt	ii1,89,2403
+  PetscInt	ii1, jj1,89,2403
+  PetscInt	ii1, jj1, kk1;89,2403
+  PetscInt	ii2,90,2429
+  PetscInt	ii2, jj2,90,2429
+  PetscInt	ii2, jj2, kk2;90,2429
+  PetscInt	ii3,91,2455
+  PetscInt	ii3, jj3,91,2455
+  PetscInt	ii3, jj3, kk3;91,2455
+  PetscReal	ct1,92,2481
+  PetscReal	ct1, ct2,92,2481
+  PetscReal	ct1, ct2, ct3;92,2481
+  PetscInt	smode;94,2591
+  PetscInt	ii11,96,2631
+  PetscInt	ii11, jj11,96,2631
+  PetscInt	ii11, jj11, kk11;96,2631
+  PetscInt	ii22,97,2660
+  PetscInt	ii22, jj22,97,2660
+  PetscInt	ii22, jj22, kk22;97,2660
+  PetscInt	ii33,98,2689
+  PetscInt	ii33, jj33,98,2689
+  PetscInt	ii33, jj33, kk33;98,2689
+  PetscReal	ct11,99,2718
+  PetscReal	ct11, ct22,99,2718
+  PetscReal	ct11, ct22, ct33;99,2718
+  PetscReal	d_ss;100,2764
+  PetscInt	ssmode;101,2830
+} IBMInfo;110,3066
+  PetscInt	nbnumber;113,3095
+  PetscInt	n_v,114,3116
+  PetscInt	n_v, n_elmt;114,3116
+  PetscInt	*nv1,nv1115,3185
+  PetscInt	*nv1, *nv2,nv2115,3185
+  PetscInt	*nv1, *nv2, *nv3;nv3115,3185
+  PetscReal	*nf_x,nf_x116,3245
+  PetscReal	*nf_x, *nf_y,nf_y116,3245
+  PetscReal	*nf_x, *nf_y, *nf_z;nf_z116,3245
+  PetscReal	*x_bp,x_bp117,3298
+  PetscReal	*x_bp, *y_bp,y_bp117,3298
+  PetscReal	*x_bp, *y_bp, *z_bp;z_bp117,3298
+  PetscReal	*x_bp0,x_bp0118,3367
+  PetscReal	*x_bp0, *y_bp0,y_bp0118,3367
+  PetscReal	*x_bp0, *y_bp0, *z_bp0;z_bp0118,3367
+  PetscReal	*x_bp_o,x_bp_o119,3403
+  PetscReal	*x_bp_o, *y_bp_o,y_bp_o119,3403
+  PetscReal	*x_bp_o, *y_bp_o, *z_bp_o;z_bp_o119,3403
+  PetscReal	x_bp_in[x_bp_in120,3442
+  PetscReal	x_bp_in[101][3270], y_bp_in[y_bp_in120,3442
+  PetscReal	x_bp_in[101][3270], y_bp_in[101][3270], z_bp_in[z_bp_in120,3442
+  Cmpnts	*u,u121,3514
+  Cmpnts	*u, *uold,uold121,3514
+  Cmpnts	*u, *uold, *urm1;urm1121,3514
+  PetscReal     *dA dA124,3567
+  PetscReal     *nt_x,nt_x126,3642
+  PetscReal     *nt_x, *nt_y,nt_y126,3642
+  PetscReal     *nt_x, *nt_y, *nt_z;nt_z126,3642
+  PetscReal     *ns_x,ns_x127,3693
+  PetscReal     *ns_x, *ns_y,ns_y127,3693
+  PetscReal     *ns_x, *ns_y, *ns_z;ns_z127,3693
+  PetscReal     *cent_x,cent_x130,3820
+  PetscReal     *cent_x,*cent_y,cent_y130,3820
+  PetscReal     *cent_x,*cent_y,*cent_z;cent_z130,3820
+  PetscReal      *pres,pres133,3894
+  PetscReal      *pres, *tau0,tau0133,3894
+  PetscReal      *pres, *tau0, *tauN;tauN133,3894
+  PetscReal      *Bvel_u,Bvel_u134,3932
+  PetscReal      *Bvel_u, *Bvel_v,Bvel_v134,3932
+  PetscReal      *Bvel_u, *Bvel_v, *Bvel_w;Bvel_w134,3932
+  PetscReal       x_min,135,3976
+  PetscReal       x_min,x_max,135,3976
+  PetscReal       x_min,x_max,y_min,135,3976
+  PetscReal       x_min,x_max,y_min,y_max,135,3976
+  PetscReal       x_min,x_max,y_min,y_max,z_min,135,3976
+  PetscReal       x_min,x_max,y_min,y_max,z_min,z_max;135,3976
+  Cmpnts *qvec;qvec137,4053
+  PetscReal *radvec;radvec138,4069
+} IBMNodes;139,4091
+  PetscInt	nbnumber;141,4120
+  PetscInt	n_v,142,4141
+  PetscInt	n_v, n_elmt;142,4141
+  PetscInt	*nv1,nv1143,4210
+  PetscInt	*nv1, *nv2,nv2143,4210
+  PetscInt	*nv1, *nv2, *nv3,nv3143,4210
+  PetscInt	*nv1, *nv2, *nv3, *nv4;nv4143,4210
+  PetscReal	*x_bp,x_bp145,4276
+  PetscReal	*x_bp, *y_bp,y_bp145,4276
+  PetscReal	*x_bp, *y_bp, *z_bp;z_bp145,4276
+  PetscReal	*x_bp0,x_bp0146,4344
+  PetscReal	*x_bp0, *y_bp0,y_bp0146,4344
+  PetscReal	*x_bp0, *y_bp0, *z_bp0;z_bp0146,4344
+  PetscReal	*x_bp_o,x_bp_o147,4380
+  PetscReal	*x_bp_o, *y_bp_o,y_bp_o147,4380
+  PetscReal	*x_bp_o, *y_bp_o, *z_bp_o;z_bp_o147,4380
+  Cmpnts	*u,u149,4422
+  Cmpnts	*u, *uold,uold149,4422
+  Cmpnts	*u, *uold, *urm1;urm1149,4422
+  PetscReal      V;150,4449
+  PetscReal     *dV0 dV0152,4472
+  PetscReal     *cent_x,cent_x154,4528
+  PetscReal     *cent_x,*cent_y,cent_y154,4528
+  PetscReal     *cent_x,*cent_y,*cent_z;cent_z154,4528
+  PetscReal     x_c,155,4569
+  PetscReal     x_c,y_c,155,4569
+  PetscReal     x_c,y_c,z_c;155,4569
+  PetscReal     J[J156,4598
+  PetscReal     I_inv[I_inv157,4623
+} IBMVNodes;158,4652
+typedef struct node{node159,4665
+  PetscInt Node;160,4686
+  struct node *next;next161,4703
+} node;162,4724
+typedef struct list{list164,4733
+  node *head;head165,4754
+} List;166,4768
+typedef struct list_node 169,4778
+  PetscInt	index;170,4805
+  struct list_node *next;next171,4823
+} Node_List;172,4849
+typedef struct IBMListNode 174,4863
+  IBMInfo ibm_intp;175,4892
+  struct IBMListNode* next;176,4912
+} IBMListNode;177,4940
+typedef struct IBMList 179,4956
+  IBMListNode *head;head180,4981
+} IBMList;181,5002
+typedef struct UserCtx 184,5015
+  DM da;185,5040
+  DM fda;189,5189
+  DM swarm;191,5230
+  DMDALocalInfo info;192,5290
+  Vec	Cent;194,5313
+  Vec   Centx,195,5356
+  Vec   Centx,Centy,195,5356
+  Vec   Centx,Centy,Centz;195,5356
+  Vec 	Csi,196,5383
+  Vec 	Csi, Eta,196,5383
+  Vec 	Csi, Eta, Zet,196,5383
+  Vec 	Csi, Eta, Zet, Aj;196,5383
+  Vec 	ICsi,197,5409
+  Vec 	ICsi, IEta,197,5409
+  Vec 	ICsi, IEta, IZet,197,5409
+  Vec 	ICsi, IEta, IZet, IAj;197,5409
+  Vec 	JCsi,198,5439
+  Vec 	JCsi, JEta,198,5439
+  Vec 	JCsi, JEta, JZet,198,5439
+  Vec 	JCsi, JEta, JZet, JAj;198,5439
+  Vec 	KCsi,199,5469
+  Vec 	KCsi, KEta,199,5469
+  Vec 	KCsi, KEta, KZet,199,5469
+  Vec 	KCsi, KEta, KZet, KAj;199,5469
+  Vec 	Ucont,201,5540
+  Vec 	Ucont,Vcont;201,5540
+  Vec 	Ucat,202,5597
+  Vec 	Ucat, Wcat;202,5597
+  Vec	Ucat_o;203,5649
+  Vec	Ucont_o,204,5663
+  Vec	Ucont_o, Ucont_rm1,204,5663
+  Vec	Ucont_o, Ucont_rm1, Rhs,204,5663
+  Vec	Ucont_o, Ucont_rm1, Rhs, dUcont,204,5663
+  Vec	Ucont_o, Ucont_rm1, Rhs, dUcont, pUcont;204,5663
+  Vec 	P,205,5710
+  Vec 	P, P_o;205,5710
+  Vec   Qnew;207,5755
+  Vec   Ql;208,5769
+  Vec   shrr;209,5781
+  Vec   ItfcQ;210,5795
+  Vec	nhostQ;211,5820
+  Vec   lItfcQ;212,5845
+  PetscReal LVOUT;213,5872
+  PetscReal cdisx,216,5893
+  PetscReal cdisx,cdisy,216,5893
+  PetscReal cdisx,cdisy,cdisz;216,5893
+  Vec	Phi;218,5954
+  Vec	GridSpace;219,5965
+  Vec	Nvert;220,5982
+  Vec	Nvert_o;221,5995
+  Vec   Itfc;222,6010
+  BCS	Bcs;223,6034
+  Vec	lUcont,225,6046
+  Vec	lUcont, lUcat,225,6046
+  Vec	lUcont, lUcat, lP,225,6046
+  Vec	lUcont, lUcat, lP, lPhi,225,6046
+  Vec	lUcont, lUcat, lP, lPhi, lVcont,225,6046
+  Vec	lUcont, lUcat, lP, lPhi, lVcont,lWcat;225,6046
+  Vec   lUcont_o,226,6091
+  Vec   lUcont_o, lUcont_rm1;226,6091
+  Vec	lCsi,227,6133
+  Vec	lCsi, lEta,227,6133
+  Vec	lCsi, lEta, lZet,227,6133
+  Vec	lCsi, lEta, lZet, lAj;227,6133
+  Vec	lICsi,228,6162
+  Vec	lICsi, lIEta,228,6162
+  Vec	lICsi, lIEta, lIZet,228,6162
+  Vec	lICsi, lIEta, lIZet, lIAj;228,6162
+  Vec	lJCsi,229,6195
+  Vec	lJCsi, lJEta,229,6195
+  Vec	lJCsi, lJEta, lJZet,229,6195
+  Vec	lJCsi, lJEta, lJZet, lJAj;229,6195
+  Vec	lKCsi,230,6228
+  Vec	lKCsi, lKEta,230,6228
+  Vec	lKCsi, lKEta, lKZet,230,6228
+  Vec	lKCsi, lKEta, lKZet, lKAj;230,6228
+  Vec	lGridSpace;231,6261
+  Vec	lNvert,232,6279
+  Vec	lNvert, lNvert_o,232,6279
+  Vec	lNvert, lNvert_o, lNFace;232,6279
+  Vec	lCent;233,6311
+  Vec   lItfc;234,6324
+  Vec   lMAreaCsi,236,6351
+  Vec   lMAreaCsi, lMAreaEta,236,6351
+  Vec   lMAreaCsi, lMAreaEta, lMAreaZet;236,6351
+  Vec	inletU;238,6411
+  Vec	nhostU;240,6426
+  Vec	DUold;243,6453
+  Vec	Forcing;245,6467
+  Vec	Ucont_MG;246,6482
+  Vec	Dt,248,6499
+  Vec	Dt, Nu_t,248,6499
+  Vec	Dt, Nu_t, CS;248,6499
+  AO	ao;250,6520
+  PetscReal	ren;252,6530
+  PetscReal	dt;253,6566
+  PetscReal	st;254,6596
+  PetscReal     FluxIntpSum;257,6666
+  Vec           psuedot;260,6712
+  PetscReal     cfl,261,6737
+  PetscReal     cfl, vnn;261,6737
+  PetscReal	r[r263,6764
+  PetscReal	r[101], tin[tin263,6764
+  PetscReal	r[101], tin[101], uinr[uinr263,6764
+  PetscInt      ip[ip265,6812
+  PetscInt      ip[10],jp[jp265,6812
+  PetscInt      ip[10],jp[10],kp[kp265,6812
+  PetscInt      ip[10],jp[10],kp[10],dispx[dispx265,6812
+  PetscInt      ip[10],jp[10],kp[10],dispx[10],dispy[dispy265,6812
+  PetscInt      ip[10],jp[10],kp[10],dispx[10],dispy[10],dispz[dispz265,6812
+  PetscInt      ip[10],jp[10],kp[10],dispx[10],dispy[10],dispz[10],dispnn[dispnn265,6812
+  PetscReal     *itfchostx,itfchostx266,6891
+  PetscReal     *itfchostx, *itfchosty,itfchosty266,6891
+  PetscReal     *itfchostx, *itfchosty, *itfchostz;itfchostz266,6891
+  PetscReal     FluxInSum,267,6943
+  PetscReal     FluxInSum, FluxOutSum,267,6943
+  PetscReal     FluxInSum, FluxOutSum, FluxIntfcSum;267,6943
+  PetscReal                AreaOutSum,268,6996
+  PetscReal                AreaOutSum, AreaIntfcSum;268,6996
+  PetscErrorCode aotopetsc;272,7116
+  PetscBool assignedA;273,7144
+  PetscInt _this;275,7168
+  PetscInt *idx_from;idx_from276,7186
+  PetscInt bctype[bctype278,7209
+  PetscInt bctype[6],inttype[inttype278,7209
+  PetscInt itfcptsnumber;279,7242
+  PetscInt *itfcI,itfcI280,7268
+  PetscInt *itfcI, *itfcJ,itfcJ280,7268
+  PetscInt *itfcI, *itfcJ, *itfcK;itfcK280,7268
+  PetscInt *itfchostI,itfchostI281,7303
+  PetscInt *itfchostI, *itfchostJ,itfchostJ281,7303
+  PetscInt *itfchostI, *itfchostJ, *itfchostK,itfchostK281,7303
+  PetscInt *itfchostI, *itfchostJ, *itfchostK, *itfchostB;itfchostB281,7303
+  PetscInt	IM,282,7362
+  PetscInt	IM, JM,282,7362
+  PetscInt	IM, JM, KM;282,7362
+  PetscReal Max_X,283,7407
+  PetscReal Max_X,Max_Y,283,7407
+  PetscReal Max_X,Max_Y,Max_Z,283,7407
+  PetscReal Max_X,Max_Y,Max_Z,Min_X,283,7407
+  PetscReal Max_X,Max_Y,Max_Z,Min_X,Min_Y,283,7407
+  PetscReal Max_X,Max_Y,Max_Z,Min_X,Min_Y,Min_Z;283,7407
+  PetscInt ibmnumber;285,7457
+  IBMInfo  *ibm_intp;ibm_intp286,7479
+  Mat	A,287,7501
+  Mat	A, C;287,7501
+  KSP   ksp;288,7513
+  IBMNodes *ibm;ibm290,7527
+  DM	*da_f,da_f292,7545
+  DM	*da_f, *da_c;da_c292,7545
+  struct UserCtx *user_f,user_f293,7564
+  struct UserCtx *user_f, *user_c;user_c293,7564
+  Vec	*lNvert_c;lNvert_c294,7599
+  Vec	B;296,7617
+  Vec	Rhsp,297,7626
+  Vec	Rhsp, X,297,7626
+  Vec	Rhsp, X, R;297,7626
+  Mat	MR,299,7647
+  Mat	MR, MP;299,7647
+  MatNullSpace nullsp;300,7661
+  PetscInt *KSKE;KSKE304,7731
+  PetscBool multinullspace;305,7749
+  IBMList *ibmlist;ibmlist307,7778
+  PetscInt thislevel,309,7799
+  PetscInt thislevel, mglevels;309,7799
+  PetscInt isc,311,7832
+  PetscInt isc, jsc,311,7832
+  PetscInt isc, jsc, ksc;311,7832
+  PetscInt cgrid;312,7858
+  FlowWave *inflow;inflow314,7879
+  PetscInt number_flowwave;315,7899
+  Vec Ucat_sum;318,7937
+  Vec Ucat_cross_sum;319,7983
+  Vec Ucat_square_sum;320,8026
+  Vec P_sum;321,8070
+  Vec lSx,322,8098
+  Vec lSx, lSy,322,8098
+  Vec lSx, lSy, lSz,322,8098
+  Vec lSx, lSy, lSz, lS;322,8098
+  Vec lLM,323,8125
+  Vec lLM, lMM,323,8125
+  Vec lLM, lMM, lNM;323,8125
+  Vec	lNu_t,325,8180
+  Vec	lNu_t, lF1;325,8180
+  Vec	lCs;326,8244
+  Vec	K_Omega,327,8255
+  Vec	K_Omega, lK_Omega,327,8255
+  Vec	K_Omega, lK_Omega, K_Omega_o,327,8255
+  Vec	K_Omega, lK_Omega, K_Omega_o, lK_Omega_o;327,8255
+  Vec	Distance;328,8319
+  Vec   lItfcKO;329,8335
+  PetscInt	rhs_count;331,8367
+  Vec	Gid,332,8389
+  Vec	Gid, Gidm;332,8389
+  Vec	Phi2,333,8469
+  Vec	Phi2, B2,333,8469
+  Vec	Phi2, B2, Ucont2;333,8469
+  PetscInt	local_Phi2_size,334,8493
+  PetscInt	local_Phi2_size, p_global_begin;334,8493
+  PetscInt	reduced_p_size;335,8537
+  DM        fda2;337,8565
+  Vec	    lUstar;338,8630
+  Cmpnts2   **komega_plane;komega_plane339,8648
+  SNES snes;342,8692
+  Mat  J,343,8705
+  Mat  J,PJ,343,8705
+  Mat  J,PJ,J2;343,8705
+  Vec  RFC;344,8731
+  ISColoring iscoloring;345,8743
+  MatFDColoring matfdcoloring;346,8768
+  Vec ParticleVec,350,8818
+  Vec ParticleVec, lParticleVec;350,8818
+} UserCtx;352,8852
+  UserCtx *user;user355,8881
+  PetscInt thislevel;356,8898
+  DM       packer;357,8920
+} MGCtx;359,8963
+  PetscInt mglevels;362,8990
+  PetscInt thislevel;363,9011
+  PetscBool  isc,365,9034
+  PetscBool  isc, jsc,365,9034
+  PetscBool  isc, jsc, ksc;365,9034
+  MGCtx *mgctx;mgctx366,9062
+  DM       packer;368,9089
+  SNES     snespacker;369,9108
+} UserMG;370,9131
+  PetscReal     P;373,9159
+  PetscInt      n_P;374,9209
+  PetscReal     Tow_ws,375,9264
+  PetscReal     Tow_ws, Tow_wt;375,9264
+  PetscReal     Tow_wn;376,9328
+  PetscInt      Clsnbpt_i,378,9371
+  PetscInt      Clsnbpt_i,Clsnbpt_j,378,9371
+  PetscInt      Clsnbpt_i,Clsnbpt_j,Clsnbpt_k;378,9371
+  PetscInt      icell,379,9461
+  PetscInt      icell,jcell,379,9461
+  PetscInt      icell,jcell,kcell;379,9461
+  PetscInt      FoundAroundcell;380,9496
+  PetscInt      Need3rdPoint;381,9529
+} SurfElmtInfo;383,9592
+  PetscReal    S_new[S_new386,9626
+  PetscReal    S_new[6],S_old[S_old386,9626
+  PetscReal    S_new[6],S_old[6],S_real[S_real386,9626
+  PetscReal    S_new[6],S_old[6],S_real[6],S_realm1[S_realm1386,9626
+  PetscReal    S_ang_n[S_ang_n387,9682
+  PetscReal    S_ang_n[6],S_ang_o[S_ang_o387,9682
+  PetscReal    S_ang_n[6],S_ang_o[6],S_ang_r[S_ang_r387,9682
+  PetscReal    S_ang_n[6],S_ang_o[6],S_ang_r[6],S_ang_rm1[S_ang_rm1387,9682
+  PetscReal    red_vel,388,9744
+  PetscReal    red_vel, damp,388,9744
+  PetscReal    red_vel, damp, mu_s;388,9744
+  PetscReal    F_x,389,9822
+  PetscReal    F_x,F_y,389,9822
+  PetscReal    F_x,F_y,F_z,389,9822
+  PetscReal    F_x,F_y,F_z, A_tot;389,9822
+  PetscReal    F_x_old,390,9873
+  PetscReal    F_x_old,F_y_old,390,9873
+  PetscReal    F_x_old,F_y_old,F_z_old;390,9873
+  PetscReal    F_x_real,391,9929
+  PetscReal    F_x_real,F_y_real,391,9929
+  PetscReal    F_x_real,F_y_real,F_z_real;391,9929
+  PetscReal    M_x,392,9988
+  PetscReal    M_x,M_y,392,9988
+  PetscReal    M_x,M_y,M_z;392,9988
+  PetscReal    M_x_old,393,10027
+  PetscReal    M_x_old,M_y_old,393,10027
+  PetscReal    M_x_old,M_y_old,M_z_old;393,10027
+  PetscReal    M_x_real,394,10083
+  PetscReal    M_x_real,M_y_real,394,10083
+  PetscReal    M_x_real,M_y_real,M_z_real;394,10083
+  PetscReal    M_x_rm2,395,10142
+  PetscReal    M_x_rm2,M_y_rm2,395,10142
+  PetscReal    M_x_rm2,M_y_rm2,M_z_rm2;395,10142
+  PetscReal    M_x_rm3,396,10198
+  PetscReal    M_x_rm3,M_y_rm3,396,10198
+  PetscReal    M_x_rm3,M_y_rm3,M_z_rm3;396,10198
+  PetscReal    x_c,397,10254
+  PetscReal    x_c,y_c,397,10254
+  PetscReal    x_c,y_c,z_c;397,10254
+  PetscReal    a_c[a_c398,10310
+  PetscReal    Mdpdn_x,399,10364
+  PetscReal    Mdpdn_x, Mdpdn_y,399,10364
+  PetscReal    Mdpdn_x, Mdpdn_y,Mdpdn_z;399,10364
+  PetscReal    Mdpdn_x_old,400,10405
+  PetscReal    Mdpdn_x_old, Mdpdn_y_old,400,10405
+  PetscReal    Mdpdn_x_old, Mdpdn_y_old,Mdpdn_z_old;400,10405
+  PetscReal    Power;401,10458
+  PetscReal    clone;403,10489
+  PetscInt     pbc[pbc404,10511
+  PetscReal    I_inv[I_inv405,10534
+  PetscReal    L_n[L_n406,10562
+  PetscReal    L_n[3],L_o[L_o406,10562
+  PetscReal    L_n[3],L_o[3],L_r[L_r406,10562
+  PetscReal    alpha[alpha407,10618
+  PetscReal    acc[acc408,10643
+  PetscReal    R[R409,10666
+  PetscReal    R[3][3],q[q409,10666
+  PetscReal    R[3][3],q[4],q_r[q_r409,10666
+  PetscReal    dS[dS411,10726
+  PetscReal    dS[6],dS_o[dS_o411,10726
+  PetscReal    dS[6],dS_o[6],atk,411,10726
+  PetscReal    dS[6],dS_o[6],atk,atk_o;411,10726
+  SurfElmtInfo  *elmtinfo;elmtinfo414,10794
+  IBMInfo       *fsi_intp;fsi_intp415,10821
+  PetscReal    Max_xbc,418,10905
+  PetscReal    Max_xbc,Min_xbc;418,10905
+  PetscReal    Max_ybc,419,10937
+  PetscReal    Max_ybc,Min_ybc;419,10937
+  PetscReal    Max_zbc,420,10969
+  PetscReal    Max_zbc,Min_zbc;420,10969
+  PetscInt     CV_ys,423,11016
+  PetscInt     CV_ys,CV_ye,423,11016
+  PetscInt     CV_ys,CV_ye,CV_zs,423,11016
+  PetscInt     CV_ys,CV_ye,CV_zs,CV_ze;423,11016
+} FSInfo;424,11056
+  PetscInt   n_time,427,11084
+  PetscInt   n_time, n_midp,427,11084
+  PetscInt   n_time, n_midp, n_subit;427,11084
+  PetscReal  *x_midp,x_midp428,11174
+  PetscReal  *x_midp, *y_midp,y_midp428,11174
+  PetscReal  *x_midp, *y_midp, *z_midp;z_midp428,11174
+  PetscReal  *x_com,x_com429,11254
+  PetscReal  *x_com, *y_com,y_com429,11254
+  PetscReal  *x_com, *y_com, *head_ang;head_ang429,11254
+  PetscReal  *s1,s1430,11338
+  PetscReal  *s1,*s2,s2430,11338
+  PetscReal  *s1,*s2,*s3;s3430,11338
+  PetscReal  *st1,st1434,11517
+  PetscReal  *st1,*st2,st2434,11517
+  PetscReal  *st1,*st2,*st3;st3434,11517
+  Mat        Mphi;439,11749
+  PetscReal  xmin,440,11768
+  PetscReal  xmin,xmax,440,11768
+  PetscReal  xmin,xmax,ymin,440,11768
+  PetscReal  xmin,xmax,ymin,ymax,440,11768
+  PetscReal  xmin,xmax,ymin,ymax,zmin,440,11768
+  PetscReal  xmin,xmax,ymin,ymax,zmin,zmax;440,11768
+} Cstart;441,11828
+  PetscScalar cell[cell444,11855
+  Cmpnts loc;445,11878
+  Cmpnts vel;446,11892
+  Cmpnts weights;447,11906
+} Particle;448,11924
+   Cmpnts min_coords,451,11953
+   Cmpnts min_coords, max_coords;451,11953
+} BoundingBox;452,11987
+#define COEF_TIME_ACCURACY 454,12003
