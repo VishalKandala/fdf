@@ -320,6 +320,14 @@ PetscErrorCode LV_beat2(3243,109477
 PetscErrorCode spli 3541,118364
 PetscErrorCode sev 3612,120139
 
+grid.c,266
+PetscErrorCode InitializeGridDM(27,1007
+PetscErrorCode ParseGridInputs(100,4890
+PetscErrorCode AssignGridCoordinates(175,9064
+PetscErrorCode DetermineGridSizes(304,15262
+PetscErrorCode FinalizeGridSetup(376,18439
+PetscErrorCode DefineGridCoordinates(418,20114
+
 ibm.c,926
 #define Dist(35,1571
 #define Cross(37,1672
@@ -445,51 +453,6 @@ PetscErrorCode FormInitialize(20,635
 PetscErrorCode MGDACreate(84,2354
 PetscErrorCode MG_Initial(342,12095
 PetscErrorCode MG_Finalize(1217,46695
-
-interpolation.c,1705
-static char help[help1,0
-PetscInt np 13,261
-PetscInt ti 14,297
-PetscReal L_dim 15,314
-PetscInt block_number 16,346
-PetscInt visflg 17,373
-PetscErrorCode ParticleVectorCreate(25,699
-PetscErrorCode ParticleVectorInsert(104,4487
-PetscErrorCode ParticleVectorInitialize(156,6456
-PetscErrorCode WriteBoundingBox(359,14922
-PetscBool  CPUPointIntersectCheck(478,20382
-PetscReal distance_search(504,21512
-PetscErrorCode CellPointInterceptCalculate(535,22261
-PetscErrorCode CellValuesGet(554,23035
-PetscBool CellIntersectCheck(568,23445
-PetscErrorCode  InterpolationWeightsCalculate(581,23661
-PetscErrorCode CellIndexUpdate(589,23829
-PetscErrorCode WalkingSearch(613,24197
-PetscErrorCode ParticlesLocate(677,26275
-PetscErrorCode InterpolationCoefficientsCalculate(744,28886
-PetscErrorCode InterpolationMatrixInitialize(765,29343
-PetscErrorCode InterpolationMatrixPopulate(787,29770
-PetscErrorCode InterpolationVectorCreate(823,30768
-PetscErrorCode Interpolate(872,31921
-PetscErrorCode ParticleVelocityUpdate(892,32296
-PetscErrorCode InterpolationMatrixDestroy(916,32908
-PetscErrorCode InterpolationVectorDestroy(925,33014
-PetscErrorCode Ucat_Binary_Input(937,33181
-PetscErrorCode ReadCoordinates(964,33825
-PetscErrorCode ParticleSwarmCreate(1244,42906
-PetscErrorCode InitializeParticles(1343,47070
-PetscErrorCode ParticleSwarmViewPositions(1397,49267
-PetscErrorCode ParticleSwarmViewCoors(1426,50329
-#undef __FUNCT__1459,51562
-#define __FUNCT__ 1460,51579
-int main(1462,51605
- ierr 1547,53960
- ierr 1558,54250
- ierr 1568,54604
- ierr 1578,54978
- for(bi = 0; bi < block_number;1612,55770
-   DMDestroy(&(user[bi].fda)fda1614,55814
-   DMDestroy(&(user[bi].da)da1616,55846
 
 io.c,89
 PetscErrorCode Ucont_P_Binary_Input(5,71
@@ -620,6 +583,10 @@ void Compute_eddy_viscosity_LES(1386,41993
 PetscErrorCode Do_averaging(1579,47485
 PetscErrorCode KE_Output(1782,55286
 
+logging.c,73
+static LogLevel current_log_level 11,260
+LogLevel get_log_level(24,822
+
 main.c,2842
 static char help[help4,47
 PetscInt ti,5,92
@@ -733,6 +700,19 @@ PetscErrorCode CalculateTrinagleArea(1317,40597
 PetscErrorCode FormAreaMoment(1354,41488
 PetscErrorCode MomentAreaDivergence(1489,45009
 PetscErrorCode MetricsDivergence(1569,47165
+
+ParticleSwarm.c,525
+PetscErrorCode InitializeSwarm(15,422
+PetscErrorCode RegisterParticleFields(38,1270
+PetscErrorCode InitializeRandomGenerators(73,2948
+PetscErrorCode AssignInitialProperties(114,5226
+PetscErrorCode DistributeParticles(200,10111
+PetscErrorCode FinalizeSwarmSetup(229,11428
+PetscErrorCode CreateParticleSwarm(259,12767
+PetscErrorCode PrintParticleCoordinates(334,16586
+PetscErrorCode PrintParticlePositions(389,19630
+PetscErrorCode DefineBasicMigrationPattern(465,24187
+PetscErrorCode PerformBasicMigration(542,27973
 
 platlet.c,156
 PetscErrorCode platelet_activation(6,84
@@ -907,6 +887,32 @@ double seval 239,6823
 double Sval 317,8891
 double deriv 399,11155
 
+swarm_interp.c,665
+static char help[help1,0
+PetscInt np 13,269
+PetscInt ti 14,305
+PetscReal L_dim 15,322
+PetscInt block_number 16,354
+PetscInt visflg 17,381
+PetscErrorCode Ucat_Binary_Input(26,675
+PetscErrorCode  WriteBoundingBox(57,1453
+GatherBoundingBoxes(147,4848
+PetscBool  CPUPointIntersectCheck(189,6780
+PetscErrorCode  InterpolationWeightsCalculate(215,7882
+PetscErrorCode ParticlesLocate(226,8193
+#undef __FUNCT__327,12445
+#define __FUNCT__ 328,12462
+int main(330,12488
+ ierr 414,14681
+ for(bi = 0; bi < block_number;452,15604
+   DMDestroy(&(user[bi].fda)fda454,15648
+   DMDestroy(&(user[bi].da)da456,15680
+   DMDestroy(&(user[bi].swarm)swarm458,15712
+
+swarm_test.c,37
+#define CHKERR(6,93
+int main(8,275
+
 temp2.c,34
 PetscErrorCode HandleRestart(1,0
 
@@ -986,6 +992,30 @@ void destroy(30,507
 void InitIBMList(40,671
 void AddIBMNode(44,737
 void DestroyIBMList(53,911
+
+walkingsearch.c,813
+    LEFT 12,245
+    RIGHT,13,270
+    BOTTOM,14,295
+    TOP,15,320
+    FRONT,16,345
+    BACK,17,370
+    NUM_FACES 18,395
+} Face;19,437
+#define MAX_TRAVERSAL 22,506
+void ComputeSignedDistanceToPlane(50,2070
+PetscErrorCode CalculateDistancesToCellFaces(152,7603
+PetscErrorCode DeterminePointPosition(264,12943
+PetscErrorCode PrintCellVertices(332,15704
+PetscErrorCode PrintFaceDistances(379,17755
+PetscErrorCode GetCellVerticesFromGrid(460,21513
+PetscErrorCode InitializeTraversalParameters(506,23911
+PetscErrorCode CheckCellWithinLocalGrid(552,25731
+PetscErrorCode RetrieveCurrentCell(593,27277
+PetscErrorCode EvaluateParticlePosition(671,31563
+PetscErrorCode UpdateCellIndicesBasedOnDistances(720,34066
+PetscErrorCode FinalizeTraversal(787,37165
+PetscErrorCode LocateParticleInGrid(825,38976
 
 wallfunction.c,680
 double kappa=10,256
@@ -1212,7 +1242,25 @@ PetscReal tet_l12max,tet_l34max,tet_l56max,tet_l78max,93,2621
 PetscReal tet_l12max,tet_l34max,tet_l56max,tet_l78max,tet_l910max,93,2621
 PetscReal tet_l12max,tet_l34max,tet_l56max,tet_l78max,tet_l910max,tet_l1112max;93,2621
 
-variables.h,23446
+grid.h,20
+#define GRID_H2,15
+
+logging.h,226
+#define LOGGING_H3,31
+    LOG_ERROR 17,308
+    LOG_WARNING,18,379
+    LOG_INFO,19,451
+    LOG_DEBUG 20,527
+} LogLevel;21,587
+#define LOCAL 25,670
+#define GLOBAL 26,741
+#define LOG(59,2173
+#define LOG_DEFAULT(90,3516
+
+ParticleSwarm.h,30
+#define PARTICLE_SWARM_H4,45
+
+variables.h,23673
   PetscScalar x,19,318
   PetscScalar x, y,19,318
   PetscScalar x, y, z;19,318
@@ -1228,617 +1276,623 @@ variables.h,23446
 } Cpt2D;32,483
   Vec	Ubcs;35,510
   } BCS;36,555
-  Vec  Res,39,582
-  Vec  Res, x,39,582
-  Vec  Res, x, Fext,39,582
-  Vec  Res, x, Fext, Fint,39,582
-  Vec  Res, x, Fext, Fint, Fdyn,39,582
-  Vec  Res, x, Fext, Fint, Fdyn, disp,39,582
-  Vec  Res, x, Fext, Fint, Fdyn, disp, FJ,39,582
-  Vec  Res, x, Fext, Fint, Fdyn, disp, FJ, dis,39,582
-  Vec  Res, x, Fext, Fint, Fdyn, disp, FJ, dis, V;39,582
-  Vec  xn,40,633
-  Vec  xn, xnm1,40,633
-  Vec  xn, xnm1, xd,40,633
-  Vec  xn, xnm1, xd, xdsc,40,633
-  Vec  xn, xnm1, xd, xdsc, xdd,40,633
-  Vec  xn, xnm1, xd, xdsc, xdd, xddsc,40,633
-  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx,40,633
-  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn,40,633
-  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc,40,633
-  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc, xnsc,40,633
-  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc, xnsc, y,40,633
-  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc, xnsc, y, yn,40,633
-  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc, xnsc, y, yn, xninner,40,633
-  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc, xnsc, y, yn, xninner, yninner;40,633
-  PetscReal  *StrainM,StrainM42,756
-  PetscReal  *StrainM, *StressM,StressM42,756
-  PetscReal  *StrainM, *StressM, *StrainB,StrainB42,756
-  PetscReal  *StrainM, *StressM, *StrainB, *StressB,StressB42,756
-  PetscReal  *StrainM, *StressM, *StrainB, *StressB, *Pf,Pf42,756
-  PetscReal  *StrainM, *StressM, *StrainB, *StressB, *Pf, *Pfn;Pfn42,756
-  PetscReal  dt,43,820
-  PetscReal  dt, wAit;43,820
-  Vec  Mass,45,844
-  Vec  Mass, Dissip;45,844
-    Vec        Fcnt;47,878
-    Cmpnts     *qvec;qvec48,899
-    PetscReal  *radvec;radvec49,921
-    PetscInt   *ire,ire51,960
-    PetscInt   *ire, *irv,irv51,960
-    PetscInt   *ire, *irv, *val,val51,960
-    PetscInt   *ire, *irv, *val, *patch;patch51,960
-    PetscReal  *G,G52,1034
-    PetscReal  *G, *G1,G152,1034
-    PetscReal  *G, *G1, *G2;G252,1034
-    PetscInt   *contact;contact53,1063
-    PetscInt   n_v,55,1102
-    PetscInt   n_v, n_elmt,55,1102
-    PetscInt   n_v, n_elmt, ibi,55,1102
-    PetscInt   n_v, n_elmt, ibi, n_edge,55,1102
-    PetscInt   n_v, n_elmt, ibi, n_edge, sum_n_bnodes,55,1102
-    PetscInt   n_v, n_elmt, ibi, n_edge, sum_n_bnodes, n_ghosts;55,1102
-    PetscReal  *x_bp,x_bp56,1167
-    PetscReal  *x_bp, *y_bp,y_bp56,1167
-    PetscReal  *x_bp, *y_bp, *z_bp,z_bp56,1167
-    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0,x_bp056,1167
-    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0, *y_bp0,y_bp056,1167
-    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0, *y_bp0, *z_bp0,z_bp056,1167
-    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0, *y_bp0, *z_bp0, *x_bpr,x_bpr56,1167
-    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0, *y_bp0, *z_bp0, *x_bpr, *y_bpr,y_bpr56,1167
-    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0, *y_bp0, *z_bp0, *x_bpr, *y_bpr, *z_bpr;z_bpr56,1167
-    PetscReal  *p4x,p4x57,1251
-    PetscReal  *p4x, *p4y,p4y57,1251
-    PetscReal  *p4x, *p4y, *p4z,p4z57,1251
-    PetscReal  *p4x, *p4y, *p4z, *p5x,p5x57,1251
-    PetscReal  *p4x, *p4y, *p4z, *p5x, *p5y,p5y57,1251
-    PetscReal  *p4x, *p4y, *p4z, *p5x, *p5y, *p5z,p5z57,1251
-    PetscReal  *p4x, *p4y, *p4z, *p5x, *p5y, *p5z, *p6x p6x57,1251
-    PetscReal  *p4x, *p4y, *p4z, *p5x, *p5y, *p5z, *p6x ,*p6y,p6y57,1251
-    PetscReal  *p4x, *p4y, *p4z, *p5x, *p5y, *p5z, *p6x ,*p6y, *p6z;p6z57,1251
-    PetscReal  *p4x0,p4x058,1320
-    PetscReal  *p4x0, *p4y0,p4y058,1320
-    PetscReal  *p4x0, *p4y0, *p4z0,p4z058,1320
-    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0,p5x058,1320
-    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0, *p5y0,p5y058,1320
-    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0, *p5y0, *p5z0,p5z058,1320
-    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0, *p5y0, *p5z0, *p6x0,p6x058,1320
-    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0, *p5y0, *p5z0, *p6x0, *p6y0,p6y058,1320
-    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0, *p5y0, *p5z0, *p6x0, *p6y0, *p6z0;p6z058,1320
-    PetscReal  *kve0,kve059,1398
-    PetscReal  *kve0, *kve;kve59,1398
-    PetscInt   *nv1,nv160,1426
-    PetscInt   *nv1, *nv2,nv260,1426
-    PetscInt   *nv1, *nv2, *nv3,nv360,1426
-    PetscInt   *nv1, *nv2, *nv3, *nv4,nv460,1426
-    PetscInt   *nv1, *nv2, *nv3, *nv4, *nv5,nv560,1426
-    PetscInt   *nv1, *nv2, *nv3, *nv4, *nv5, *nv6;nv660,1426
-    Cmpnts     *n_fib;n_fib61,1477
-    PetscInt   *bnodes,bnodes62,1500
-    PetscInt   *bnodes, *n_bnodes,n_bnodes62,1500
-    PetscInt   *bnodes, *n_bnodes, *belmts,belmts62,1500
-    PetscInt   *bnodes, *n_bnodes, *belmts, *edgefrontnodes,edgefrontnodes62,1500
-    PetscInt   *bnodes, *n_bnodes, *belmts, *edgefrontnodes, *edgefrontnodesI,edgefrontnodesI62,1500
-    PetscInt   *bnodes, *n_bnodes, *belmts, *edgefrontnodes, *edgefrontnodesI, *belmtsedge;belmtsedge62,1500
-    PetscReal  *nf_x,nf_x63,1592
-    PetscReal  *nf_x, *nf_y,nf_y63,1592
-    PetscReal  *nf_x, *nf_y, *nf_z,nf_z63,1592
-    PetscReal  *nf_x, *nf_y, *nf_z, *Nf_x,Nf_x63,1592
-    PetscReal  *nf_x, *nf_y, *nf_z, *Nf_x, *Nf_y,Nf_y63,1592
-    PetscReal  *nf_x, *nf_y, *nf_z, *Nf_x, *Nf_y, *Nf_z;Nf_z63,1592
-    PetscReal  *dA,dA64,1670
-    PetscReal  *dA, *dA0;dA064,1670
-  } FE;65,1726
-  PetscInt	i1,68,1752
-  PetscInt	i1, j1,68,1752
-  PetscInt	i1, j1, k1;68,1752
-  PetscInt	i2,69,1775
-  PetscInt	i2, j2,69,1775
-  PetscInt	i2, j2, k2;69,1775
-  PetscInt	i3,70,1798
-  PetscInt	i3, j3,70,1798
-  PetscInt	i3, j3, k3;70,1798
-  PetscReal	cr1,71,1821
-  PetscReal	cr1, cr2,71,1821
-  PetscReal	cr1, cr2, cr3;71,1821
-  PetscReal	d_i;72,1864
-  PetscInt	imode;73,1929
-  PetscInt	ni,75,1969
-  PetscInt	ni, nj,75,1969
-  PetscInt	ni, nj, nk;75,1969
-  PetscReal	d_s;76,1992
-  Cmpnts	pmin;77,2048
-  PetscInt	cell;78,2063
-  PetscReal	cs1,79,2114
-  PetscReal	cs1, cs2,79,2114
-  PetscReal	cs1, cs2, cs3;79,2114
-  PetscInt	i11,81,2142
-  PetscInt	i11, j11,81,2142
-  PetscInt	i11, j11, k11;81,2142
-  PetscInt	i22,82,2168
-  PetscInt	i22, j22,82,2168
-  PetscInt	i22, j22, k22;82,2168
-  PetscInt	i33,83,2194
-  PetscInt	i33, j33,83,2194
-  PetscInt	i33, j33, k33;83,2194
-  PetscReal	cr11,84,2220
-  PetscReal	cr11, cr22,84,2220
-  PetscReal	cr11, cr22, cr33;84,2220
-  PetscReal	d_ii;85,2266
-  PetscInt	iimode;86,2332
-  PetscReal	cs11,87,2372
-  PetscReal	cs11, cs22,87,2372
-  PetscReal	cs11, cs22, cs33;87,2372
-  PetscInt	ii1,89,2403
-  PetscInt	ii1, jj1,89,2403
-  PetscInt	ii1, jj1, kk1;89,2403
-  PetscInt	ii2,90,2429
-  PetscInt	ii2, jj2,90,2429
-  PetscInt	ii2, jj2, kk2;90,2429
-  PetscInt	ii3,91,2455
-  PetscInt	ii3, jj3,91,2455
-  PetscInt	ii3, jj3, kk3;91,2455
-  PetscReal	ct1,92,2481
-  PetscReal	ct1, ct2,92,2481
-  PetscReal	ct1, ct2, ct3;92,2481
-  PetscInt	smode;94,2591
-  PetscInt	ii11,96,2631
-  PetscInt	ii11, jj11,96,2631
-  PetscInt	ii11, jj11, kk11;96,2631
-  PetscInt	ii22,97,2660
-  PetscInt	ii22, jj22,97,2660
-  PetscInt	ii22, jj22, kk22;97,2660
-  PetscInt	ii33,98,2689
-  PetscInt	ii33, jj33,98,2689
-  PetscInt	ii33, jj33, kk33;98,2689
-  PetscReal	ct11,99,2718
-  PetscReal	ct11, ct22,99,2718
-  PetscReal	ct11, ct22, ct33;99,2718
-  PetscReal	d_ss;100,2764
-  PetscInt	ssmode;101,2830
-} IBMInfo;110,3066
-  PetscInt	nbnumber;113,3095
-  PetscInt	n_v,114,3116
-  PetscInt	n_v, n_elmt;114,3116
-  PetscInt	*nv1,nv1115,3185
-  PetscInt	*nv1, *nv2,nv2115,3185
-  PetscInt	*nv1, *nv2, *nv3;nv3115,3185
-  PetscReal	*nf_x,nf_x116,3245
-  PetscReal	*nf_x, *nf_y,nf_y116,3245
-  PetscReal	*nf_x, *nf_y, *nf_z;nf_z116,3245
-  PetscReal	*x_bp,x_bp117,3298
-  PetscReal	*x_bp, *y_bp,y_bp117,3298
-  PetscReal	*x_bp, *y_bp, *z_bp;z_bp117,3298
-  PetscReal	*x_bp0,x_bp0118,3367
-  PetscReal	*x_bp0, *y_bp0,y_bp0118,3367
-  PetscReal	*x_bp0, *y_bp0, *z_bp0;z_bp0118,3367
-  PetscReal	*x_bp_o,x_bp_o119,3403
-  PetscReal	*x_bp_o, *y_bp_o,y_bp_o119,3403
-  PetscReal	*x_bp_o, *y_bp_o, *z_bp_o;z_bp_o119,3403
-  PetscReal	x_bp_in[x_bp_in120,3442
-  PetscReal	x_bp_in[101][3270], y_bp_in[y_bp_in120,3442
-  PetscReal	x_bp_in[101][3270], y_bp_in[101][3270], z_bp_in[z_bp_in120,3442
-  Cmpnts	*u,u121,3514
-  Cmpnts	*u, *uold,uold121,3514
-  Cmpnts	*u, *uold, *urm1;urm1121,3514
-  PetscReal     *dA dA124,3567
-  PetscReal     *nt_x,nt_x126,3642
-  PetscReal     *nt_x, *nt_y,nt_y126,3642
-  PetscReal     *nt_x, *nt_y, *nt_z;nt_z126,3642
-  PetscReal     *ns_x,ns_x127,3693
-  PetscReal     *ns_x, *ns_y,ns_y127,3693
-  PetscReal     *ns_x, *ns_y, *ns_z;ns_z127,3693
-  PetscReal     *cent_x,cent_x130,3820
-  PetscReal     *cent_x,*cent_y,cent_y130,3820
-  PetscReal     *cent_x,*cent_y,*cent_z;cent_z130,3820
-  PetscReal      *pres,pres133,3894
-  PetscReal      *pres, *tau0,tau0133,3894
-  PetscReal      *pres, *tau0, *tauN;tauN133,3894
-  PetscReal      *Bvel_u,Bvel_u134,3932
-  PetscReal      *Bvel_u, *Bvel_v,Bvel_v134,3932
-  PetscReal      *Bvel_u, *Bvel_v, *Bvel_w;Bvel_w134,3932
-  PetscReal       x_min,135,3976
-  PetscReal       x_min,x_max,135,3976
-  PetscReal       x_min,x_max,y_min,135,3976
-  PetscReal       x_min,x_max,y_min,y_max,135,3976
-  PetscReal       x_min,x_max,y_min,y_max,z_min,135,3976
-  PetscReal       x_min,x_max,y_min,y_max,z_min,z_max;135,3976
-  Cmpnts *qvec;qvec137,4053
-  PetscReal *radvec;radvec138,4069
-} IBMNodes;139,4091
-  PetscInt	nbnumber;141,4120
-  PetscInt	n_v,142,4141
-  PetscInt	n_v, n_elmt;142,4141
-  PetscInt	*nv1,nv1143,4210
-  PetscInt	*nv1, *nv2,nv2143,4210
-  PetscInt	*nv1, *nv2, *nv3,nv3143,4210
-  PetscInt	*nv1, *nv2, *nv3, *nv4;nv4143,4210
-  PetscReal	*x_bp,x_bp145,4276
-  PetscReal	*x_bp, *y_bp,y_bp145,4276
-  PetscReal	*x_bp, *y_bp, *z_bp;z_bp145,4276
-  PetscReal	*x_bp0,x_bp0146,4344
-  PetscReal	*x_bp0, *y_bp0,y_bp0146,4344
-  PetscReal	*x_bp0, *y_bp0, *z_bp0;z_bp0146,4344
-  PetscReal	*x_bp_o,x_bp_o147,4380
-  PetscReal	*x_bp_o, *y_bp_o,y_bp_o147,4380
-  PetscReal	*x_bp_o, *y_bp_o, *z_bp_o;z_bp_o147,4380
-  Cmpnts	*u,u149,4422
-  Cmpnts	*u, *uold,uold149,4422
-  Cmpnts	*u, *uold, *urm1;urm1149,4422
-  PetscReal      V;150,4449
-  PetscReal     *dV0 dV0152,4472
-  PetscReal     *cent_x,cent_x154,4528
-  PetscReal     *cent_x,*cent_y,cent_y154,4528
-  PetscReal     *cent_x,*cent_y,*cent_z;cent_z154,4528
-  PetscReal     x_c,155,4569
-  PetscReal     x_c,y_c,155,4569
-  PetscReal     x_c,y_c,z_c;155,4569
-  PetscReal     J[J156,4598
-  PetscReal     I_inv[I_inv157,4623
-} IBMVNodes;158,4652
-typedef struct node{node159,4665
-  PetscInt Node;160,4686
-  struct node *next;next161,4703
-} node;162,4724
-typedef struct list{list164,4733
-  node *head;head165,4754
-} List;166,4768
-typedef struct list_node 169,4778
-  PetscInt	index;170,4805
-  struct list_node *next;next171,4823
-} Node_List;172,4849
-typedef struct IBMListNode 174,4863
-  IBMInfo ibm_intp;175,4892
-  struct IBMListNode* next;176,4912
-} IBMListNode;177,4940
-typedef struct IBMList 179,4956
-  IBMListNode *head;head180,4981
-} IBMList;181,5002
-typedef struct UserCtx 184,5015
-  DM da;185,5040
-  DM fda;189,5189
-  DM swarm;191,5230
-  DMDALocalInfo info;192,5290
-  Vec	Cent;194,5313
-  Vec   Centx,195,5356
-  Vec   Centx,Centy,195,5356
-  Vec   Centx,Centy,Centz;195,5356
-  Vec 	Csi,196,5383
-  Vec 	Csi, Eta,196,5383
-  Vec 	Csi, Eta, Zet,196,5383
-  Vec 	Csi, Eta, Zet, Aj;196,5383
-  Vec 	ICsi,197,5409
-  Vec 	ICsi, IEta,197,5409
-  Vec 	ICsi, IEta, IZet,197,5409
-  Vec 	ICsi, IEta, IZet, IAj;197,5409
-  Vec 	JCsi,198,5439
-  Vec 	JCsi, JEta,198,5439
-  Vec 	JCsi, JEta, JZet,198,5439
-  Vec 	JCsi, JEta, JZet, JAj;198,5439
-  Vec 	KCsi,199,5469
-  Vec 	KCsi, KEta,199,5469
-  Vec 	KCsi, KEta, KZet,199,5469
-  Vec 	KCsi, KEta, KZet, KAj;199,5469
-  Vec 	Ucont,201,5540
-  Vec 	Ucont,Vcont;201,5540
-  Vec 	Ucat,202,5597
-  Vec 	Ucat, Wcat;202,5597
-  Vec	Ucat_o;203,5649
-  Vec	Ucont_o,204,5663
-  Vec	Ucont_o, Ucont_rm1,204,5663
-  Vec	Ucont_o, Ucont_rm1, Rhs,204,5663
-  Vec	Ucont_o, Ucont_rm1, Rhs, dUcont,204,5663
-  Vec	Ucont_o, Ucont_rm1, Rhs, dUcont, pUcont;204,5663
-  Vec 	P,205,5710
-  Vec 	P, P_o;205,5710
-  Vec   Qnew;207,5755
-  Vec   Ql;208,5769
-  Vec   shrr;209,5781
-  Vec   ItfcQ;210,5795
-  Vec	nhostQ;211,5820
-  Vec   lItfcQ;212,5845
-  PetscReal LVOUT;213,5872
-  PetscReal cdisx,216,5893
-  PetscReal cdisx,cdisy,216,5893
-  PetscReal cdisx,cdisy,cdisz;216,5893
-  Vec	Phi;218,5954
-  Vec	GridSpace;219,5965
-  Vec	Nvert;220,5982
-  Vec	Nvert_o;221,5995
-  Vec   Itfc;222,6010
-  BCS	Bcs;223,6034
-  Vec	lUcont,225,6046
-  Vec	lUcont, lUcat,225,6046
-  Vec	lUcont, lUcat, lP,225,6046
-  Vec	lUcont, lUcat, lP, lPhi,225,6046
-  Vec	lUcont, lUcat, lP, lPhi, lVcont,225,6046
-  Vec	lUcont, lUcat, lP, lPhi, lVcont,lWcat;225,6046
-  Vec   lUcont_o,226,6091
-  Vec   lUcont_o, lUcont_rm1;226,6091
-  Vec	lCsi,227,6133
-  Vec	lCsi, lEta,227,6133
-  Vec	lCsi, lEta, lZet,227,6133
-  Vec	lCsi, lEta, lZet, lAj;227,6133
-  Vec	lICsi,228,6162
-  Vec	lICsi, lIEta,228,6162
-  Vec	lICsi, lIEta, lIZet,228,6162
-  Vec	lICsi, lIEta, lIZet, lIAj;228,6162
-  Vec	lJCsi,229,6195
-  Vec	lJCsi, lJEta,229,6195
-  Vec	lJCsi, lJEta, lJZet,229,6195
-  Vec	lJCsi, lJEta, lJZet, lJAj;229,6195
-  Vec	lKCsi,230,6228
-  Vec	lKCsi, lKEta,230,6228
-  Vec	lKCsi, lKEta, lKZet,230,6228
-  Vec	lKCsi, lKEta, lKZet, lKAj;230,6228
-  Vec	lGridSpace;231,6261
-  Vec	lNvert,232,6279
-  Vec	lNvert, lNvert_o,232,6279
-  Vec	lNvert, lNvert_o, lNFace;232,6279
-  Vec	lCent;233,6311
-  Vec   lItfc;234,6324
-  Vec   lMAreaCsi,236,6351
-  Vec   lMAreaCsi, lMAreaEta,236,6351
-  Vec   lMAreaCsi, lMAreaEta, lMAreaZet;236,6351
-  Vec	inletU;238,6411
-  Vec	nhostU;240,6426
-  Vec	DUold;243,6453
-  Vec	Forcing;245,6467
-  Vec	Ucont_MG;246,6482
-  Vec	Dt,248,6499
-  Vec	Dt, Nu_t,248,6499
-  Vec	Dt, Nu_t, CS;248,6499
-  AO	ao;250,6520
-  PetscReal	ren;252,6530
-  PetscReal	dt;253,6566
-  PetscReal	st;254,6596
-  PetscReal     FluxIntpSum;257,6666
-  Vec           psuedot;260,6712
-  PetscReal     cfl,261,6737
-  PetscReal     cfl, vnn;261,6737
-  PetscReal	r[r263,6764
-  PetscReal	r[101], tin[tin263,6764
-  PetscReal	r[101], tin[101], uinr[uinr263,6764
-  PetscInt      ip[ip265,6812
-  PetscInt      ip[10],jp[jp265,6812
-  PetscInt      ip[10],jp[10],kp[kp265,6812
-  PetscInt      ip[10],jp[10],kp[10],dispx[dispx265,6812
-  PetscInt      ip[10],jp[10],kp[10],dispx[10],dispy[dispy265,6812
-  PetscInt      ip[10],jp[10],kp[10],dispx[10],dispy[10],dispz[dispz265,6812
-  PetscInt      ip[10],jp[10],kp[10],dispx[10],dispy[10],dispz[10],dispnn[dispnn265,6812
-  PetscReal     *itfchostx,itfchostx266,6891
-  PetscReal     *itfchostx, *itfchosty,itfchosty266,6891
-  PetscReal     *itfchostx, *itfchosty, *itfchostz;itfchostz266,6891
-  PetscReal     FluxInSum,267,6943
-  PetscReal     FluxInSum, FluxOutSum,267,6943
-  PetscReal     FluxInSum, FluxOutSum, FluxIntfcSum;267,6943
-  PetscReal                AreaOutSum,268,6996
-  PetscReal                AreaOutSum, AreaIntfcSum;268,6996
-  PetscErrorCode aotopetsc;272,7116
-  PetscBool assignedA;273,7144
-  PetscInt _this;275,7168
-  PetscInt *idx_from;idx_from276,7186
-  PetscInt bctype[bctype278,7209
-  PetscInt bctype[6],inttype[inttype278,7209
-  PetscInt itfcptsnumber;279,7242
-  PetscInt *itfcI,itfcI280,7268
-  PetscInt *itfcI, *itfcJ,itfcJ280,7268
-  PetscInt *itfcI, *itfcJ, *itfcK;itfcK280,7268
-  PetscInt *itfchostI,itfchostI281,7303
-  PetscInt *itfchostI, *itfchostJ,itfchostJ281,7303
-  PetscInt *itfchostI, *itfchostJ, *itfchostK,itfchostK281,7303
-  PetscInt *itfchostI, *itfchostJ, *itfchostK, *itfchostB;itfchostB281,7303
-  PetscInt	IM,282,7362
-  PetscInt	IM, JM,282,7362
-  PetscInt	IM, JM, KM;282,7362
-  PetscReal Max_X,283,7407
-  PetscReal Max_X,Max_Y,283,7407
-  PetscReal Max_X,Max_Y,Max_Z,283,7407
-  PetscReal Max_X,Max_Y,Max_Z,Min_X,283,7407
-  PetscReal Max_X,Max_Y,Max_Z,Min_X,Min_Y,283,7407
-  PetscReal Max_X,Max_Y,Max_Z,Min_X,Min_Y,Min_Z;283,7407
-  PetscInt ibmnumber;285,7457
-  IBMInfo  *ibm_intp;ibm_intp286,7479
-  Mat	A,287,7501
-  Mat	A, C;287,7501
-  KSP   ksp;288,7513
-  IBMNodes *ibm;ibm290,7527
-  DM	*da_f,da_f292,7545
-  DM	*da_f, *da_c;da_c292,7545
-  struct UserCtx *user_f,user_f293,7564
-  struct UserCtx *user_f, *user_c;user_c293,7564
-  Vec	*lNvert_c;lNvert_c294,7599
-  Vec	B;296,7617
-  Vec	Rhsp,297,7626
-  Vec	Rhsp, X,297,7626
-  Vec	Rhsp, X, R;297,7626
-  Mat	MR,299,7647
-  Mat	MR, MP;299,7647
-  MatNullSpace nullsp;300,7661
-  PetscInt *KSKE;KSKE304,7731
-  PetscBool multinullspace;305,7749
-  IBMList *ibmlist;ibmlist307,7778
-  PetscInt thislevel,309,7799
-  PetscInt thislevel, mglevels;309,7799
-  PetscInt isc,311,7832
-  PetscInt isc, jsc,311,7832
-  PetscInt isc, jsc, ksc;311,7832
-  PetscInt cgrid;312,7858
-  FlowWave *inflow;inflow314,7879
-  PetscInt number_flowwave;315,7899
-  Vec Ucat_sum;318,7937
-  Vec Ucat_cross_sum;319,7983
-  Vec Ucat_square_sum;320,8026
-  Vec P_sum;321,8070
-  Vec lSx,322,8098
-  Vec lSx, lSy,322,8098
-  Vec lSx, lSy, lSz,322,8098
-  Vec lSx, lSy, lSz, lS;322,8098
-  Vec lLM,323,8125
-  Vec lLM, lMM,323,8125
-  Vec lLM, lMM, lNM;323,8125
-  Vec	lNu_t,325,8180
-  Vec	lNu_t, lF1;325,8180
-  Vec	lCs;326,8244
-  Vec	K_Omega,327,8255
-  Vec	K_Omega, lK_Omega,327,8255
-  Vec	K_Omega, lK_Omega, K_Omega_o,327,8255
-  Vec	K_Omega, lK_Omega, K_Omega_o, lK_Omega_o;327,8255
-  Vec	Distance;328,8319
-  Vec   lItfcKO;329,8335
-  PetscInt	rhs_count;331,8367
-  Vec	Gid,332,8389
-  Vec	Gid, Gidm;332,8389
-  Vec	Phi2,333,8469
-  Vec	Phi2, B2,333,8469
-  Vec	Phi2, B2, Ucont2;333,8469
-  PetscInt	local_Phi2_size,334,8493
-  PetscInt	local_Phi2_size, p_global_begin;334,8493
-  PetscInt	reduced_p_size;335,8537
-  DM        fda2;337,8565
-  Vec	    lUstar;338,8630
-  Cmpnts2   **komega_plane;komega_plane339,8648
-  SNES snes;342,8692
-  Mat  J,343,8705
-  Mat  J,PJ,343,8705
-  Mat  J,PJ,J2;343,8705
-  Vec  RFC;344,8731
-  ISColoring iscoloring;345,8743
-  MatFDColoring matfdcoloring;346,8768
-  Vec ParticleVec,350,8818
-  Vec ParticleVec, lParticleVec;350,8818
-} UserCtx;352,8852
-  UserCtx *user;user355,8881
-  PetscInt thislevel;356,8898
-  DM       packer;357,8920
-} MGCtx;359,8963
-  PetscInt mglevels;362,8990
-  PetscInt thislevel;363,9011
-  PetscBool  isc,365,9034
-  PetscBool  isc, jsc,365,9034
-  PetscBool  isc, jsc, ksc;365,9034
-  MGCtx *mgctx;mgctx366,9062
-  DM       packer;368,9089
-  SNES     snespacker;369,9108
-} UserMG;370,9131
-  PetscReal     P;373,9159
-  PetscInt      n_P;374,9209
-  PetscReal     Tow_ws,375,9264
-  PetscReal     Tow_ws, Tow_wt;375,9264
-  PetscReal     Tow_wn;376,9328
-  PetscInt      Clsnbpt_i,378,9371
-  PetscInt      Clsnbpt_i,Clsnbpt_j,378,9371
-  PetscInt      Clsnbpt_i,Clsnbpt_j,Clsnbpt_k;378,9371
-  PetscInt      icell,379,9461
-  PetscInt      icell,jcell,379,9461
-  PetscInt      icell,jcell,kcell;379,9461
-  PetscInt      FoundAroundcell;380,9496
-  PetscInt      Need3rdPoint;381,9529
-} SurfElmtInfo;383,9592
-  PetscReal    S_new[S_new386,9626
-  PetscReal    S_new[6],S_old[S_old386,9626
-  PetscReal    S_new[6],S_old[6],S_real[S_real386,9626
-  PetscReal    S_new[6],S_old[6],S_real[6],S_realm1[S_realm1386,9626
-  PetscReal    S_ang_n[S_ang_n387,9682
-  PetscReal    S_ang_n[6],S_ang_o[S_ang_o387,9682
-  PetscReal    S_ang_n[6],S_ang_o[6],S_ang_r[S_ang_r387,9682
-  PetscReal    S_ang_n[6],S_ang_o[6],S_ang_r[6],S_ang_rm1[S_ang_rm1387,9682
-  PetscReal    red_vel,388,9744
-  PetscReal    red_vel, damp,388,9744
-  PetscReal    red_vel, damp, mu_s;388,9744
-  PetscReal    F_x,389,9822
-  PetscReal    F_x,F_y,389,9822
-  PetscReal    F_x,F_y,F_z,389,9822
-  PetscReal    F_x,F_y,F_z, A_tot;389,9822
-  PetscReal    F_x_old,390,9873
-  PetscReal    F_x_old,F_y_old,390,9873
-  PetscReal    F_x_old,F_y_old,F_z_old;390,9873
-  PetscReal    F_x_real,391,9929
-  PetscReal    F_x_real,F_y_real,391,9929
-  PetscReal    F_x_real,F_y_real,F_z_real;391,9929
-  PetscReal    M_x,392,9988
-  PetscReal    M_x,M_y,392,9988
-  PetscReal    M_x,M_y,M_z;392,9988
-  PetscReal    M_x_old,393,10027
-  PetscReal    M_x_old,M_y_old,393,10027
-  PetscReal    M_x_old,M_y_old,M_z_old;393,10027
-  PetscReal    M_x_real,394,10083
-  PetscReal    M_x_real,M_y_real,394,10083
-  PetscReal    M_x_real,M_y_real,M_z_real;394,10083
-  PetscReal    M_x_rm2,395,10142
-  PetscReal    M_x_rm2,M_y_rm2,395,10142
-  PetscReal    M_x_rm2,M_y_rm2,M_z_rm2;395,10142
-  PetscReal    M_x_rm3,396,10198
-  PetscReal    M_x_rm3,M_y_rm3,396,10198
-  PetscReal    M_x_rm3,M_y_rm3,M_z_rm3;396,10198
-  PetscReal    x_c,397,10254
-  PetscReal    x_c,y_c,397,10254
-  PetscReal    x_c,y_c,z_c;397,10254
-  PetscReal    a_c[a_c398,10310
-  PetscReal    Mdpdn_x,399,10364
-  PetscReal    Mdpdn_x, Mdpdn_y,399,10364
-  PetscReal    Mdpdn_x, Mdpdn_y,Mdpdn_z;399,10364
-  PetscReal    Mdpdn_x_old,400,10405
-  PetscReal    Mdpdn_x_old, Mdpdn_y_old,400,10405
-  PetscReal    Mdpdn_x_old, Mdpdn_y_old,Mdpdn_z_old;400,10405
-  PetscReal    Power;401,10458
-  PetscReal    clone;403,10489
-  PetscInt     pbc[pbc404,10511
-  PetscReal    I_inv[I_inv405,10534
-  PetscReal    L_n[L_n406,10562
-  PetscReal    L_n[3],L_o[L_o406,10562
-  PetscReal    L_n[3],L_o[3],L_r[L_r406,10562
-  PetscReal    alpha[alpha407,10618
-  PetscReal    acc[acc408,10643
-  PetscReal    R[R409,10666
-  PetscReal    R[3][3],q[q409,10666
-  PetscReal    R[3][3],q[4],q_r[q_r409,10666
-  PetscReal    dS[dS411,10726
-  PetscReal    dS[6],dS_o[dS_o411,10726
-  PetscReal    dS[6],dS_o[6],atk,411,10726
-  PetscReal    dS[6],dS_o[6],atk,atk_o;411,10726
-  SurfElmtInfo  *elmtinfo;elmtinfo414,10794
-  IBMInfo       *fsi_intp;fsi_intp415,10821
-  PetscReal    Max_xbc,418,10905
-  PetscReal    Max_xbc,Min_xbc;418,10905
-  PetscReal    Max_ybc,419,10937
-  PetscReal    Max_ybc,Min_ybc;419,10937
-  PetscReal    Max_zbc,420,10969
-  PetscReal    Max_zbc,Min_zbc;420,10969
-  PetscInt     CV_ys,423,11016
-  PetscInt     CV_ys,CV_ye,423,11016
-  PetscInt     CV_ys,CV_ye,CV_zs,423,11016
-  PetscInt     CV_ys,CV_ye,CV_zs,CV_ze;423,11016
-} FSInfo;424,11056
-  PetscInt   n_time,427,11084
-  PetscInt   n_time, n_midp,427,11084
-  PetscInt   n_time, n_midp, n_subit;427,11084
-  PetscReal  *x_midp,x_midp428,11174
-  PetscReal  *x_midp, *y_midp,y_midp428,11174
-  PetscReal  *x_midp, *y_midp, *z_midp;z_midp428,11174
-  PetscReal  *x_com,x_com429,11254
-  PetscReal  *x_com, *y_com,y_com429,11254
-  PetscReal  *x_com, *y_com, *head_ang;head_ang429,11254
-  PetscReal  *s1,s1430,11338
-  PetscReal  *s1,*s2,s2430,11338
-  PetscReal  *s1,*s2,*s3;s3430,11338
-  PetscReal  *st1,st1434,11517
-  PetscReal  *st1,*st2,st2434,11517
-  PetscReal  *st1,*st2,*st3;st3434,11517
-  Mat        Mphi;439,11749
-  PetscReal  xmin,440,11768
-  PetscReal  xmin,xmax,440,11768
-  PetscReal  xmin,xmax,ymin,440,11768
-  PetscReal  xmin,xmax,ymin,ymax,440,11768
-  PetscReal  xmin,xmax,ymin,ymax,zmin,440,11768
-  PetscReal  xmin,xmax,ymin,ymax,zmin,zmax;440,11768
-} Cstart;441,11828
-  PetscScalar cell[cell444,11855
-  Cmpnts loc;445,11878
-  Cmpnts vel;446,11892
-  Cmpnts weights;447,11906
-} Particle;448,11924
-   Cmpnts min_coords,451,11953
-   Cmpnts min_coords, max_coords;451,11953
-} BoundingBox;452,11987
-#define COEF_TIME_ACCURACY 454,12003
+  PetscInt64 cell[cell40,582
+  PetscInt64 PID;41,604
+  Cmpnts loc;42,622
+  Cmpnts vel;43,636
+  Cmpnts weights;44,650
+} Particle;45,668
+    Cmpnts vertices[vertices49,771
+} Cell;50,819
+   Cmpnts min_coords,53,844
+   Cmpnts min_coords, max_coords;53,844
+} BoundingBox;54,878
+  Vec  Res,57,911
+  Vec  Res, x,57,911
+  Vec  Res, x, Fext,57,911
+  Vec  Res, x, Fext, Fint,57,911
+  Vec  Res, x, Fext, Fint, Fdyn,57,911
+  Vec  Res, x, Fext, Fint, Fdyn, disp,57,911
+  Vec  Res, x, Fext, Fint, Fdyn, disp, FJ,57,911
+  Vec  Res, x, Fext, Fint, Fdyn, disp, FJ, dis,57,911
+  Vec  Res, x, Fext, Fint, Fdyn, disp, FJ, dis, V;57,911
+  Vec  xn,58,962
+  Vec  xn, xnm1,58,962
+  Vec  xn, xnm1, xd,58,962
+  Vec  xn, xnm1, xd, xdsc,58,962
+  Vec  xn, xnm1, xd, xdsc, xdd,58,962
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc,58,962
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx,58,962
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn,58,962
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc,58,962
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc, xnsc,58,962
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc, xnsc, y,58,962
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc, xnsc, y, yn,58,962
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc, xnsc, y, yn, xninner,58,962
+  Vec  xn, xnm1, xd, xdsc, xdd, xddsc, dx, dxn, dxsc, xnsc, y, yn, xninner, yninner;58,962
+  PetscReal  *StrainM,StrainM60,1085
+  PetscReal  *StrainM, *StressM,StressM60,1085
+  PetscReal  *StrainM, *StressM, *StrainB,StrainB60,1085
+  PetscReal  *StrainM, *StressM, *StrainB, *StressB,StressB60,1085
+  PetscReal  *StrainM, *StressM, *StrainB, *StressB, *Pf,Pf60,1085
+  PetscReal  *StrainM, *StressM, *StrainB, *StressB, *Pf, *Pfn;Pfn60,1085
+  PetscReal  dt,61,1149
+  PetscReal  dt, wAit;61,1149
+  Vec  Mass,63,1173
+  Vec  Mass, Dissip;63,1173
+    Vec        Fcnt;65,1207
+    Cmpnts     *qvec;qvec66,1228
+    PetscReal  *radvec;radvec67,1250
+    PetscInt   *ire,ire69,1289
+    PetscInt   *ire, *irv,irv69,1289
+    PetscInt   *ire, *irv, *val,val69,1289
+    PetscInt   *ire, *irv, *val, *patch;patch69,1289
+    PetscReal  *G,G70,1363
+    PetscReal  *G, *G1,G170,1363
+    PetscReal  *G, *G1, *G2;G270,1363
+    PetscInt   *contact;contact71,1392
+    PetscInt   n_v,73,1431
+    PetscInt   n_v, n_elmt,73,1431
+    PetscInt   n_v, n_elmt, ibi,73,1431
+    PetscInt   n_v, n_elmt, ibi, n_edge,73,1431
+    PetscInt   n_v, n_elmt, ibi, n_edge, sum_n_bnodes,73,1431
+    PetscInt   n_v, n_elmt, ibi, n_edge, sum_n_bnodes, n_ghosts;73,1431
+    PetscReal  *x_bp,x_bp74,1496
+    PetscReal  *x_bp, *y_bp,y_bp74,1496
+    PetscReal  *x_bp, *y_bp, *z_bp,z_bp74,1496
+    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0,x_bp074,1496
+    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0, *y_bp0,y_bp074,1496
+    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0, *y_bp0, *z_bp0,z_bp074,1496
+    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0, *y_bp0, *z_bp0, *x_bpr,x_bpr74,1496
+    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0, *y_bp0, *z_bp0, *x_bpr, *y_bpr,y_bpr74,1496
+    PetscReal  *x_bp, *y_bp, *z_bp, *x_bp0, *y_bp0, *z_bp0, *x_bpr, *y_bpr, *z_bpr;z_bpr74,1496
+    PetscReal  *p4x,p4x75,1580
+    PetscReal  *p4x, *p4y,p4y75,1580
+    PetscReal  *p4x, *p4y, *p4z,p4z75,1580
+    PetscReal  *p4x, *p4y, *p4z, *p5x,p5x75,1580
+    PetscReal  *p4x, *p4y, *p4z, *p5x, *p5y,p5y75,1580
+    PetscReal  *p4x, *p4y, *p4z, *p5x, *p5y, *p5z,p5z75,1580
+    PetscReal  *p4x, *p4y, *p4z, *p5x, *p5y, *p5z, *p6x p6x75,1580
+    PetscReal  *p4x, *p4y, *p4z, *p5x, *p5y, *p5z, *p6x ,*p6y,p6y75,1580
+    PetscReal  *p4x, *p4y, *p4z, *p5x, *p5y, *p5z, *p6x ,*p6y, *p6z;p6z75,1580
+    PetscReal  *p4x0,p4x076,1649
+    PetscReal  *p4x0, *p4y0,p4y076,1649
+    PetscReal  *p4x0, *p4y0, *p4z0,p4z076,1649
+    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0,p5x076,1649
+    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0, *p5y0,p5y076,1649
+    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0, *p5y0, *p5z0,p5z076,1649
+    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0, *p5y0, *p5z0, *p6x0,p6x076,1649
+    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0, *p5y0, *p5z0, *p6x0, *p6y0,p6y076,1649
+    PetscReal  *p4x0, *p4y0, *p4z0, *p5x0, *p5y0, *p5z0, *p6x0, *p6y0, *p6z0;p6z076,1649
+    PetscReal  *kve0,kve077,1727
+    PetscReal  *kve0, *kve;kve77,1727
+    PetscInt   *nv1,nv178,1755
+    PetscInt   *nv1, *nv2,nv278,1755
+    PetscInt   *nv1, *nv2, *nv3,nv378,1755
+    PetscInt   *nv1, *nv2, *nv3, *nv4,nv478,1755
+    PetscInt   *nv1, *nv2, *nv3, *nv4, *nv5,nv578,1755
+    PetscInt   *nv1, *nv2, *nv3, *nv4, *nv5, *nv6;nv678,1755
+    Cmpnts     *n_fib;n_fib79,1806
+    PetscInt   *bnodes,bnodes80,1829
+    PetscInt   *bnodes, *n_bnodes,n_bnodes80,1829
+    PetscInt   *bnodes, *n_bnodes, *belmts,belmts80,1829
+    PetscInt   *bnodes, *n_bnodes, *belmts, *edgefrontnodes,edgefrontnodes80,1829
+    PetscInt   *bnodes, *n_bnodes, *belmts, *edgefrontnodes, *edgefrontnodesI,edgefrontnodesI80,1829
+    PetscInt   *bnodes, *n_bnodes, *belmts, *edgefrontnodes, *edgefrontnodesI, *belmtsedge;belmtsedge80,1829
+    PetscReal  *nf_x,nf_x81,1921
+    PetscReal  *nf_x, *nf_y,nf_y81,1921
+    PetscReal  *nf_x, *nf_y, *nf_z,nf_z81,1921
+    PetscReal  *nf_x, *nf_y, *nf_z, *Nf_x,Nf_x81,1921
+    PetscReal  *nf_x, *nf_y, *nf_z, *Nf_x, *Nf_y,Nf_y81,1921
+    PetscReal  *nf_x, *nf_y, *nf_z, *Nf_x, *Nf_y, *Nf_z;Nf_z81,1921
+    PetscReal  *dA,dA82,1999
+    PetscReal  *dA, *dA0;dA082,1999
+  } FE;83,2055
+  PetscInt	i1,86,2081
+  PetscInt	i1, j1,86,2081
+  PetscInt	i1, j1, k1;86,2081
+  PetscInt	i2,87,2104
+  PetscInt	i2, j2,87,2104
+  PetscInt	i2, j2, k2;87,2104
+  PetscInt	i3,88,2127
+  PetscInt	i3, j3,88,2127
+  PetscInt	i3, j3, k3;88,2127
+  PetscReal	cr1,89,2150
+  PetscReal	cr1, cr2,89,2150
+  PetscReal	cr1, cr2, cr3;89,2150
+  PetscReal	d_i;90,2193
+  PetscInt	imode;91,2258
+  PetscInt	ni,93,2298
+  PetscInt	ni, nj,93,2298
+  PetscInt	ni, nj, nk;93,2298
+  PetscReal	d_s;94,2321
+  Cmpnts	pmin;95,2377
+  PetscInt	cell;96,2392
+  PetscReal	cs1,97,2443
+  PetscReal	cs1, cs2,97,2443
+  PetscReal	cs1, cs2, cs3;97,2443
+  PetscInt	i11,99,2471
+  PetscInt	i11, j11,99,2471
+  PetscInt	i11, j11, k11;99,2471
+  PetscInt	i22,100,2497
+  PetscInt	i22, j22,100,2497
+  PetscInt	i22, j22, k22;100,2497
+  PetscInt	i33,101,2523
+  PetscInt	i33, j33,101,2523
+  PetscInt	i33, j33, k33;101,2523
+  PetscReal	cr11,102,2549
+  PetscReal	cr11, cr22,102,2549
+  PetscReal	cr11, cr22, cr33;102,2549
+  PetscReal	d_ii;103,2595
+  PetscInt	iimode;104,2661
+  PetscReal	cs11,105,2701
+  PetscReal	cs11, cs22,105,2701
+  PetscReal	cs11, cs22, cs33;105,2701
+  PetscInt	ii1,107,2732
+  PetscInt	ii1, jj1,107,2732
+  PetscInt	ii1, jj1, kk1;107,2732
+  PetscInt	ii2,108,2758
+  PetscInt	ii2, jj2,108,2758
+  PetscInt	ii2, jj2, kk2;108,2758
+  PetscInt	ii3,109,2784
+  PetscInt	ii3, jj3,109,2784
+  PetscInt	ii3, jj3, kk3;109,2784
+  PetscReal	ct1,110,2810
+  PetscReal	ct1, ct2,110,2810
+  PetscReal	ct1, ct2, ct3;110,2810
+  PetscInt	smode;112,2920
+  PetscInt	ii11,114,2960
+  PetscInt	ii11, jj11,114,2960
+  PetscInt	ii11, jj11, kk11;114,2960
+  PetscInt	ii22,115,2989
+  PetscInt	ii22, jj22,115,2989
+  PetscInt	ii22, jj22, kk22;115,2989
+  PetscInt	ii33,116,3018
+  PetscInt	ii33, jj33,116,3018
+  PetscInt	ii33, jj33, kk33;116,3018
+  PetscReal	ct11,117,3047
+  PetscReal	ct11, ct22,117,3047
+  PetscReal	ct11, ct22, ct33;117,3047
+  PetscReal	d_ss;118,3093
+  PetscInt	ssmode;119,3159
+} IBMInfo;128,3395
+  PetscInt	nbnumber;131,3424
+  PetscInt	n_v,132,3445
+  PetscInt	n_v, n_elmt;132,3445
+  PetscInt	*nv1,nv1133,3514
+  PetscInt	*nv1, *nv2,nv2133,3514
+  PetscInt	*nv1, *nv2, *nv3;nv3133,3514
+  PetscReal	*nf_x,nf_x134,3574
+  PetscReal	*nf_x, *nf_y,nf_y134,3574
+  PetscReal	*nf_x, *nf_y, *nf_z;nf_z134,3574
+  PetscReal	*x_bp,x_bp135,3627
+  PetscReal	*x_bp, *y_bp,y_bp135,3627
+  PetscReal	*x_bp, *y_bp, *z_bp;z_bp135,3627
+  PetscReal	*x_bp0,x_bp0136,3696
+  PetscReal	*x_bp0, *y_bp0,y_bp0136,3696
+  PetscReal	*x_bp0, *y_bp0, *z_bp0;z_bp0136,3696
+  PetscReal	*x_bp_o,x_bp_o137,3732
+  PetscReal	*x_bp_o, *y_bp_o,y_bp_o137,3732
+  PetscReal	*x_bp_o, *y_bp_o, *z_bp_o;z_bp_o137,3732
+  PetscReal	x_bp_in[x_bp_in138,3771
+  PetscReal	x_bp_in[101][3270], y_bp_in[y_bp_in138,3771
+  PetscReal	x_bp_in[101][3270], y_bp_in[101][3270], z_bp_in[z_bp_in138,3771
+  Cmpnts	*u,u139,3843
+  Cmpnts	*u, *uold,uold139,3843
+  Cmpnts	*u, *uold, *urm1;urm1139,3843
+  PetscReal     *dA dA142,3896
+  PetscReal     *nt_x,nt_x144,3971
+  PetscReal     *nt_x, *nt_y,nt_y144,3971
+  PetscReal     *nt_x, *nt_y, *nt_z;nt_z144,3971
+  PetscReal     *ns_x,ns_x145,4022
+  PetscReal     *ns_x, *ns_y,ns_y145,4022
+  PetscReal     *ns_x, *ns_y, *ns_z;ns_z145,4022
+  PetscReal     *cent_x,cent_x148,4149
+  PetscReal     *cent_x,*cent_y,cent_y148,4149
+  PetscReal     *cent_x,*cent_y,*cent_z;cent_z148,4149
+  PetscReal      *pres,pres151,4223
+  PetscReal      *pres, *tau0,tau0151,4223
+  PetscReal      *pres, *tau0, *tauN;tauN151,4223
+  PetscReal      *Bvel_u,Bvel_u152,4261
+  PetscReal      *Bvel_u, *Bvel_v,Bvel_v152,4261
+  PetscReal      *Bvel_u, *Bvel_v, *Bvel_w;Bvel_w152,4261
+  PetscReal       x_min,153,4305
+  PetscReal       x_min,x_max,153,4305
+  PetscReal       x_min,x_max,y_min,153,4305
+  PetscReal       x_min,x_max,y_min,y_max,153,4305
+  PetscReal       x_min,x_max,y_min,y_max,z_min,153,4305
+  PetscReal       x_min,x_max,y_min,y_max,z_min,z_max;153,4305
+  Cmpnts *qvec;qvec155,4382
+  PetscReal *radvec;radvec156,4398
+} IBMNodes;157,4420
+  PetscInt	nbnumber;159,4449
+  PetscInt	n_v,160,4470
+  PetscInt	n_v, n_elmt;160,4470
+  PetscInt	*nv1,nv1161,4539
+  PetscInt	*nv1, *nv2,nv2161,4539
+  PetscInt	*nv1, *nv2, *nv3,nv3161,4539
+  PetscInt	*nv1, *nv2, *nv3, *nv4;nv4161,4539
+  PetscReal	*x_bp,x_bp163,4605
+  PetscReal	*x_bp, *y_bp,y_bp163,4605
+  PetscReal	*x_bp, *y_bp, *z_bp;z_bp163,4605
+  PetscReal	*x_bp0,x_bp0164,4673
+  PetscReal	*x_bp0, *y_bp0,y_bp0164,4673
+  PetscReal	*x_bp0, *y_bp0, *z_bp0;z_bp0164,4673
+  PetscReal	*x_bp_o,x_bp_o165,4709
+  PetscReal	*x_bp_o, *y_bp_o,y_bp_o165,4709
+  PetscReal	*x_bp_o, *y_bp_o, *z_bp_o;z_bp_o165,4709
+  Cmpnts	*u,u167,4751
+  Cmpnts	*u, *uold,uold167,4751
+  Cmpnts	*u, *uold, *urm1;urm1167,4751
+  PetscReal      V;168,4778
+  PetscReal     *dV0 dV0170,4801
+  PetscReal     *cent_x,cent_x172,4857
+  PetscReal     *cent_x,*cent_y,cent_y172,4857
+  PetscReal     *cent_x,*cent_y,*cent_z;cent_z172,4857
+  PetscReal     x_c,173,4898
+  PetscReal     x_c,y_c,173,4898
+  PetscReal     x_c,y_c,z_c;173,4898
+  PetscReal     J[J174,4927
+  PetscReal     I_inv[I_inv175,4952
+} IBMVNodes;176,4981
+typedef struct node{node177,4994
+  PetscInt Node;178,5015
+  struct node *next;next179,5032
+} node;180,5053
+typedef struct list{list182,5062
+  node *head;head183,5083
+} List;184,5097
+typedef struct list_node 187,5107
+  PetscInt	index;188,5134
+  struct list_node *next;next189,5152
+} Node_List;190,5178
+typedef struct IBMListNode 192,5192
+  IBMInfo ibm_intp;193,5221
+  struct IBMListNode* next;194,5241
+} IBMListNode;195,5269
+typedef struct IBMList 197,5285
+  IBMListNode *head;head198,5310
+} IBMList;199,5331
+typedef struct UserCtx 202,5344
+  DM da;203,5369
+  DM fda;207,5518
+  DM dmcell;209,5560
+  DM swarm;211,5639
+  DMDALocalInfo info;212,5699
+  PetscInt *miglist;miglist214,5722
+  BoundingBox bbox;216,5844
+  Vec	Cent;218,5865
+  Vec   Centx,219,5908
+  Vec   Centx,Centy,219,5908
+  Vec   Centx,Centy,Centz;219,5908
+  Vec 	Csi,220,5935
+  Vec 	Csi, Eta,220,5935
+  Vec 	Csi, Eta, Zet,220,5935
+  Vec 	Csi, Eta, Zet, Aj;220,5935
+  Vec 	ICsi,221,5961
+  Vec 	ICsi, IEta,221,5961
+  Vec 	ICsi, IEta, IZet,221,5961
+  Vec 	ICsi, IEta, IZet, IAj;221,5961
+  Vec 	JCsi,222,5991
+  Vec 	JCsi, JEta,222,5991
+  Vec 	JCsi, JEta, JZet,222,5991
+  Vec 	JCsi, JEta, JZet, JAj;222,5991
+  Vec 	KCsi,223,6021
+  Vec 	KCsi, KEta,223,6021
+  Vec 	KCsi, KEta, KZet,223,6021
+  Vec 	KCsi, KEta, KZet, KAj;223,6021
+  Vec 	Ucont,225,6092
+  Vec 	Ucont,Vcont;225,6092
+  Vec 	Ucat,226,6149
+  Vec 	Ucat, Wcat;226,6149
+  Vec	Ucat_o;227,6201
+  Vec	Ucont_o,228,6215
+  Vec	Ucont_o, Ucont_rm1,228,6215
+  Vec	Ucont_o, Ucont_rm1, Rhs,228,6215
+  Vec	Ucont_o, Ucont_rm1, Rhs, dUcont,228,6215
+  Vec	Ucont_o, Ucont_rm1, Rhs, dUcont, pUcont;228,6215
+  Vec 	P,229,6262
+  Vec 	P, P_o;229,6262
+  Vec   Qnew;231,6307
+  Vec   Ql;232,6321
+  Vec   shrr;233,6333
+  Vec   ItfcQ;234,6347
+  Vec	nhostQ;235,6372
+  Vec   lItfcQ;236,6397
+  PetscReal LVOUT;237,6424
+  PetscReal cdisx,240,6445
+  PetscReal cdisx,cdisy,240,6445
+  PetscReal cdisx,cdisy,cdisz;240,6445
+  Vec	Phi;242,6506
+  Vec	GridSpace;243,6517
+  Vec	Nvert;244,6534
+  Vec	Nvert_o;245,6547
+  Vec   Itfc;246,6562
+  BCS	Bcs;247,6586
+  Vec	lUcont,249,6598
+  Vec	lUcont, lUcat,249,6598
+  Vec	lUcont, lUcat, lP,249,6598
+  Vec	lUcont, lUcat, lP, lPhi,249,6598
+  Vec	lUcont, lUcat, lP, lPhi, lVcont,249,6598
+  Vec	lUcont, lUcat, lP, lPhi, lVcont,lWcat;249,6598
+  Vec   lUcont_o,250,6643
+  Vec   lUcont_o, lUcont_rm1;250,6643
+  Vec	lCsi,251,6685
+  Vec	lCsi, lEta,251,6685
+  Vec	lCsi, lEta, lZet,251,6685
+  Vec	lCsi, lEta, lZet, lAj;251,6685
+  Vec	lICsi,252,6714
+  Vec	lICsi, lIEta,252,6714
+  Vec	lICsi, lIEta, lIZet,252,6714
+  Vec	lICsi, lIEta, lIZet, lIAj;252,6714
+  Vec	lJCsi,253,6747
+  Vec	lJCsi, lJEta,253,6747
+  Vec	lJCsi, lJEta, lJZet,253,6747
+  Vec	lJCsi, lJEta, lJZet, lJAj;253,6747
+  Vec	lKCsi,254,6780
+  Vec	lKCsi, lKEta,254,6780
+  Vec	lKCsi, lKEta, lKZet,254,6780
+  Vec	lKCsi, lKEta, lKZet, lKAj;254,6780
+  Vec	lGridSpace;255,6813
+  Vec	lNvert,256,6831
+  Vec	lNvert, lNvert_o,256,6831
+  Vec	lNvert, lNvert_o, lNFace;256,6831
+  Vec	lCent;257,6863
+  Vec   lItfc;258,6876
+  Vec   lMAreaCsi,260,6903
+  Vec   lMAreaCsi, lMAreaEta,260,6903
+  Vec   lMAreaCsi, lMAreaEta, lMAreaZet;260,6903
+  Vec	inletU;262,6963
+  Vec	nhostU;264,6978
+  Vec	DUold;267,7005
+  Vec	Forcing;269,7019
+  Vec	Ucont_MG;270,7034
+  Vec	Dt,272,7051
+  Vec	Dt, Nu_t,272,7051
+  Vec	Dt, Nu_t, CS;272,7051
+  AO	ao;274,7072
+  PetscReal	ren;276,7082
+  PetscReal	dt;277,7118
+  PetscReal	st;278,7148
+  PetscReal     FluxIntpSum;281,7218
+  Vec           psuedot;284,7264
+  PetscReal     cfl,285,7289
+  PetscReal     cfl, vnn;285,7289
+  PetscReal	r[r287,7316
+  PetscReal	r[101], tin[tin287,7316
+  PetscReal	r[101], tin[101], uinr[uinr287,7316
+  PetscInt      ip[ip289,7364
+  PetscInt      ip[10],jp[jp289,7364
+  PetscInt      ip[10],jp[10],kp[kp289,7364
+  PetscInt      ip[10],jp[10],kp[10],dispx[dispx289,7364
+  PetscInt      ip[10],jp[10],kp[10],dispx[10],dispy[dispy289,7364
+  PetscInt      ip[10],jp[10],kp[10],dispx[10],dispy[10],dispz[dispz289,7364
+  PetscInt      ip[10],jp[10],kp[10],dispx[10],dispy[10],dispz[10],dispnn[dispnn289,7364
+  PetscReal     *itfchostx,itfchostx290,7443
+  PetscReal     *itfchostx, *itfchosty,itfchosty290,7443
+  PetscReal     *itfchostx, *itfchosty, *itfchostz;itfchostz290,7443
+  PetscReal     FluxInSum,291,7495
+  PetscReal     FluxInSum, FluxOutSum,291,7495
+  PetscReal     FluxInSum, FluxOutSum, FluxIntfcSum;291,7495
+  PetscReal                AreaOutSum,292,7548
+  PetscReal                AreaOutSum, AreaIntfcSum;292,7548
+  PetscErrorCode aotopetsc;296,7668
+  PetscBool assignedA;297,7696
+  PetscInt _this;299,7720
+  PetscInt *idx_from;idx_from300,7738
+  PetscInt bctype[bctype302,7761
+  PetscInt bctype[6],inttype[inttype302,7761
+  PetscInt itfcptsnumber;303,7794
+  PetscInt *itfcI,itfcI304,7820
+  PetscInt *itfcI, *itfcJ,itfcJ304,7820
+  PetscInt *itfcI, *itfcJ, *itfcK;itfcK304,7820
+  PetscInt *itfchostI,itfchostI305,7855
+  PetscInt *itfchostI, *itfchostJ,itfchostJ305,7855
+  PetscInt *itfchostI, *itfchostJ, *itfchostK,itfchostK305,7855
+  PetscInt *itfchostI, *itfchostJ, *itfchostK, *itfchostB;itfchostB305,7855
+  PetscInt	IM,306,7914
+  PetscInt	IM, JM,306,7914
+  PetscInt	IM, JM, KM;306,7914
+  PetscReal Max_X,307,7959
+  PetscReal Max_X,Max_Y,307,7959
+  PetscReal Max_X,Max_Y,Max_Z,307,7959
+  PetscReal Max_X,Max_Y,Max_Z,Min_X,307,7959
+  PetscReal Max_X,Max_Y,Max_Z,Min_X,Min_Y,307,7959
+  PetscReal Max_X,Max_Y,Max_Z,Min_X,Min_Y,Min_Z;307,7959
+  PetscInt ibmnumber;309,8009
+  IBMInfo  *ibm_intp;ibm_intp310,8031
+  Mat	A,311,8053
+  Mat	A, C;311,8053
+  KSP   ksp;312,8065
+  IBMNodes *ibm;ibm314,8079
+  DM	*da_f,da_f316,8097
+  DM	*da_f, *da_c;da_c316,8097
+  struct UserCtx *user_f,user_f317,8116
+  struct UserCtx *user_f, *user_c;user_c317,8116
+  Vec	*lNvert_c;lNvert_c318,8151
+  Vec	B;320,8169
+  Vec	Rhsp,321,8178
+  Vec	Rhsp, X,321,8178
+  Vec	Rhsp, X, R;321,8178
+  Mat	MR,323,8199
+  Mat	MR, MP;323,8199
+  MatNullSpace nullsp;324,8213
+  PetscInt *KSKE;KSKE328,8283
+  PetscBool multinullspace;329,8301
+  IBMList *ibmlist;ibmlist331,8330
+  PetscInt thislevel,333,8351
+  PetscInt thislevel, mglevels;333,8351
+  PetscInt isc,335,8384
+  PetscInt isc, jsc,335,8384
+  PetscInt isc, jsc, ksc;335,8384
+  PetscInt cgrid;336,8410
+  FlowWave *inflow;inflow338,8431
+  PetscInt number_flowwave;339,8451
+  Vec Ucat_sum;342,8489
+  Vec Ucat_cross_sum;343,8535
+  Vec Ucat_square_sum;344,8578
+  Vec P_sum;345,8622
+  Vec lSx,346,8650
+  Vec lSx, lSy,346,8650
+  Vec lSx, lSy, lSz,346,8650
+  Vec lSx, lSy, lSz, lS;346,8650
+  Vec lLM,347,8677
+  Vec lLM, lMM,347,8677
+  Vec lLM, lMM, lNM;347,8677
+  Vec	lNu_t,349,8732
+  Vec	lNu_t, lF1;349,8732
+  Vec	lCs;350,8796
+  Vec	K_Omega,351,8807
+  Vec	K_Omega, lK_Omega,351,8807
+  Vec	K_Omega, lK_Omega, K_Omega_o,351,8807
+  Vec	K_Omega, lK_Omega, K_Omega_o, lK_Omega_o;351,8807
+  Vec	Distance;352,8871
+  Vec   lItfcKO;353,8887
+  PetscInt	rhs_count;355,8919
+  Vec	Gid,356,8941
+  Vec	Gid, Gidm;356,8941
+  Vec	Phi2,357,9021
+  Vec	Phi2, B2,357,9021
+  Vec	Phi2, B2, Ucont2;357,9021
+  PetscInt	local_Phi2_size,358,9045
+  PetscInt	local_Phi2_size, p_global_begin;358,9045
+  PetscInt	reduced_p_size;359,9089
+  DM        fda2;361,9117
+  Vec	    lUstar;362,9182
+  Cmpnts2   **komega_plane;komega_plane363,9200
+  SNES snes;366,9244
+  Mat  J,367,9257
+  Mat  J,PJ,367,9257
+  Mat  J,PJ,J2;367,9257
+  Vec  RFC;368,9283
+  ISColoring iscoloring;369,9295
+  MatFDColoring matfdcoloring;370,9320
+  Vec ParticleVec,374,9370
+  Vec ParticleVec, lParticleVec;374,9370
+} UserCtx;376,9404
+  UserCtx *user;user379,9433
+  PetscInt thislevel;380,9450
+  DM       packer;381,9472
+} MGCtx;383,9515
+  PetscInt mglevels;386,9542
+  PetscInt thislevel;387,9563
+  PetscBool  isc,389,9586
+  PetscBool  isc, jsc,389,9586
+  PetscBool  isc, jsc, ksc;389,9586
+  MGCtx *mgctx;mgctx390,9614
+  DM       packer;392,9641
+  SNES     snespacker;393,9660
+} UserMG;394,9683
+  PetscReal     P;397,9711
+  PetscInt      n_P;398,9761
+  PetscReal     Tow_ws,399,9816
+  PetscReal     Tow_ws, Tow_wt;399,9816
+  PetscReal     Tow_wn;400,9880
+  PetscInt      Clsnbpt_i,402,9923
+  PetscInt      Clsnbpt_i,Clsnbpt_j,402,9923
+  PetscInt      Clsnbpt_i,Clsnbpt_j,Clsnbpt_k;402,9923
+  PetscInt      icell,403,10013
+  PetscInt      icell,jcell,403,10013
+  PetscInt      icell,jcell,kcell;403,10013
+  PetscInt      FoundAroundcell;404,10048
+  PetscInt      Need3rdPoint;405,10081
+} SurfElmtInfo;407,10144
+  PetscReal    S_new[S_new410,10178
+  PetscReal    S_new[6],S_old[S_old410,10178
+  PetscReal    S_new[6],S_old[6],S_real[S_real410,10178
+  PetscReal    S_new[6],S_old[6],S_real[6],S_realm1[S_realm1410,10178
+  PetscReal    S_ang_n[S_ang_n411,10234
+  PetscReal    S_ang_n[6],S_ang_o[S_ang_o411,10234
+  PetscReal    S_ang_n[6],S_ang_o[6],S_ang_r[S_ang_r411,10234
+  PetscReal    S_ang_n[6],S_ang_o[6],S_ang_r[6],S_ang_rm1[S_ang_rm1411,10234
+  PetscReal    red_vel,412,10296
+  PetscReal    red_vel, damp,412,10296
+  PetscReal    red_vel, damp, mu_s;412,10296
+  PetscReal    F_x,413,10374
+  PetscReal    F_x,F_y,413,10374
+  PetscReal    F_x,F_y,F_z,413,10374
+  PetscReal    F_x,F_y,F_z, A_tot;413,10374
+  PetscReal    F_x_old,414,10425
+  PetscReal    F_x_old,F_y_old,414,10425
+  PetscReal    F_x_old,F_y_old,F_z_old;414,10425
+  PetscReal    F_x_real,415,10481
+  PetscReal    F_x_real,F_y_real,415,10481
+  PetscReal    F_x_real,F_y_real,F_z_real;415,10481
+  PetscReal    M_x,416,10540
+  PetscReal    M_x,M_y,416,10540
+  PetscReal    M_x,M_y,M_z;416,10540
+  PetscReal    M_x_old,417,10579
+  PetscReal    M_x_old,M_y_old,417,10579
+  PetscReal    M_x_old,M_y_old,M_z_old;417,10579
+  PetscReal    M_x_real,418,10635
+  PetscReal    M_x_real,M_y_real,418,10635
+  PetscReal    M_x_real,M_y_real,M_z_real;418,10635
+  PetscReal    M_x_rm2,419,10694
+  PetscReal    M_x_rm2,M_y_rm2,419,10694
+  PetscReal    M_x_rm2,M_y_rm2,M_z_rm2;419,10694
+  PetscReal    M_x_rm3,420,10750
+  PetscReal    M_x_rm3,M_y_rm3,420,10750
+  PetscReal    M_x_rm3,M_y_rm3,M_z_rm3;420,10750
+  PetscReal    x_c,421,10806
+  PetscReal    x_c,y_c,421,10806
+  PetscReal    x_c,y_c,z_c;421,10806
+  PetscReal    a_c[a_c422,10862
+  PetscReal    Mdpdn_x,423,10916
+  PetscReal    Mdpdn_x, Mdpdn_y,423,10916
+  PetscReal    Mdpdn_x, Mdpdn_y,Mdpdn_z;423,10916
+  PetscReal    Mdpdn_x_old,424,10957
+  PetscReal    Mdpdn_x_old, Mdpdn_y_old,424,10957
+  PetscReal    Mdpdn_x_old, Mdpdn_y_old,Mdpdn_z_old;424,10957
+  PetscReal    Power;425,11010
+  PetscReal    clone;427,11041
+  PetscInt     pbc[pbc428,11063
+  PetscReal    I_inv[I_inv429,11086
+  PetscReal    L_n[L_n430,11114
+  PetscReal    L_n[3],L_o[L_o430,11114
+  PetscReal    L_n[3],L_o[3],L_r[L_r430,11114
+  PetscReal    alpha[alpha431,11170
+  PetscReal    acc[acc432,11195
+  PetscReal    R[R433,11218
+  PetscReal    R[3][3],q[q433,11218
+  PetscReal    R[3][3],q[4],q_r[q_r433,11218
+  PetscReal    dS[dS435,11278
+  PetscReal    dS[6],dS_o[dS_o435,11278
+  PetscReal    dS[6],dS_o[6],atk,435,11278
+  PetscReal    dS[6],dS_o[6],atk,atk_o;435,11278
+  SurfElmtInfo  *elmtinfo;elmtinfo438,11346
+  IBMInfo       *fsi_intp;fsi_intp439,11373
+  PetscReal    Max_xbc,442,11457
+  PetscReal    Max_xbc,Min_xbc;442,11457
+  PetscReal    Max_ybc,443,11489
+  PetscReal    Max_ybc,Min_ybc;443,11489
+  PetscReal    Max_zbc,444,11521
+  PetscReal    Max_zbc,Min_zbc;444,11521
+  PetscInt     CV_ys,447,11568
+  PetscInt     CV_ys,CV_ye,447,11568
+  PetscInt     CV_ys,CV_ye,CV_zs,447,11568
+  PetscInt     CV_ys,CV_ye,CV_zs,CV_ze;447,11568
+} FSInfo;448,11608
+  PetscInt   n_time,451,11636
+  PetscInt   n_time, n_midp,451,11636
+  PetscInt   n_time, n_midp, n_subit;451,11636
+  PetscReal  *x_midp,x_midp452,11726
+  PetscReal  *x_midp, *y_midp,y_midp452,11726
+  PetscReal  *x_midp, *y_midp, *z_midp;z_midp452,11726
+  PetscReal  *x_com,x_com453,11806
+  PetscReal  *x_com, *y_com,y_com453,11806
+  PetscReal  *x_com, *y_com, *head_ang;head_ang453,11806
+  PetscReal  *s1,s1454,11890
+  PetscReal  *s1,*s2,s2454,11890
+  PetscReal  *s1,*s2,*s3;s3454,11890
+  PetscReal  *st1,st1458,12069
+  PetscReal  *st1,*st2,st2458,12069
+  PetscReal  *st1,*st2,*st3;st3458,12069
+  Mat        Mphi;463,12301
+  PetscReal  xmin,464,12320
+  PetscReal  xmin,xmax,464,12320
+  PetscReal  xmin,xmax,ymin,464,12320
+  PetscReal  xmin,xmax,ymin,ymax,464,12320
+  PetscReal  xmin,xmax,ymin,ymax,zmin,464,12320
+  PetscReal  xmin,xmax,ymin,ymax,zmin,zmax;464,12320
+} Cstart;465,12380
+#define COEF_TIME_ACCURACY 467,12391

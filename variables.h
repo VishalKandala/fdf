@@ -37,11 +37,17 @@ typedef struct {
 
 
 typedef struct{
-  PetscScalar cell[3];
+  PetscInt64 cell[3];
+  PetscInt64 PID;
   Cmpnts loc;
   Cmpnts vel;
   Cmpnts weights;
 } Particle;
+
+// Structure to represent a cell with its neighboring cells and vertices
+typedef struct {
+    Cmpnts vertices[8]; // Vertices of the cell
+} Cell;
 
 typedef struct{
    Cmpnts min_coords, max_coords;

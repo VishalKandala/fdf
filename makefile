@@ -44,6 +44,8 @@ data: variables.o  compgeom.o data_ibm.o ibm_io.o fsi.o fsi_move.o fish.o  data.
 interpolation: interpolation.o
 	  -${CLINKER} ${CFLAGS} -o interpolation interpolation.o ${PETSC_LIB}
 
+swarm_interp: swarm_interp.o variables.o walkingsearch.o ParticleSwarm.o logging.o grid.o
+	  -${CLINKER} ${CFLAGS} -o swarm_interp swarm_interp.o variables.o walkingsearch.o ParticleSwarm.o logging.o grid.o ${PETSC_LIB}
 
 
 itfcsearch: itfcsearch.o variables.o compgeom.o
@@ -61,8 +63,8 @@ cleanobj:
 	rm -f *.o
 
 # Swarm Test Executable
-swarm_test: swarm_test.o
-	-${CLINKER} -o swarm_test swarm_test.o ${PETSC_LIB} ${LIBS}
+swarm_test: swarm_test.o variables.o walkingsearch.o
+	-${CLINKER} -o swarm_test swarm_test.o variables.o walkingsearch.o ${PETSC_LIB} ${LIBS}
 
 # Compilation rule for swarm_test.c
 swarm_test.o: swarm_test.c
