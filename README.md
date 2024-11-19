@@ -1,7 +1,5 @@
 # **FDF Swarm**
 
-Your Project Name Here
-
 ---
 
 ## **Table of Contents**
