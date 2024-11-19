@@ -1,7 +1,5 @@
 # **FDF Swarm**
 
-Your Project Name Here
-
 ---
 
 ## **Table of Contents**
@@ -191,6 +189,6 @@ This project is licensed under the MIT License. See the LICENSE file for details
 ## **Contact Information**
 
 For issues or inquiries, contact:
-- Email: your_email@example.com
-- GitHub: [Your GitHub Profile](https://github.com/your-profile)
+- Email: vishalkandala@tamu.edu
+- GitHub: https://github.com/VishalKandala
 */
