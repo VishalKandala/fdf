@@ -1,0 +1,5 @@
+obj/
+bin/
+TAGS
+*.o
+*.exe
