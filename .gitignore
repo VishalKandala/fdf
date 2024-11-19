@@ -3,3 +3,4 @@ bin/
 TAGS
 *.o
 *.exe
+*.swp
