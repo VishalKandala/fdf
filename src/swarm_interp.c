@@ -1,4 +1,4 @@
-/**
+ /**
  * @file swarm_interp.c
  * @brief Main program for DMSwarm interpolation using the fdf-curvIB method.
  *
@@ -21,6 +21,7 @@ static char help[] = "DMSwarm Interpolation - fdf-curvIB ";
 #include "walkingsearch.h"  // Particle location functions
 #include "grid.h"           // Grid functions
 #include "logging.h"        // Logging macros
+#include "io.h"             // Data Input and Output functions
 
 // Global variables
 PetscInt np = 0;        // Number of particles
@@ -28,65 +29,6 @@ PetscInt ti = 0;        // Time index
 PetscReal L_dim = 1.0;  // Domain length (unused in this snippet)
 PetscInt block_number = 1; // Number of blocks (assuming 1 for simplicity)
 PetscInt visflg = 0;    // Visualization flag
-
-// --------------------- Function Implementations ---------------------
-
-/**
- * @brief Reads the velocity field (Ucat) from a binary file.
- *
- * This function reads the velocity field from a binary file and loads it into the UserCtx's Ucat vector.
- *
- * @param[in,out] user Pointer to the UserCtx structure containing simulation context.
- *
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
- */
-PetscErrorCode Ucat_Binary_Input(UserCtx *user)
-{
-    PetscViewer viewer;
-    char filen[90];
-    PetscInt ctr = 7;
-    PetscErrorCode ierr;
-
-    sprintf(filen, "results/ufield%5.5d_%1.1d.dat", ti, user->_this);
-
-    ierr = PetscViewerBinaryOpen(PETSC_COMM_WORLD, filen, FILE_MODE_READ, &viewer); CHKERRQ(ierr);
-
-    PetscInt N;
-    ierr = VecGetSize(user->Ucat, &N); CHKERRQ(ierr);
-    if (visflg == ctr)
-        PetscPrintf(PETSC_COMM_WORLD, "Ucat_Binary_Input - user, SizeOf(Ucat) - %p, %d \n", (void*)user, N);
-    ierr = VecLoad(user->Ucat, viewer); CHKERRQ(ierr);
-
-    ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
-
-    ierr = PetscBarrier(NULL); CHKERRQ(ierr);
-
-    return 0;
-}
-
-/**
- * @brief Checks if a particle's location intersects with the given bounding box.
- *
- * @param[in] bbox     Pointer to the BoundingBox structure.
- * @param[in] particle Pointer to the Particle structure.
- *
- * @return PetscBool Returns PETSC_TRUE if the particle intersects with the bounding box, PETSC_FALSE otherwise.
- */
-PetscBool CPUPointIntersectCheck(BoundingBox *bbox, Particle *particle)
-{
-    Cmpnts loc = particle->loc;
-    Cmpnts min_coords = bbox->min_coords;
-    Cmpnts max_coords = bbox->max_coords;
-    PetscBool Intersects = PETSC_FALSE;
-
-    if ((loc.x >= min_coords.x && loc.x <= max_coords.x) &&
-        (loc.y >= min_coords.y && loc.y <= max_coords.y) &&
-        (loc.z >= min_coords.z && loc.z <= max_coords.z)) {
-        Intersects = PETSC_TRUE;
-    }
-
-    return Intersects;
-}
 
 /**
  * @brief Calculates interpolation weights based on distances to cell faces.
@@ -155,13 +97,22 @@ int main(int argc, char **argv)
     // Define grid coordinates
     ierr = DefineGridCoordinates(user); CHKERRQ(ierr);
 
-    // Create Vector for Ucat
+     // Create Vector for Ucat */
     for (bi = 0; bi < block_number; bi++) {
-        ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Ucat); CHKERRQ(ierr);
+         ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Ucat); CHKERRQ(ierr); 
+         ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Ucont); CHKERRQ(ierr);
+         ierr = DMCreateGlobalVector(user[bi].da, &user[bi].P); CHKERRQ(ierr);
+         ierr = DMCreateGlobalVector(user[bi].da, &user[bi].Nvert); CHKERRQ(ierr);
+	 ierr = DMCreateGlobalVector(user[bi].da, &user[bi].Nvert_o); CHKERRQ(ierr);  
     }
 
-    // Read Ucat from ufield
-    ierr = Ucat_Binary_Input(user); CHKERRQ(ierr);
+    // Read Simulation Data
+
+    user->averaging = PETSC_FALSE;
+    user->les = PETSC_FALSE;
+    user->rans = PETSC_FALSE;
+
+    ierr = ReadSimulationFields(user,ti); CHKERRQ(ierr);
 
     ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
 

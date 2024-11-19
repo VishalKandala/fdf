@@ -643,45 +643,45 @@ PetscErrorCode InitializeParticle(PetscInt i, const PetscInt64 *PIDs, const Pets
     PetscFunctionBeginUser;
     
     if (particle == NULL) {
-        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "InitializeParticle - Output Particle pointer is NULL.");
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "InitializeParticle - Output Particle pointer is NULL. \n");
     }
     
     // Logging the start of particle initialization
-    LOG(GLOBAL,LOG_INFO, "Initializing Particle [%D] with PID: %lld.", i, PIDs[i]);
+    LOG(GLOBAL,LOG_INFO, "InitializeParticle - Initializing Particle [%D] with PID: %lld.\n", i, PIDs[i]);
     
     // Initialize PID
     particle->PID = PIDs[i];
-    LOG(GLOBAL,LOG_DEBUG, "Particle [%D] PID set to: %lld.", i, particle->PID);
+    LOG(GLOBAL,LOG_DEBUG, "InitializeParticle - Particle [%D] PID set to: %lld.\n", i, particle->PID);
     
     // Initialize weights
     particle->weights.x = weights[3 * i];
     particle->weights.y = weights[3 * i + 1];
     particle->weights.z = weights[3 * i + 2];
-    LOG(GLOBAL,LOG_DEBUG, "Particle [%D] weights set to: (%.6f, %.6f, %.6f).", 
+    LOG(GLOBAL,LOG_DEBUG, "InitializeParticle - Particle [%D] weights set to: (%.6f, %.6f, %.6f).\n", 
         i, particle->weights.x, particle->weights.y, particle->weights.z);
     
     // Initialize locations
     particle->loc.x = positions[3 * i];
     particle->loc.y = positions[3 * i + 1];
     particle->loc.z = positions[3 * i + 2];
-    LOG(GLOBAL,LOG_DEBUG, "Particle [%D] location set to: (%.6f, %.6f, %.6f).", 
+    LOG(GLOBAL,LOG_DEBUG, "InitializeParticle - Particle [%D] location set to: (%.6f, %.6f, %.6f).\n", 
         i, particle->loc.x, particle->loc.y, particle->loc.z);
     
     // Initialize velocities (assuming default zero; modify if necessary)
     particle->vel.x = 0.0;
     particle->vel.y = 0.0;
     particle->vel.z = 0.0;
-    LOG(GLOBAL,LOG_DEBUG, "Particle [%D] velocities initialized to zero.", i);
+    LOG(GLOBAL,LOG_DEBUG, "InitializeParticle - Particle [%D] velocities initialized to zero.\n", i);
     
     // Initialize cell indices
     particle->cell[0] = cellIndices[3 * i];
     particle->cell[1] = cellIndices[3 * i + 1];
     particle->cell[2] = cellIndices[3 * i + 2];
-    LOG(GLOBAL,LOG_DEBUG, "Particle [%D] cell indices set to: [%lld, %lld, %lld].", 
+    LOG(GLOBAL,LOG_DEBUG, "InitializeParticle - Particle [%D] cell indices set to: [%lld, %lld, %lld].\n", 
         i, particle->cell[0], particle->cell[1], particle->cell[2]);
     
     // Logging the completion of particle initialization
-    LOG(GLOBAL,LOG_INFO, "Completed initialization of Particle [%D].", i);
+    LOG(GLOBAL,LOG_INFO, "InitializeParticle - Completed initialization of Particle [%D].\n", i);
     
     PetscFunctionReturn(0);
 }
@@ -703,28 +703,28 @@ PetscErrorCode UpdateSwarmFields(PetscInt i, const Particle *particle,
     PetscFunctionBeginUser;
     
     if (particle == NULL) {
-        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UpdateSwarmFields - Input Particle pointer is NULL.");
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UpdateSwarmFields - Input Particle pointer is NULL.\n");
     }
     
     // Logging the start of swarm fields update
-    LOG(LOG_INFO, "Updating DMSwarm fields for Particle [%D].", i);
+    LOG(LOG_INFO, "Updating DMSwarm fields for Particle [%D].\n", i);
     
     // Update weights
     weights[3 * i]     = particle->weights.x;
     weights[3 * i + 1] = particle->weights.y;
     weights[3 * i + 2] = particle->weights.z;
-    LOG(GLOBAL,LOG_DEBUG, "UpdateSwarmFields - Updated weights for Particle [%D]: (%.6f, %.6f, %.6f).", 
+    LOG(GLOBAL,LOG_DEBUG, "UpdateSwarmFields - Updated weights for Particle [%D]: (%.6f, %.6f, %.6f).\n", 
         i, weights[3 * i], weights[3 * i + 1], weights[3 * i + 2]);
     
     // Update cell indices
     cellIndices[3 * i]     = particle->cell[0];
     cellIndices[3 * i + 1] = particle->cell[1];
     cellIndices[3 * i + 2] = particle->cell[2];
-    LOG(GLOBAL,LOG_DEBUG, "UpdateSwarmFields -  Updated cell indices for Particle [%D]: [%lld, %lld, %lld].", 
+    LOG(GLOBAL,LOG_DEBUG, "UpdateSwarmFields -  Updated cell indices for Particle [%D]: [%lld, %lld, %lld].\n", 
         i, cellIndices[3 * i], cellIndices[3 * i + 1], cellIndices[3 * i + 2]);
     
     // Logging the completion of swarm fields update
-    LOG(GLOBAL,LOG_INFO, "UpdateSwarmFields  - Completed updating DMSwarm fields for Particle [%D].", i);
+    LOG(GLOBAL,LOG_INFO, "UpdateSwarmFields  - Completed updating DMSwarm fields for Particle [%D].\n", i);
     
     PetscFunctionReturn(0);
 }
@@ -746,6 +746,7 @@ PetscErrorCode LocateAllParticlesInGrid(UserCtx *user) {
     PetscInt localNumParticles;
     PetscReal *positions = NULL, *weights = NULL;
     PetscInt64 *cellIndices = NULL, *PIDs = NULL;
+    PetscReal d[NUM_FACES];
     DM swarm = user->swarm;
     Particle particle;  // Reusable Particle struct
     
@@ -754,21 +755,21 @@ PetscErrorCode LocateAllParticlesInGrid(UserCtx *user) {
     // Retrieve MPI rank and size
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
     ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
-    LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - MPI Rank: %d, Size: %d.", rank, size);
+    LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - MPI Rank: %d, Size: %d.\n", rank, size);
     
     // Synchronize all processes to ensure all have reached this point
     ierr = MPI_Barrier(PETSC_COMM_WORLD); CHKERRQ(ierr);
-    LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - All processes synchronized at barrier.");
+    LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - All processes synchronized at barrier.\n");
     
     // Access DMSwarm fields
     ierr = DMSwarmGetLocalSize(swarm, &localNumParticles); CHKERRQ(ierr);
-    LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - Number of local particles: %d.", localNumParticles);
+    LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - Number of local particles: %d.\n", localNumParticles);
     
     ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
     ierr = DMSwarmGetField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr);
     ierr = DMSwarmGetField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIndices); CHKERRQ(ierr);
     ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&PIDs); CHKERRQ(ierr);
-    LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - DMSwarm fields accessed successfully.");
+    LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - DMSwarm fields accessed successfully.\n");
     
     // Iterate over each local particle
     for (PetscInt i = 0; i < localNumParticles; ++i) {
@@ -776,22 +777,29 @@ PetscErrorCode LocateAllParticlesInGrid(UserCtx *user) {
         ierr = InitializeParticle(i, PIDs, weights, positions, cellIndices, &particle); CHKERRQ(ierr);
         
         // Log particle initialization
-        LOG(GLOBAL,LOG_DEBUG, "LocateAllParticlesInGrid - Processing Particle [%D]: PID=%lld.", 
+        LOG(GLOBAL,LOG_DEBUG, "LocateAllParticlesInGrid - Processing Particle [%D]: PID=%lld.\n", 
             i, particle.PID);
         
         // Check if the particle intersects the bounding box
         PetscBool particle_detected = IsParticleInsideBoundingBox(&(user->bbox), &particle);
-        LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - Particle [%D] intersected bounding box: %s.", 
+        LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - Particle [%D] intersected bounding box: %s.\n", 
             i, particle_detected ? "YES" : "NO");
         
         if (particle_detected) {
             // Locate the particle within the grid
-            LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - Locating Particle [%D] in grid.", i);
-            ierr = LocateParticleInGrid(user, &particle); CHKERRQ(ierr);
-            LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - Particle [%D] located in cell [%lld, %lld, %lld].", 
+            LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - Locating Particle [%D] in grid. \n", i);
+            ierr = LocateParticleInGrid(user, &particle, &d); CHKERRQ(ierr);
+            LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - Particle [%D] located in cell [%lld, %lld, %lld].\n", 
                 i, particle.cell[0], particle.cell[1], particle.cell[2]);
-        }
+
+       // Synchronize all processes to ensure all have reached this point
+       ierr = MPI_Barrier(PETSC_COMM_WORLD); CHKERRQ(ierr);
+            // Update the weights of the particle for interpolation.
+	    ierr = UpdateParticleWeights(&d,&particle);
+	} // particle_detected
         
+        	
+ 
         // Update DMSwarm fields with possibly modified Particle data
         ierr = UpdateSwarmFields(i, &particle, weights, cellIndices); CHKERRQ(ierr);
     }
@@ -801,10 +809,10 @@ PetscErrorCode LocateAllParticlesInGrid(UserCtx *user) {
     ierr = DMSwarmRestoreField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr);
     ierr = DMSwarmRestoreField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIndices); CHKERRQ(ierr);
     ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&PIDs); CHKERRQ(ierr);
-    LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - DMSwarm fields restored successfully.");
+    LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - DMSwarm fields restored successfully.\n");
     
     // Logging the completion of particle location
-    LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - Completed locating all particles in grid.");
+    LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - Completed locating all particles in grid.\n");
     
     PetscFunctionReturn(0);
 }
@@ -851,8 +859,8 @@ PetscBool IsParticleInsideBoundingBox(const BoundingBox *bbox, const Particle *p
     const Cmpnts max_coords = bbox->max_coords;
 
     // Log the particle location and bounding box coordinates for debugging
-    LOG(LOCAL, LOG_DEBUG, "%s: Particle PID %lld location: (%.6f, %.6f, %.6f).", funcName, particle->PID, loc.x, loc.y, loc.z);
-    LOG(LOCAL, LOG_DEBUG, "%s: BoundingBox min_coords: (%.6f, %.6f, %.6f), max_coords: (%.6f, %.6f, %.6f).",
+    LOG(LOCAL, LOG_DEBUG, "%s: Particle PID %lld location: (%.6f, %.6f, %.6f).\n", funcName, particle->PID, loc.x, loc.y, loc.z);
+    LOG(LOCAL, LOG_DEBUG, "%s: BoundingBox min_coords: (%.6f, %.6f, %.6f), max_coords: (%.6f, %.6f, %.6f).\n",
         funcName, min_coords.x, min_coords.y, min_coords.z, max_coords.x, max_coords.y, max_coords.z);
 
     // Check if the particle's location is within the bounding box
@@ -860,11 +868,59 @@ PetscBool IsParticleInsideBoundingBox(const BoundingBox *bbox, const Particle *p
         (loc.y >= min_coords.y && loc.y <= max_coords.y) &&
         (loc.z >= min_coords.z && loc.z <= max_coords.z)) {
         // Particle is inside the bounding box
-        LOG(LOCAL, LOG_DEBUG, "%s: Particle PID %lld is inside the bounding box.", funcName, particle->PID);
+        LOG(LOCAL, LOG_DEBUG, "%s: Particle PID %lld is inside the bounding box.\n", funcName, particle->PID);
         return PETSC_TRUE;
     }
 
     // Particle is outside the bounding box
-    LOG(LOCAL, LOG_DEBUG, "%s: Particle PID %lld is outside the bounding box.", funcName, particle->PID);
+    LOG(LOCAL, LOG_DEBUG, "%s: Particle PID %lld is outside the bounding box.\n", funcName, particle->PID);
     return PETSC_FALSE;
 }
+
+/**
+ * @brief Updates a particle's interpolation weights based on distances to cell faces.
+ *
+ * This function computes interpolation weights using distances to the six
+ * cell faces (`d`) and updates the `weight` field of the provided particle.
+ *
+ * @param[in]  d        Pointer to an array of distances to the six cell faces.
+ * @param[out] particle Pointer to the Particle structure whose weights are to be updated.
+ *
+ * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
+ */
+PetscErrorCode UpdateParticleWeights(const PetscReal *d, Particle *particle) {
+    PetscErrorCode ierr = 0;
+
+    // Validate input pointers
+    if (!d || !particle) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL,
+                "UpdateParticleWeights - Null pointer argument (d or particle).");
+    }
+
+    // Validate distances
+    for (PetscInt i = LEFT; i < NUM_FACES; i++) {
+        if (d[i] <= 0) {
+            SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_OUTOFRANGE,
+                    "UpdateParticleWeights - Distances must be positive values.");
+        }
+    }
+
+    // Log the input distances
+    LOG(GLOBAL, LOG_DEBUG,
+        "UpdateParticleWeights - Calculating weights with distances: "
+        "[LEFT=%f, RIGHT=%f, BOTTOM=%f, TOP=%f, FRONT=%f, BACK=%f].\n",
+        d[LEFT], d[RIGHT], d[BOTTOM], d[TOP], d[FRONT], d[BACK]);
+
+    // Compute and update the particle's weights
+    particle->weights.x = d[LEFT] / (d[LEFT] + d[RIGHT]);
+    particle->weights.y = d[BOTTOM] / (d[BOTTOM] + d[TOP]);
+    particle->weights.z = d[FRONT] / (d[FRONT] + d[BACK]);
+
+    // Log the updated weights
+    LOG(GLOBAL, LOG_DEBUG,
+        "UpdateParticleWeights - Updated particle weights: x=%f, y=%f, z=%f.\n",
+        particle->weights.x, particle->weights.y, particle->weights.z);
+
+    return 0;
+}
+

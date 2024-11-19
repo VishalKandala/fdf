@@ -14,25 +14,31 @@
 #include "common.h"   // Common type definitions
 #include "logging.h"  // Logging macros and definitions
 #include <stdlib.h>
-
+#include "io.h"
 // --------------------- Function Declarations ---------------------
 
 /**
- * @brief Parses grid inputs from options or files.
+ * @brief Parses grid-related inputs for setting up the simulation.
  *
- * @param[in,out] user           Pointer to UserCtx structure.
- * @param[out]    generate_grid  Flag indicating whether the grid is programmatically generated (1) or read from a file (0).
- * @param[out]    grid1d         Flag indicating whether the grid is 1D (1) or 3D (0).
- * @param[out]    L_x, L_y, L_z  Domain lengths in x, y, and z directions.
- * @param[out]    imm, jmm, kmm  Grid sizes for blocks in x, y, and z directions.
- * @param[out]    nblk           Number of blocks.
- * @param[in,out] fd             File pointer for grid input file.
+ * This function coordinates the retrieval of grid parameters by delegating
+ * to appropriate helper functions based on the grid source (generation or file).
  *
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ * @param[in,out] user          Pointer to the UserCtx structure containing grid details.
+ * @param[out]    generate_grid Flag indicating whether the grid should be generated (1) or read from file (0).
+ * @param[out]    grid1d              Flag indicating whether the grid is 1D(1) or not(0).
+ * @param[out]    L_x           Pointer to store the domain length in the x-direction.
+ * @param[out]    L_y           Pointer to store the domain length in the y-direction.
+ * @param[out]    L_z           Pointer to store the domain length in the z-direction.
+ * @param[out]    imm           Pointer to Array to store the i-dimensions for each block.
+ * @param[out]    jmm           Pointer to Array to store the j-dimensions for each block.
+ * @param[out]    kmm           Pointer to Array to store the k-dimensions for each block.
+ * @param[out]    nblk          Pointer to store the number of blocks.
+ * @param[out]    fd            File pointer for reading grid data (if applicable).
+ *
+ * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  */
-PetscErrorCode ParseGridInputs(UserCtx *user, PetscInt *generate_grid, PetscInt *grid1d,
-                               PetscReal *L_x, PetscReal *L_y, PetscReal *L_z,
-                               PetscInt *imm, PetscInt *jmm, PetscInt *kmm,
+PetscErrorCode ParseGridInputs(UserCtx *user, PetscInt *generate_grid, PetscInt *grid1d, PetscReal *L_x,
+                               PetscReal *L_y, PetscReal *L_z, PetscInt **imm, PetscInt **jmm, PetscInt **kmm,
                                PetscInt *nblk, FILE *fd);
 
 /**
@@ -44,20 +50,34 @@ PetscErrorCode ParseGridInputs(UserCtx *user, PetscInt *generate_grid, PetscInt 
  * @param[in,out] fd            File pointer for grid input file.
  * @param[in]     generate_grid Flag indicating whether the grid is programmatically generated (1) or read from a file (0).
  * @param[in]     imm, jmm, kmm Grid sizes for blocks in x, y, and z directions.
+ * @param[in]     nblk          Pointer to store the number of blocks.     
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
 PetscErrorCode DetermineGridSizes(PetscInt bi, UserCtx *user, PetscInt *IM, PetscInt *JM, PetscInt *KM,
-                                  FILE *fd, PetscInt generate_grid, PetscInt *imm, PetscInt *jmm, PetscInt *kmm);
+                                  FILE *fd, PetscInt generate_grid, PetscInt *imm, PetscInt *jmm, PetscInt *kmm, PetscInt *nblk);
+
 
 /**
- * @brief Initializes the DM structure for a grid.
+ * @brief Initializes the DMDA grid for the simulation.
  *
- * @param[in,out] user Pointer to UserCtx structure.
+ * This function sets up a 3D DMDA (Distributed Memory Distributed Array) grid with uniform
+ * coordinates. The DMDA is essential for managing simulation data distributed across
+ * multiple MPI processes. It assigns the global dimensions of the grid and partitions
+ * it among processes based on the stencil width and degrees of freedom.
  *
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ * @param[in,out] user Pointer to the UserCtx structure containing grid details.
+ *                     This structure must include information such as global grid
+ *                     dimensions (`IM`, `JM`, `KM`) and the DMDA handles (`da`, `fda`).
+ * @param[in] L_x,L_y,L_z Dimensions of the domain.
+ *
+ * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
+ *
+ * @note
+ * - The global dimensions of the grid are read from the `user` structure.
+ * - The function also sets up uniform coordinates in the range [0,Lx],[0,Ly],[0,Lz].
  */
-PetscErrorCode InitializeGridDM(UserCtx *user);
+PetscErrorCode InitializeGridDM(UserCtx *user, PetscReal L_x, PetscReal L_y, PetscReal L_z);
 
 /**
  * @brief Assigns coordinates to the grid points.
@@ -78,12 +98,15 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user, PetscInt generate_grid, Pets
 /**
  * @brief Finalizes the grid setup by closing the input file.
  *
- * @param[in] generate_grid Flag indicating whether the grid is programmatically generated (1) or read from a file (0).
- * @param[in] fd            File pointer for grid input file.
+ * @param[in]     generate_grid Flag indicating whether the grid is programmatically generated (1) or read from a file (0).
+ * @param[in]     fd            File pointer for grid input file.
+ * @param[out]    imm           Array to store the i-dimensions for each block.
+ * @param[out]    jmm           Array to store the j-dimensions for each block.
+ * @param[out]    kmm           Array to store the k-dimensions for each block.
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode FinalizeGridSetup(PetscInt generate_grid, FILE *fd);
+PetscErrorCode FinalizeGridSetup(PetscInt generate_grid, FILE *fd,PetscInt *imm,PetscInt *jmm,PetscInt *kmm);
 
 /**
  * @brief Defines grid coordinates for the computational domain.
@@ -95,6 +118,8 @@ PetscErrorCode FinalizeGridSetup(PetscInt generate_grid, FILE *fd);
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
+
+
 PetscErrorCode DefineGridCoordinates(UserCtx *user);
 
 /**

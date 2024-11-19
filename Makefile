@@ -113,7 +113,7 @@ swarm_interp: dirs $(SWARM_INTERP_EXE)
 
 $(SWARM_INTERP_EXE): $(OBJDIR)/swarm_interp.o $(OBJDIR)/walkingsearch.o \
                      $(OBJDIR)/ParticleSwarm.o $(OBJDIR)/logging.o \
-                     $(OBJDIR)/grid.o
+                     $(OBJDIR)/grid.o  $(OBJDIR)/io.o 
 	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB)
 
 # ... (Other executables defined similarly)
@@ -121,8 +121,15 @@ $(SWARM_INTERP_EXE): $(OBJDIR)/swarm_interp.o $(OBJDIR)/walkingsearch.o \
 # -----------------------------------------------------
 # Custom Targets
 # -----------------------------------------------------
+# Target for generating TAGS
+.PHONY: tags
 tags:
-	ctags -R -f TAGS $(SRCDIR) $(INCDIR) $(SCRIPTDIR)
+	find $(SRCDIR) $(INCLUDEDIR) $(SCRIPTSDIR) -type f \( -name "*.c" -o -name "*.h" -o -name "*.py" \) -print | etags -f TAGS -
+
+# Clean TAGS file
+.PHONY: clean_tags
+clean_tags:
+	rm -f TAGS
 
 cleanobj:
 	rm -f $(OBJDIR)/*.o

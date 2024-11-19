@@ -193,7 +193,7 @@ PetscErrorCode PerformBasicMigration(UserCtx* user);
  *
  * @return PetscErrorCode  Returns `0` on success, non-zero on failure.
  */
-static PetscErrorCode InitializeParticle(PetscInt i, const PetscInt64 *PIDs, const PetscReal *weights,
+PetscErrorCode InitializeParticle(PetscInt i, const PetscInt64 *PIDs, const PetscReal *weights,
                                          const PetscReal *positions, const PetscInt64 *cellIndices,
                                          Particle *particle);
 
@@ -209,7 +209,7 @@ static PetscErrorCode InitializeParticle(PetscInt i, const PetscInt64 *PIDs, con
  *
  * @return PetscErrorCode  Returns `0` on success, non-zero on failure.
  */
-static PetscErrorCode UpdateSwarmFields(PetscInt i, const Particle *particle,
+PetscErrorCode UpdateSwarmFields(PetscInt i, const Particle *particle,
                                         PetscReal *weights, PetscInt64 *cellIndices);
 
 /**
@@ -246,5 +246,18 @@ PetscErrorCode LocateAllParticlesInGrid(UserCtx *user);
  * - Be cautious when logging in performance-critical code sections, especially if the function is called frequently.
  */
 PetscBool IsParticleInsideBoundingBox(const BoundingBox *bbox, const Particle *particle);
+
+/**
+ * @brief Updates a particle's interpolation weights based on distances to cell faces.
+ *
+ * This function computes interpolation weights using distances to the six
+ * cell faces (`d`) and updates the `weight` field of the provided particle.
+ *
+ * @param[in]  d        Pointer to an array of distances to the six cell faces.
+ * @param[out] particle Pointer to the Particle structure whose weights are to be updated.
+ *
+ * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
+ */
+PetscErrorCode UpdateParticleWeights(const PetscReal *d, Particle *particle);
 
 #endif // PARTICLE_SWARM_H

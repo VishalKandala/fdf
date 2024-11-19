@@ -101,7 +101,7 @@ PetscErrorCode DeterminePointPosition(const Cmpnts p, const Cell *cell, int *res
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode GetCellVerticesFromGrid(const Cmpnts ***coor, PetscInt idx, PetscInt idy, PetscInt idz, Cell *cell);
+PetscErrorCode GetCellVerticesFromGrid(Cmpnts ***coor, PetscInt idx, PetscInt idy, PetscInt idz, Cell *cell);
 
 /**
  * @brief Initializes traversal parameters for locating a particle.
@@ -154,6 +154,8 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
  *
  * @param[in]  user     Pointer to the user-defined context containing grid information (DMDA, etc.).
  * @param[in]  particle Pointer to the Particle structure containing its location and identifiers.
+ * @param[in]  d         A pointer to an array of six `PetscReal` values that store the
+ *                       signed distances from the particle to each face of the cell.
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  *
@@ -162,6 +164,6 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
  * - The function assumes that the grid is properly partitioned and that each process has access to its local grid.
  * - The `Particle` structure should have its `loc` field accurately set before calling this function.
  */
-PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle);
+PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal* d);
 
 #endif // WALKINGSEARCH_H

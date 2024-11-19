@@ -446,7 +446,7 @@ PetscErrorCode PrintFaceDistances(const PetscReal d[NUM_FACES], PetscInt ctr, Pe
  * - The function assumes unit spacing between grid points. Modify the coordinate assignments if your grid spacing differs.
  * - The boundary checks have been removed as they are performed before calling this function.
  */
-PetscErrorCode GetCellVerticesFromGrid(const Cmpnts ***coor, PetscInt idx, PetscInt idy, PetscInt idz,
+PetscErrorCode GetCellVerticesFromGrid(Cmpnts ***coor, PetscInt idx, PetscInt idy, PetscInt idz,
                                        Cell *cell)
 {
     PetscErrorCode ierr;
@@ -562,7 +562,7 @@ PetscErrorCode CheckCellWithinLocalGrid(UserCtx *user, PetscInt idx, PetscInt id
         *is_within = PETSC_FALSE;
     }
 
-    LOG(LOCAL,LOG_DEBUG, "CheckCellWithinLocalGrid - Cell (%d, %d, %d) is %s within the local grid.\n",
+    LOG(LOCAL,LOG_DEBUG, "CheckCellWithinLocalGrid - Cell (%d, %d, %d) is %s the local grid.\n",
         idx, idy, idz, (*is_within) ? "within" : "outside");
 
     return 0;
@@ -606,7 +606,7 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
 
     // Debug: Print cell vertices
-    LOG(LOCAL,LOG_DEBUG, "RetrieveCurrentCell - Cell (%d, %d, %d) vertices:\n", idx, idy, idz);
+    LOG(LOCAL,LOG_DEBUG, "RetrieveCurrentCell - Cell (%d, %d, %d) vertices \n", idx, idy, idz);
     ierr = PrintCellVertices(cell, rank, 1, 1); // change ctr and visflg hardcoding later. CHKERRQ(ierr);
 
     return 0;
@@ -803,6 +803,8 @@ PetscErrorCode FinalizeTraversal(UserCtx *user, Particle *particle, PetscInt tra
  *
  * @param[in]  user     Pointer to the user-defined context containing grid information (DMDA, etc.).
  * @param[in]  particle Pointer to the Particle structure containing its location and identifiers.
+ * @param[in]  d         A pointer to an array of six `PetscReal` values that store the
+ *                       signed distances from the particle to each face of the cell.
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  *
@@ -811,7 +813,7 @@ PetscErrorCode FinalizeTraversal(UserCtx *user, Particle *particle, PetscInt tra
  * - The function assumes that the grid is properly partitioned and that each process has access to its local grid.
  * - The `Particle` structure should have its `loc` field accurately set before calling this function.
  */
-PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle)
+PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal *d)
 {
     PetscErrorCode ierr;
     PetscInt idx, idy, idz;
@@ -819,7 +821,6 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle)
     PetscBool Cell_found = PETSC_FALSE;
     Cmpnts p = particle->loc;
     Cell current_cell;
-    PetscReal d[NUM_FACES];
     const PetscReal threshold = 1e-10;
 
     // Initialize traversal parameters
@@ -866,7 +867,7 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle)
             // Update cell indices based on positive distances
             ierr = UpdateCellIndicesBasedOnDistances(d, &idx, &idy, &idz); CHKERRQ(ierr);
         }
-    }
+    } // !cell_found 
 
     // Finalize traversal by reporting the results
     ierr = FinalizeTraversal(user, particle, traversal_steps, Cell_found, idx, idy, idz); CHKERRQ(ierr);

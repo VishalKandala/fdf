@@ -78,42 +78,54 @@ typedef struct {
  * This structure holds various simulation parameters, PETSc data structures, and
  * other information needed throughout the simulation.
  */
-typedef struct UserCtx {
-    // PETSc Data Structures
-    DM da;              /**< Data structure for scalars (grid geometry information). */
-    DM fda;             /**< Data structure for vectors. */
-    DM dmcell;          /**< Shell data structure for point location (for PIC methods). */
-    DM swarm;           /**< Data structure for particles (DMSwarm). */
-    DMDALocalInfo info; /**< Local information about the DMDA grid. */
+typedef struct {
+    // Grid-related fields
+    DM da;                  ///< Data structure for scalar fields.
+    DM fda;                 ///< Data structure for vector fields.
+  DM fda2;                  ///< Data structure for RANS fields.
+    PetscInt IM, JM, KM;    ///< Global grid dimensions in x, y, z directions.
+    BoundingBox bbox;       ///< Bounding box for the local grid domain.
+    DMDALocalInfo info;     ///< Local information about the DMDA.
 
-    // Particle Migration
-    PetscInt *miglist;  /**< List of ranks to migrate to during particle migration. */
+    // Simulation fields
+    Vec Ucont;              ///< Contravariant velocity field.
+    Vec Ucat;               ///< Cartesian velocity field.
+    Vec P;                  ///< Pressure field.
+    Vec Nvert;              ///< Node state field (fluid, solid, etc.).
+    Vec Nvert_o;            ///< Node state field in the previous timestep.
+    Vec lUcont, lNvert;     ///< Local versions of Ucont and Nvert.
 
-    // Bounding Box
-    BoundingBox bbox;   /**< Local bounding box of the grid on the current process. */
+    // Statistical fields
+    Vec Ucat_sum;           ///< Sum of Cartesian velocity for averaging.
+    Vec Ucat_cross_sum;     ///< Cross-product sum of Cartesian velocities.
+    Vec Ucat_square_sum;    ///< Squared velocity sum for RMS calculations.
+    Vec P_sum;              ///< Sum of pressure values.
 
-    // Grid and Flow Variables
-    Vec Cent;           /**< Coordinates of cell centers. */
-    Vec Ucat;           /**< Cartesian velocity components (u, v, w). */
-    Vec P;              /**< Pressure field. */
-    // Add other Vecs and variables as needed
+    // LES-specific fields
+    Vec lCs;                ///< Eddy viscosity field for LES.
+    Vec Cs;                 ///< Global version of the LES constant field.
 
-    // Simulation Parameters
-    PetscReal dt;       /**< Time step size. */
-    PetscReal ren;      /**< Reynolds number. */
+    // RANS-specific fields
+    Vec K_Omega;            ///< Turbulent kinetic energy (K) and specific dissipation rate (Omega).
+    Vec K_Omega_o;          ///< Old values of K_Omega for time-stepping.
+  Vec lK_Omega,lK_Omega_o;  ///< Local K_Omega and old K_Omega for each process.
 
-    // Random Number Generators
-    PetscRandom randx;  /**< Random number generator for x-coordinate. */
-    PetscRandom randy;  /**< Random number generator for y-coordinate. */
-    PetscRandom randz;  /**< Random number generator for z-coordinate. */
+    // Particle-related fields
+    DM swarm;               ///< Particle data structure using DMSwarm.
+    PetscInt *miglist;      ///< List of ranks for particle migration.
 
-    // Logging Level
-    PetscInt log_level; /**< Logging level for controlling output verbosity. */
+    // Simulation parameters
+    PetscReal dt;           ///< Time step.
+    PetscReal ren;          ///< Reynolds number.
 
-    PetscInt	IM, JM, KM; // dimensions of grid
-    
-    PetscInt _this; // Add other fields as needed
+    // Flags for simulation modes
+    PetscBool averaging;    ///< Flag to indicate whether statistical averaging is enabled.
+    PetscBool les;          ///< Flag to indicate if LES is active.
+    PetscBool rans;         ///< Flag to indicate if RANS is active.
 
+    // Miscellaneous fields
+    PetscInt _this;         ///< Current block index.
+    PetscInt ti;            ///< Current timestep index.
 } UserCtx;
 
 // Add other shared types (e.g., IBMNodes, IBMInfo) if needed
