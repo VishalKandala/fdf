@@ -394,33 +394,36 @@ PetscErrorCode PrintParticleCoordinates(UserCtx* user) {
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode PrintParticlePositions(UserCtx* user) {
+PetscErrorCode PrintParticleFields(UserCtx* user) {
     DM swarm = user->swarm;                // DMSwarm object containing particles
     PetscErrorCode ierr;                   // Error code for PETSc functions
     PetscInt localNumParticles;            // Number of particles on the local MPI process
-    PetscReal *positions;                  // Array to store particle positions
-    PetscInt64 *particleIDs;               // Array to store particle unique IDs
-    PetscMPIInt *particleRanks;            // Array to store particle MPI ranks
-    PetscMPIInt rank;                      // MPI rank of the current process
+    PetscReal *positions;                  // Array to store particle positions.
+    PetscInt64 *particleIDs;               // Array to store particle unique IDs.
+    PetscMPIInt *particleRanks;            // Array to store particle MPI ranks.
+    PetscMPIInt rank;                      // MPI rank of the current process.
     PetscInt64  *cellIDs;                  // Array to store (host)cell IDs of particles.
+    PetscReal *weights;                    // Array to store particle weights.
 
     // Retrieve the MPI rank of the current process
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
-    LOG_DEFAULT(LOG_INFO, "PrintParticlePositions - Rank %d is retrieving particle positions.\n", rank);
+    LOG_DEFAULT(LOG_INFO, "PrintParticleFields - Rank %d is retrieving particle positions.\n", rank);
 
     // Get the number of particles in the local swarm
     ierr = DMSwarmGetLocalSize(swarm, &localNumParticles); CHKERRQ(ierr);
-    LOG_DEFAULT(LOG_DEBUG, "PrintParticlePositions - Rank %d has %d particles.\n", rank, localNumParticles);
+    LOG_DEFAULT(LOG_DEBUG, "PrintParticleFields - Rank %d has %d particles.\n", rank, localNumParticles);
 
-    // Access the 'position', 'DMSwarm_pid','DMSwarm_rank' and 'DMSwarm_CellID' fields from the DMSwarm
+    // Access the 'position', 'DMSwarm_pid','DMSwarm_rank','DMSwarm_CellID' and 'weights' fields from the DMSwarm
     ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
-    LOG_DEFAULT(LOG_DEBUG, "PrintParticlePositions - Retrieved 'position' field.\n");
+    LOG_DEFAULT(LOG_DEBUG, "PrintParticleFields - Retrieved 'position' field.\n");
     ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&particleIDs); CHKERRQ(ierr);
-    LOG_DEFAULT(LOG_DEBUG, "PrintParticlePositions - Retrieved 'DMSwarm_pid' field.\n");
+    LOG_DEFAULT(LOG_DEBUG, "PrintParticleFields - Retrieved 'DMSwarm_pid' field.\n");
     ierr = DMSwarmGetField(swarm, "DMSwarm_rank", NULL, NULL, (void**)&particleRanks); CHKERRQ(ierr);
-    LOG_DEFAULT(LOG_DEBUG, "PrintParticlePositions - Retrieved 'DMSwarm_rank' field.\n");
+    LOG_DEFAULT(LOG_DEBUG, "PrintParticleFields - Retrieved 'DMSwarm_rank' field.\n");
     ierr = DMSwarmGetField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs); CHKERRQ(ierr);
-    LOG_DEFAULT(LOG_DEBUG, "PrintParticlePositions - Retrieved 'DMSwarm_CellID' field.\n");
+    LOG_DEFAULT(LOG_DEBUG, "PrintParticleFields - Retrieved 'DMSwarm_CellID' field.\n");
+    ierr = DMSwarmGetField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr);
+    LOG_DEFAULT(LOG_DEBUG, "PrintParticleFields - Retrieved 'weight' field.\n");
 
     // Iterate over each local particle and print its position and metadata
     for (PetscInt i = 0; i < localNumParticles; i++) {
@@ -432,10 +435,10 @@ PetscErrorCode PrintParticlePositions(UserCtx* user) {
 
         // Synchronized printing to ensure orderly output across MPI processes
         ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD,
-            "Rank %d - Global Particle %" PetscInt64_FMT " - Local Particle %d : Position = (%.6f, %.6f, %.6f) - Host Cell = (%d, %d, %d) - Rank %d\n",
+            "Rank %d - Global Particle %" PetscInt64_FMT " - Local Particle %d : Position = (%.6f, %.6f, %.6f) - Host Cell = (%d, %d, %d) - Weights = (%.6f,%.6f,%.6f) - Particle-Rank %d\n",
             rank, globalParticleID, i + 1,
             positions[3 * i], positions[3 * i + 1], positions[3 * i + 2],
-				       cellIDs[3 * i],cellIDs[3 * i + 1], cellIDs[3 * i + 2],particleRank); CHKERRQ(ierr);
+				       cellIDs[3 * i],cellIDs[3 * i + 1], cellIDs[3 * i + 2],weights[3 * i],weights[3 * i + 1], weights[3 * i + 2],particleRank); CHKERRQ(ierr);
     }
 
     // Add a blank line after each rank's output
@@ -444,15 +447,16 @@ PetscErrorCode PrintParticlePositions(UserCtx* user) {
 
     // Flush the synchronized output to ensure all messages are printed
     ierr = PetscSynchronizedFlush(PETSC_COMM_WORLD, PETSC_STDOUT); CHKERRQ(ierr);
-    LOG_DEFAULT(LOG_DEBUG, "PrintParticlePositions - Completed printing positions on Rank %d.\n", rank);
+    LOG_DEFAULT(LOG_DEBUG, "PrintParticleFields - Completed printing positions on Rank %d.\n", rank);
 
     // Restore the 'position', 'DMSwarm_pid','DMSwarm_rank','DMSwarm_CellID' fields to clean up
     ierr = DMSwarmRestoreField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
     ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&particleIDs); CHKERRQ(ierr);
     ierr = DMSwarmRestoreField(swarm, "DMSwarm_rank", NULL, NULL, (void**)&particleRanks); CHKERRQ(ierr);
     ierr = DMSwarmRestoreField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr);
 
-    LOG_DEFAULT(LOG_DEBUG, "PrintParticlePositions - Restored all particle fields.\n");
+    LOG_DEFAULT(LOG_DEBUG, "PrintParticleFields - Restored all particle fields.\n");
 
     return 0;
 }
@@ -794,12 +798,11 @@ PetscErrorCode LocateAllParticlesInGrid(UserCtx *user) {
 
        // Synchronize all processes to ensure all have reached this point
        ierr = MPI_Barrier(PETSC_COMM_WORLD); CHKERRQ(ierr);
+
             // Update the weights of the particle for interpolation.
-	    ierr = UpdateParticleWeights(&d,&particle);
+          ierr = UpdateParticleWeights(&d,&particle);
 	} // particle_detected
         
-        	
- 
         // Update DMSwarm fields with possibly modified Particle data
         ierr = UpdateSwarmFields(i, &particle, weights, cellIndices); CHKERRQ(ierr);
     }

@@ -148,7 +148,7 @@ PetscErrorCode PrintParticleCoordinates(UserCtx* user);
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode PrintParticlePositions(UserCtx* user);
+PetscErrorCode PrintParticleFields(UserCtx* user);
 
 /**
  * @brief Defines the basic migration pattern for particles within the swarm.

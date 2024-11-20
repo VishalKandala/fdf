@@ -86,7 +86,7 @@ void ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts
     PetscReal centroid_z = 0.25 * (p1.z + p2.z + p3.z + p4.z);
 
     // Compute the signed distance from point p to the plane
-    *d = (p.x - centroid_x) * normal_x + (p.y - centroid_y) * normal_y + (p.z - centroid_z) * normal_z;
+    *d = (centroid_x - p.x) * normal_x + (centroid_y - p.y) * normal_y + (centroid_z - p.z) * normal_z;
 
     // Apply threshold to handle floating-point precision
     if (fabs(*d) < threshold) {
@@ -274,7 +274,7 @@ PetscErrorCode DeterminePointPosition(const Cmpnts p, const Cell *cell, int *res
 
     // Analyze distances to determine position
     for(int i = 0; i < NUM_FACES; i++) {
-        if(d[i] > 0.0) {
+        if(d[i] <  0.0) {
             isInside = PETSC_FALSE; // Point is outside in at least one direction
         }
         if(d[i] == 0.0) {
@@ -365,7 +365,7 @@ PetscErrorCode PrintCellVertices(const Cell *cell, PetscInt rank, PetscInt ctr, 
  * - The `visflg` parameter allows selective printing based on the current counter value,
  *   which can be useful to limit output in large-scale simulations.
  */
-PetscErrorCode PrintFaceDistances(const PetscReal d[NUM_FACES], PetscInt ctr, PetscInt visflg)
+PetscErrorCode PrintFaceDistances(PetscReal* d, PetscInt ctr, PetscInt visflg)
 {
     PetscErrorCode ierr;
 
@@ -723,32 +723,32 @@ PetscErrorCode UpdateCellIndicesBasedOnDistances( const PetscReal d[NUM_FACES], 
     PrintFaceDistances(d, 1, 1);
 
     // Update k-direction based on FRONT and BACK distances
-    if (d[FRONT] > 0.0) {
-      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[FRONT] > 0.0, incrementing idz.\n");
+    if (d[FRONT] < 0.0) {
+      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[FRONT] < 0.0, incrementing idz.\n");
         (*idz) += 1;
     }
-    else if(d[BACK] > 0.0){
-      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[BACK] > 0.0, decrementing idz.\n");
+    else if(d[BACK] < 0.0){
+      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[BACK] < 0.0, decrementing idz.\n");
         (*idz) -= 1;
     }
 
     // Update i-direction based on LEFT and RIGHT distances
-    if (d[LEFT] > 0.0) {
-      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[LEFT] > 0.0, decrementing idx.\n");
+    if (d[LEFT] < 0.0) {
+      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[LEFT] < 0.0, decrementing idx.\n");
         (*idx) -= 1;
     }
-    else if (d[RIGHT] > 0.0) {
-      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[RIGHT] > 0.0, incrementing idx.\n");
+    else if (d[RIGHT] < 0.0) {
+      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[RIGHT] < 0.0, incrementing idx.\n");
         (*idx) += 1;
     }
 
     // Update j-direction based on BOTTOM and TOP distances
-    if (d[BOTTOM] > 0.0) {
-      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[BOTTOM] > 0.0, decrementing idy.\n");
+    if (d[BOTTOM] < 0.0) {
+      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[BOTTOM] < 0.0, decrementing idy.\n");
         (*idy) -= 1;
     }
-    else if (d[TOP] > 0.0) {
-      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[TOP] > 0.0, incrementing idy.\n");
+    else if (d[TOP] < 0.0) {
+      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[TOP] < 0.0, incrementing idy.\n");
         (*idy) += 1;
     }
 

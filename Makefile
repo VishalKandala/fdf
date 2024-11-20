@@ -44,7 +44,6 @@ OBJSC     = $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(SOURCEC))
 TESTT_EXE         = $(BINDIR)/testt
 DATA_EXE          = $(BINDIR)/data
 INTERPOLATION_EXE = $(BINDIR)/interpolation
-SWARM_INTERP_EXE  = $(BINDIR)/swarm_interp
 ITFCSEARCH_EXE    = $(BINDIR)/itfcsearch
 DATA_VTK_EXE      = $(BINDIR)/data_vtk
 DATALIS_EXE       = $(BINDIR)/datalis
@@ -55,13 +54,13 @@ SWARM_TEST_EXE    = $(BINDIR)/swarm_test
 # Phony Targets
 # -----------------------------------------------------
 .PHONY: all cleanobj clean_all tags \
-        testt data interpolation swarm_interp \
+        testt data interpolation \
         itfcsearch data_vtk datalis datafile swarm_test
 
 # -----------------------------------------------------
 # Default Target
 # -----------------------------------------------------
-all: testt data interpolation swarm_interp \
+all: testt data interpolation \
      itfcsearch data_vtk datalis datafile swarm_test
 
 # -----------------------------------------------------
@@ -102,16 +101,10 @@ $(DATA_EXE): $(OBJDIR)/variables.o $(OBJDIR)/compgeom.o $(OBJDIR)/data_ibm.o \
              $(OBJDIR)/fish.o $(OBJDIR)/data.o
 	$(CLINKER) -o $@ $^ $(PETSC_LIB) $(PETSC_SNES_LIB) $(PETSC_TS_LIB) $(LIBS)
 
-# 3. interpolation executable
+# 4. swarm_interp executable
 interpolation: dirs $(INTERPOLATION_EXE)
 
-$(INTERPOLATION_EXE): $(OBJDIR)/interpolation.o
-	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB)
-
-# 4. swarm_interp executable
-swarm_interp: dirs $(SWARM_INTERP_EXE)
-
-$(SWARM_INTERP_EXE): $(OBJDIR)/swarm_interp.o $(OBJDIR)/walkingsearch.o \
+$(INTERPOLATION_EXE): $(OBJDIR)/interpolation.o $(OBJDIR)/walkingsearch.o \
                      $(OBJDIR)/ParticleSwarm.o $(OBJDIR)/logging.o \
                      $(OBJDIR)/grid.o  $(OBJDIR)/io.o 
 	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB)
