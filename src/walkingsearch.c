@@ -285,15 +285,15 @@ PetscErrorCode DeterminePointPosition(const Cmpnts p, const Cell *cell, int *res
     // Set the result based on flags
     if(isInside) {
         *result = 0; // Inside the cell
-        LOG(LOCAL,LOG_INFO, "DeterminePointPosition - Particle is inside the cell.\n");
+        LOG(LOCAL,LOG_DEBUG, "DeterminePointPosition - Particle is inside the cell.\n");
     }
     else if(isOnBoundary) {
         *result = 1; // On the boundary of the cell
-        LOG(LOCAL,LOG_INFO, "DeterminePointPosition - Particle is on the boundary of the cell.\n");
+        LOG(LOCAL,LOG_DEBUG, "DeterminePointPosition - Particle is on the boundary of the cell.\n");
     }
     else {
         *result = -1; // Outside the cell
-        LOG(LOCAL,LOG_INFO, "DeterminePointPosition - Particle is outside the cell.\n");
+        LOG(LOCAL,LOG_DEBUG, "DeterminePointPosition - Particle is outside the cell.\n");
     }
 
     return 0; // Indicate successful execution
@@ -724,11 +724,11 @@ PetscErrorCode UpdateCellIndicesBasedOnDistances( const PetscReal d[NUM_FACES], 
 
     // Update k-direction based on FRONT and BACK distances
     if (d[FRONT] < 0.0) {
-      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[FRONT] < 0.0, incrementing idz.\n");
+      LOG(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[FRONT] < 0.0, incrementing idz.\n");
         (*idz) += 1;
     }
     else if(d[BACK] < 0.0){
-      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[BACK] < 0.0, decrementing idz.\n");
+      LOG(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[BACK] < 0.0, decrementing idz.\n");
         (*idz) -= 1;
     }
 
@@ -748,11 +748,11 @@ PetscErrorCode UpdateCellIndicesBasedOnDistances( const PetscReal d[NUM_FACES], 
         (*idy) -= 1;
     }
     else if (d[TOP] < 0.0) {
-      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[TOP] < 0.0, incrementing idy.\n");
+      LOG(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[TOP] < 0.0, incrementing idy.\n");
         (*idy) += 1;
     }
 
-    LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Updated Indices - idx, idy, idz: %d, %d, %d\n", *idx, *idy, *idz);
+    LOG(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Updated Indices - idx, idy, idz: %d, %d, %d\n", *idx, *idy, *idz);
 
     return 0; // Indicate successful execution
 }

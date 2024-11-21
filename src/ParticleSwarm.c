@@ -404,6 +404,7 @@ PetscErrorCode PrintParticleFields(UserCtx* user) {
     PetscMPIInt rank;                      // MPI rank of the current process.
     PetscInt64  *cellIDs;                  // Array to store (host)cell IDs of particles.
     PetscReal *weights;                    // Array to store particle weights.
+    PetscReal *velocities;                    // Array to store particle velocities.
 
     // Retrieve the MPI rank of the current process
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
@@ -416,34 +417,34 @@ PetscErrorCode PrintParticleFields(UserCtx* user) {
     // Access the 'position', 'DMSwarm_pid','DMSwarm_rank','DMSwarm_CellID' and 'weights' fields from the DMSwarm
     ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "PrintParticleFields - Retrieved 'position' field.\n");
+
     ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&particleIDs); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "PrintParticleFields - Retrieved 'DMSwarm_pid' field.\n");
+
     ierr = DMSwarmGetField(swarm, "DMSwarm_rank", NULL, NULL, (void**)&particleRanks); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "PrintParticleFields - Retrieved 'DMSwarm_rank' field.\n");
+
     ierr = DMSwarmGetField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "PrintParticleFields - Retrieved 'DMSwarm_CellID' field.\n");
+
     ierr = DMSwarmGetField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "PrintParticleFields - Retrieved 'weight' field.\n");
 
+    ierr = DMSwarmGetField(swarm, "velocity", NULL, NULL, (void**)&velocities); CHKERRQ(ierr);
+    LOG_DEFAULT(LOG_DEBUG, "PrintParticleFields - Retrieved 'velocity' field.\n");
+
+    ierr = PetscPrintf(PETSC_COMM_WORLD,"___________________________________________________________________________________________________________________________________________________________________\n");
+    ierr = PetscPrintf(PETSC_COMM_WORLD,"|Rank | PID | Host IDs: i,j,k |        Position : x,y,z                   |           Velocity: x,y,z                    |           Weights: a1,a2,a3            | \n");  
     // Iterate over each local particle and print its position and metadata
     for (PetscInt i = 0; i < localNumParticles; i++) {
-        // Calculate the global particle ID (assuming particles are evenly distributed)
-        PetscInt64 globalParticleID = rank * localNumParticles + i + 1;
-
-        // Retrieve the MPI rank associated with the particle (if applicable)
-        PetscMPIInt particleRank = particleRanks[i];
-
         // Synchronized printing to ensure orderly output across MPI processes
-        ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD,
-            "Rank %d - Global Particle %" PetscInt64_FMT " - Local Particle %d : Position = (%.6f, %.6f, %.6f) - Host Cell = (%d, %d, %d) - Weights = (%.6f,%.6f,%.6f) - Particle-Rank %d\n",
-            rank, globalParticleID, i + 1,
-            positions[3 * i], positions[3 * i + 1], positions[3 * i + 2],
-				       cellIDs[3 * i],cellIDs[3 * i + 1], cellIDs[3 * i + 2],weights[3 * i],weights[3 * i + 1], weights[3 * i + 2],particleRank); CHKERRQ(ierr);
+         ierr = PetscPrintf(PETSC_COMM_WORLD,"___________________________________________________________________________________________________________________________________________________________________\n");
+         ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD,
+				       "|  %d  |  %d  |   %d,  %d,  %d   | %.6f, %.6f, %.6f | %.6f, %.6f, %.6f |  %.6f, %.6f, %.6f  |\n",particleRanks[i],particleIDs[i],cellIDs[3 * i],cellIDs[3 * i + 1], cellIDs[3 * i + 2],positions[3 * i], positions[3 * i + 1], positions[3 * i + 2],velocities[3 * i],velocities[3 * i + 1], velocities[3 * i + 2],weights[3 * i],weights[3 * i + 1], weights[3 * i + 2]); CHKERRQ(ierr);
     }
-
+    ierr = PetscPrintf(PETSC_COMM_WORLD,"___________________________________________________________________________________________________________________________________________________________________\n");
     // Add a blank line after each rank's output
-    ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "\n"); CHKERRQ(ierr);
-         
+    ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "\n"); CHKERRQ(ierr);     
 
     // Flush the synchronized output to ensure all messages are printed
     ierr = PetscSynchronizedFlush(PETSC_COMM_WORLD, PETSC_STDOUT); CHKERRQ(ierr);
@@ -455,6 +456,7 @@ PetscErrorCode PrintParticleFields(UserCtx* user) {
     ierr = DMSwarmRestoreField(swarm, "DMSwarm_rank", NULL, NULL, (void**)&particleRanks); CHKERRQ(ierr);
     ierr = DMSwarmRestoreField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs); CHKERRQ(ierr);
     ierr = DMSwarmRestoreField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "velocity", NULL, NULL, (void**)&velocities); CHKERRQ(ierr);
 
     LOG_DEFAULT(LOG_DEBUG, "PrintParticleFields - Restored all particle fields.\n");
 
@@ -786,18 +788,15 @@ PetscErrorCode LocateAllParticlesInGrid(UserCtx *user) {
         
         // Check if the particle intersects the bounding box
         PetscBool particle_detected = IsParticleInsideBoundingBox(&(user->bbox), &particle);
-        LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - Particle [%D] intersected bounding box: %s.\n", 
+        LOG(GLOBAL,LOG_DEBUG, "LocateAllParticlesInGrid - Particle [%D] intersected bounding box: %s.\n", 
             i, particle_detected ? "YES" : "NO");
         
         if (particle_detected) {
             // Locate the particle within the grid
-            LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - Locating Particle [%D] in grid. \n", i);
+            LOG(GLOBAL,LOG_DEBUG, "LocateAllParticlesInGrid - Locating Particle [%D] in grid. \n", i);
             ierr = LocateParticleInGrid(user, &particle, &d); CHKERRQ(ierr);
-            LOG(GLOBAL,LOG_INFO, "LocateAllParticlesInGrid - Particle [%D] located in cell [%lld, %lld, %lld].\n", 
+            LOG(GLOBAL,LOG_DEBUG, "LocateAllParticlesInGrid - Particle [%D] located in cell [%lld, %lld, %lld].\n", 
                 i, particle.cell[0], particle.cell[1], particle.cell[2]);
-
-       // Synchronize all processes to ensure all have reached this point
-       ierr = MPI_Barrier(PETSC_COMM_WORLD); CHKERRQ(ierr);
 
             // Update the weights of the particle for interpolation.
           ierr = UpdateParticleWeights(&d,&particle);
