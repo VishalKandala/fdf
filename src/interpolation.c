@@ -37,19 +37,19 @@
  */
 static inline void ComputeTrilinearWeights(PetscReal a1, PetscReal a2, PetscReal a3, PetscReal *w)
 {
-    PetscReal oa1 = 1.0 - a1;
-    PetscReal oa2 = 1.0 - a2;
-    PetscReal oa3 = 1.0 - a3;
+    PetscReal oa1 = a1 - 1.0; 
+    PetscReal oa2 = a2 - 1.0;
+    PetscReal oa3 = a3 - 1.0;
 
     // Compute weights for each corner of the cell
-    w[0] = oa1 * oa2 * oa3;
+    w[0] = a1  * a2  * a3;
     w[1] = a1  * oa2 * oa3;
     w[2] = oa1 * a2  * oa3;
     w[3] = a1  * a2  * oa3;
     w[4] = oa1 * oa2 * a3;
-    w[5] = a1  * oa2 * a3;
+    w[5] = oa1 * oa2 * oa3; 
     w[6] = oa1 * a2  * a3;
-    w[7] = a1  * a2  * a3;
+    w[7] =  a1  * oa2 * a3;
 }
 
 /**
@@ -71,9 +71,9 @@ PetscErrorCode InterpolateParticleVelocities(UserCtx *user)
     PetscReal *weights = NULL;      // Contains a1, a2, a3 for each particle
     PetscInt *cellIDs;
     PetscReal *velocities = NULL;
-
+    Cell cell;
     Vec Ucat_local;
-    PetscReal ****u_array = NULL; // 4D array: [z][y][x][dof]
+    Cmpnts ***u_array = NULL; // 
 
     DM da = user->da;          // DMDA for the grid
     DM swarm = user->swarm;    // DMSwarm for the particles
@@ -83,8 +83,6 @@ PetscErrorCode InterpolateParticleVelocities(UserCtx *user)
     // Access DMSwarm fields
     ierr = DMSwarmGetLocalSize(swarm, &n_local); CHKERRQ(ierr);
 
-    ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
-    ierr = DMSwarmGetField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr);
     ierr = DMSwarmGetField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs); CHKERRQ(ierr);
     ierr = DMSwarmGetField(swarm, "velocity", NULL, NULL, (void**)&velocities); CHKERRQ(ierr);
 
@@ -94,7 +92,7 @@ PetscErrorCode InterpolateParticleVelocities(UserCtx *user)
     ierr = DMGlobalToLocalEnd(da, user->Ucat, INSERT_VALUES, Ucat_local); CHKERRQ(ierr);
 
     // Access grid velocities
-    ierr = DMDAVecGetArrayDOFRead(da, Ucat_local, &u_array); CHKERRQ(ierr);
+    ierr = DMDAVecGetArrayRead(da, Ucat_local, &u_array); CHKERRQ(ierr);
 
     // Loop over local particles
     for (PetscInt p = 0; p < n_local; ++p) {
@@ -103,6 +101,7 @@ PetscErrorCode InterpolateParticleVelocities(UserCtx *user)
         PetscInt j = cellIDs[3 * p + 1];
         PetscInt k = cellIDs[3 * p + 2];
 
+	/*
         // Retrieve interpolation coefficients from the "weights" field
         PetscReal a1 = weights[3 * p];       // a1 for particle p
         PetscReal a2 = weights[3 * p + 1];   // a2 for particle p
@@ -114,6 +113,9 @@ PetscErrorCode InterpolateParticleVelocities(UserCtx *user)
 
         // Initialize interpolated velocity components
         PetscReal vel_p[3] = {0.0, 0.0, 0.0};
+
+        // Get Cell Corner velocities.
+        GetCellVerticesFromGrid(u_array,i,j,k,cell);
 
         // Loop over the 8 corners of the cell
         for (PetscInt corner = 0; corner < NUM_WEIGHTS; ++corner) {
@@ -139,15 +141,21 @@ PetscErrorCode InterpolateParticleVelocities(UserCtx *user)
         velocities[3 * p]     = vel_p[0];
         velocities[3 * p + 1] = vel_p[1];
         velocities[3 * p + 2] = vel_p[2];
+    
+    */
+
+        // Store interpolated velocities back into DMSwarm field
+        velocities[3 * p]     = u_array[k][j][i].x;
+        velocities[3 * p + 1] = u_array[k][j][i].y;
+        velocities[3 * p + 2] = u_array[k][j][i].z;
+
     }
 
     // Restore grid velocities
-    ierr = DMDAVecRestoreArrayDOFRead(da, Ucat_local, &u_array); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArrayRead(da, Ucat_local, &u_array); CHKERRQ(ierr);
     ierr = DMRestoreLocalVector(da, &Ucat_local); CHKERRQ(ierr);
 
     // Restore DMSwarm fields
-    ierr = DMSwarmRestoreField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
-    ierr = DMSwarmRestoreField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr);
     ierr = DMSwarmRestoreField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs); CHKERRQ(ierr);
     ierr = DMSwarmRestoreField(swarm, "velocity", NULL, NULL, (void**)&velocities); CHKERRQ(ierr);
 
@@ -330,7 +338,7 @@ int main(int argc, char **argv) {
 
     // Compute and log max velocity
     ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
-    LOG(GLOBAL, LOG_INFO, "Maximum velocity magnitude: %f\n", umax);
+    PetscPrintf(PETSC_COMM_WORLD,"Maximum velocity magnitude: %f\n", umax);
 
     // Create Bounding Boxes for each rank
     ierr = GatherAllBoundingBoxes(user, &bboxlist); CHKERRQ(ierr);
