@@ -135,3 +135,52 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user, PetscInt generate_grid, Pets
 
     return 0;
 }
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+
+// (11/22/24) - VIK - From interpolation.c - main function for use later.
+
+
+/**
+ * @brief Main function for DMSwarm interpolation.
+ *
+ * Initializes the grid, reads the velocity field, creates particles, and performs particle-grid interpolation.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return int Returns 0 on success, non-zero on failure.
+ */
+int main(int argc, char **argv) {
+    PetscErrorCode ierr;
+    UserCtx *user = NULL;
+    PetscInt rank, size;
+    PetscInt np = 0,ti = 0;
+    PetscReal umax;
+    PetscInt block_number = 1, rstart = 0;
+    BoundingBox *bboxlist;
+
+    // Initialize simulation
+    ierr = InitializeSimulation(&user, &rank, &size,&np,&rstart,&ti,&block_number); CHKERRQ(ierr);
+    // Setup grid and vectors
+    ierr = SetupGridAndVectors(user,block_number); CHKERRQ(ierr);
+
+    // Read simulation fields
+    ierr = ReadSimulationFields(user, ti); CHKERRQ(ierr);
+
+    // Compute and log max velocity
+    ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
+    PetscPrintf(PETSC_COMM_WORLD,"Maximum velocity magnitude: %f\n", umax);
+
+    // Create Bounding Boxes for each rank
+    ierr = GatherAllBoundingBoxes(user, &bboxlist); CHKERRQ(ierr);
+
+    // Perform particle swarm operations
+    ierr = PerformParticleSwarmOperations(user, np); CHKERRQ(ierr);
+
+    // Finalize simulation
+    ierr = FinalizeSimulation(user,block_number); CHKERRQ(ierr);
+
+    return 0;
+}

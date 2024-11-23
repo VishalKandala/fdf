@@ -76,7 +76,7 @@ LogLevel get_log_level();
         /* Determine the MPI communicator based on the scope */ \
         MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
         /* Check if the log level is within the allowed range */ \
-        if ((level) <= get_log_level()) { \
+        if ((int)(level) <= (int)get_log_level()) {		  \
             /* Print the message to the specified communicator */ \
             PetscPrintf(comm, fmt, ##__VA_ARGS__); \
         } \
@@ -107,7 +107,7 @@ LogLevel get_log_level();
         /* Set the communicator to global (MPI_COMM_WORLD) by default */ \
         MPI_Comm comm = MPI_COMM_WORLD; \
         /* Check if the log level is within the allowed range */ \
-        if ((level) <= get_log_level()) { \
+        if ((int)(level) <= (int)get_log_level()) {			\
             /* Print the message using PetscPrintf with the global communicator */ \
             PetscPrintf(comm, fmt, ##__VA_ARGS__); \
         } \

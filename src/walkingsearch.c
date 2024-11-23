@@ -140,8 +140,6 @@ void ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts
  */
 PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, PetscReal *d, const PetscReal threshold)
 {
-    PetscErrorCode ierr;
-
     // Validate that the 'cell' pointer is not NULL to prevent dereferencing a null pointer.
     if (cell == NULL) {
       LOG(LOCAL,LOG_ERROR, "CalculateDistancesToCellFaces - 'cell' is NULL.\n");
@@ -320,7 +318,6 @@ PetscErrorCode DeterminePointPosition(const Cmpnts p, const Cell *cell, int *res
  */
 PetscErrorCode PrintCellVertices(const Cell *cell, PetscInt rank, PetscInt ctr, PetscInt visflg)
 {
-    PetscErrorCode ierr;
 
     // Validate input pointers
     if (cell == NULL) {
@@ -367,7 +364,6 @@ PetscErrorCode PrintCellVertices(const Cell *cell, PetscInt rank, PetscInt ctr, 
  */
 PetscErrorCode PrintFaceDistances(PetscReal* d, PetscInt ctr, PetscInt visflg)
 {
-    PetscErrorCode ierr;
 
     // Validate input array
     if (d == NULL) {
@@ -449,7 +445,6 @@ PetscErrorCode PrintFaceDistances(PetscReal* d, PetscInt ctr, PetscInt visflg)
 PetscErrorCode GetCellVerticesFromGrid(Cmpnts ***coor, PetscInt idx, PetscInt idy, PetscInt idz,
                                        Cell *cell)
 {
-    PetscErrorCode ierr;
 
     // Validate input pointers
     if (coor == NULL) {
@@ -706,7 +701,7 @@ PetscErrorCode EvaluateParticlePosition(const Cell *cell, PetscReal *d, const Cm
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode UpdateCellIndicesBasedOnDistances( const PetscReal d[NUM_FACES], PetscInt *idx, PetscInt *idy, PetscInt *idz)
+PetscErrorCode UpdateCellIndicesBasedOnDistances( PetscReal d[NUM_FACES], PetscInt *idx, PetscInt *idy, PetscInt *idz)
 {
     // Validate input pointers
     if (d == NULL) {
@@ -786,7 +781,7 @@ PetscErrorCode FinalizeTraversal(UserCtx *user, Particle *particle, PetscInt tra
             idx, idy, idz, traversal_steps);
     }
     else {
-        LOG(LOG_WARNING, "FinalizeTraversal - Particle could not be located within the grid after %d traversal steps.\n", traversal_steps);
+      LOG(LOCAL,LOG_WARNING, "FinalizeTraversal - Particle could not be located within the grid after %d traversal steps.\n", (PetscInt)traversal_steps);
         particle->cell[0] = -1;
         particle->cell[1] = -1;
         particle->cell[2] = -1;

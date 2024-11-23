@@ -121,8 +121,8 @@ PetscErrorCode ParseGridInputs(UserCtx *user, PetscInt *generate_grid, PetscInt 
         // Delegate the reading of grid generation inputs, including grid1d
       ierr = ReadGridGenerationInputs(grid1d,L_x, L_y, L_z, imm, jmm, kmm, nblk); CHKERRQ(ierr);
     } else {
-        // Delegate the reading of grid file data, including grid1d
-        ierr = ReadGridFile(fd, nblk, imm, jmm, kmm, grid1d, PETSC_COMM_WORLD); CHKERRQ(ierr);
+        // Delegate the reading of grid file data, including grid1d // hard coded the file as a temporary hack! 
+        ierr = ReadGridFile("grid.dat", nblk, imm, jmm, kmm, grid1d, PETSC_COMM_WORLD); CHKERRQ(ierr);
     }
 
     LOG(GLOBAL, LOG_INFO, "ParseGridInputs - Grid inputs retrieved successfully.\n");
@@ -156,7 +156,7 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user, PetscInt generate_grid, Pets
     PetscInt rank, i, j, k;       // MPI rank and loop counters
     Vec Coor, gCoor;              // Local and global coordinate vectors
     Cmpnts ***coor;               // 3D array for node coordinates
-    PetscReal xx, *gc;            // Temporary storage for coordinates
+    PetscReal *gc;            // Temporary storage for coordinates
     PetscReal cl = 1.0, L_dim = 1.0; // Normalization constants
 
     // Retrieve MPI rank
@@ -443,7 +443,7 @@ PetscErrorCode DefineGridCoordinates(UserCtx *user) {
     LOG(GLOBAL, LOG_INFO, "DefineGridCoordinates - Starting grid configuration on rank %d.\n", rank);
 
     // Parse input parameters for grid setup
-    ierr = ParseGridInputs(user, &generate_grid, &grid1d, &L_x, &L_y, &L_z, &imm, &jmm, &kmm, &block_number, &fd); CHKERRQ(ierr);
+    ierr = ParseGridInputs(user, &generate_grid, &grid1d, &L_x, &L_y, &L_z, &imm, &jmm, &kmm, &block_number, fd); CHKERRQ(ierr);
 
     // Validate block number
     if (block_number <= 0) {

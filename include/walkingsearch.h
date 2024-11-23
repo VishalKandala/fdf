@@ -216,6 +216,27 @@ PetscErrorCode PrintFaceDistances(PetscReal* d, PetscInt ctr, PetscInt visflg);
 PetscErrorCode PrintCellVertices(const Cell *cell, PetscInt rank, PetscInt ctr, PetscInt visflg);
 
 
+/**
+ * @brief Updates the cell indices based on the signed distances to each face.
+ *
+ * This function modifies the cell indices (`idx`, `idy`, `idz`) to move towards the direction
+ * where the particle is likely to be located, based on positive distances indicating
+ * that the particle is outside in that particular direction.
+ *
+ * @param[in]  d    An array of six `PetscReal` values representing the signed distances to each face:
+ *                  - d[LEFT]: Left Face
+ *                  - d[RIGHT]: Right Face
+ *                  - d[BOTTOM]: Bottom Face
+ *                  - d[TOP]: Top Face
+ *                  - d[FRONT]: Front Face
+ *                  - d[BACK]: Back Face
+ * @param[out] idx  Pointer to the i-index of the cell to be updated.
+ * @param[out] idy  Pointer to the j-index of the cell to be updated.
+ * @param[out] idz  Pointer to the k-index of the cell to be updated.
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ */
+PetscErrorCode UpdateCellIndicesBasedOnDistances( PetscReal d[NUM_FACES], PetscInt *idx, PetscInt *idy, PetscInt *idz);
 
 
 #endif // WALKINGSEARCH_H

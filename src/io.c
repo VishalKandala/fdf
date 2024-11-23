@@ -114,11 +114,16 @@ PetscErrorCode ReadGridFile(const char *filename, PetscInt *nblk, PetscInt **imm
 
         // Read block dimensions
         for (PetscInt i = 0; i < *nblk; i++) {
-            fscanf(fd, "%d %d %d\n", &imm[i], &jmm[i], &kmm[i]);
+            fscanf(fd, "%" PetscInt_FMT " %" PetscInt_FMT " %" PetscInt_FMT "\n", imm[i], jmm[i], kmm[i]);
+
+	    //	    fscanf(fd, "%" PetscInt_FMT " %" PetscInt_FMT " %" PetscInt_FMT "\n", &imm[i], &jmm[i], &kmm[i]);
+	    //  fscanf(fd, "%d %d %d\n", &imm[i], &jmm[i], &kmm[i]);
         }
 
         // Determine if it's a 1D grid (all dimensions > 1)
-        *grid1d = ((*nblk == 1) && (jmm[0] == 1) && (kmm[0] == 1)) ? 1 : 0;
+	*grid1d = ((*nblk == 1) && (*jmm[0] == 1) && (*kmm[0] == 1)) ? 1 : 0;
+
+	//  *grid1d = ((*nblk == 1) && (jmm[0] == 1) && (kmm[0] == 1)) ? 1 : 0;
 
         fclose(fd);
     }

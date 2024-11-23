@@ -75,26 +75,26 @@ PetscErrorCode RegisterParticleFields(DM swarm) {
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode InitializeRandomGenerators(UserCtx* user, PetscRandom* randx, PetscRandom* randy, PetscRandom* randz) {
+PetscErrorCode InitializeRandomGenerators(UserCtx* user, PetscRandom *randx, PetscRandom *randy, PetscRandom *randz) {
     PetscErrorCode ierr;  // Error code for PETSc functions
 
     // Initialize RNG for x-coordinate
     ierr = PetscRandomCreate(PETSC_COMM_WORLD, randx); CHKERRQ(ierr);
-    ierr = PetscRandomSetType(*randx, PETSCRAND48); CHKERRQ(ierr);
+    ierr = PetscRandomSetType((*randx), PETSCRAND48); CHKERRQ(ierr);
     ierr = PetscRandomSetInterval(*randx, user->bbox.min_coords.x, user->bbox.max_coords.x); CHKERRQ(ierr);
     ierr = PetscRandomSeed(*randx); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "InitializeRandomGenerators - Initialized RNG for X-axis.\n");
 
     // Initialize RNG for y-coordinate
     ierr = PetscRandomCreate(PETSC_COMM_WORLD, randy); CHKERRQ(ierr);
-    ierr = PetscRandomSetType(*randy, PETSCRAND48); CHKERRQ(ierr);
+    ierr = PetscRandomSetType((*randy), PETSCRAND48); CHKERRQ(ierr);
     ierr = PetscRandomSetInterval(*randy, user->bbox.min_coords.y, user->bbox.max_coords.y); CHKERRQ(ierr);
     ierr = PetscRandomSeed(*randy); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "InitializeRandomGenerators - Initialized RNG for Y-axis.\n");
 
     // Initialize RNG for z-coordinate
     ierr = PetscRandomCreate(PETSC_COMM_WORLD, randz); CHKERRQ(ierr);
-    ierr = PetscRandomSetType(*randz, PETSCRAND48); CHKERRQ(ierr);
+    ierr = PetscRandomSetType((*randz), PETSCRAND48); CHKERRQ(ierr);
     ierr = PetscRandomSetInterval(*randz, user->bbox.min_coords.z, user->bbox.max_coords.z); CHKERRQ(ierr);
     ierr = PetscRandomSeed(*randz); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "InitializeRandomGenerators - Initialized RNG for Z-axis.\n");
@@ -110,18 +110,27 @@ PetscErrorCode InitializeRandomGenerators(UserCtx* user, PetscRandom* randx, Pet
  *
  * @param[in,out] user               Pointer to the UserCtx structure containing simulation context.
  * @param[in]     particlesPerProcess Number of particles assigned to the local MPI process.
+ *
  * @param[in]     randx             Random number generator for the x-coordinate.
  * @param[in]     randy             Random number generator for the y-coordinate.
  * @param[in]     randz             Random number generator for the z-coordinate.
- *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode AssignInitialProperties(UserCtx* user, PetscInt particlesPerProcess, PetscRandom randx, PetscRandom randy, PetscRandom randz) {
+PetscErrorCode AssignInitialProperties(UserCtx* user, PetscInt particlesPerProcess, PetscRandom *randx, PetscRandom *randy, PetscRandom *randz) {
     PetscErrorCode ierr;                   // Error code for PETSc functions
     DM swarm = user->swarm;                // DMSwarm object managing particles
     PetscReal *positions, *velocities, *weights; // Pointers to particle data fields
     PetscInt64 *particleIDs, *cellIDs;     // Pointers to particle ID and CellID fields
     PetscInt rank;           // MPI rank of the current process
+   
+
+    PetscPrintf(PETSC_COMM_WORLD," Initialization : %d \n",user->ParticleInitialization);
+
+    if(user->ParticleInitialization==1){
+      // Initialize random number generators
+      ierr = InitializeRandomGenerators(user, randx, randy, randz); CHKERRQ(ierr);
+    }
+  
     // Determine the current process rank
     MPI_Comm_rank(PETSC_COMM_WORLD,&rank);
 
@@ -147,13 +156,20 @@ PetscErrorCode AssignInitialProperties(UserCtx* user, PetscInt particlesPerProce
 
     // Initialize particle properties
     for (PetscInt p = 0; p < particlesPerProcess; p++) {
-        // Generate random positions within the simulation domain
-        ierr = PetscRandomGetValue(randx, &positions[p * 3 + 0]); CHKERRQ(ierr);
-        ierr = PetscRandomGetValue(randy, &positions[p * 3 + 1]); CHKERRQ(ierr);
-        ierr = PetscRandomGetValue(randz, &positions[p * 3 + 2]); CHKERRQ(ierr);
-        LOG_DEFAULT(LOG_DEBUG, "AssignInitialProperties - Particle %d position set to (%.4f, %.4f, %.4f).\n", 
-                    p, positions[p * 3 + 0], positions[p * 3 + 1], positions[p * 3 + 2]);
 
+      if(user->ParticleInitialization==1){
+          // Generate random positions within the simulation domain
+          ierr = PetscRandomGetValue(*randx, &positions[p * 3 + 0]); CHKERRQ(ierr);
+          ierr = PetscRandomGetValue(*randy, &positions[p * 3 + 1]); CHKERRQ(ierr);
+          ierr = PetscRandomGetValue(*randz, &positions[p * 3 + 2]); CHKERRQ(ierr);
+          LOG_DEFAULT(LOG_DEBUG, "AssignInitialProperties - Particle %d position set to (%.4f, %.4f, %.4f).\n",p, positions[p * 3 + 0], positions[p * 3 + 1], positions[p * 3 + 2]);
+      }else {
+   
+          positions[3 * p + 0] = 0.6;
+          positions[3 * p + 1] = 0.6;
+          positions[3 * p + 2] = 0.6; 
+      }
+      
         // Initialize velocities to zero
         velocities[3 * p + 0] = 0.0;
         velocities[3 * p + 1] = 0.0;
@@ -188,6 +204,7 @@ PetscErrorCode AssignInitialProperties(UserCtx* user, PetscInt particlesPerProce
     return 0;
 }
 
+
 /**
  * @brief Distributes particles evenly across MPI processes, handling any remainders.
  *
@@ -203,7 +220,6 @@ PetscErrorCode AssignInitialProperties(UserCtx* user, PetscInt particlesPerProce
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
 PetscErrorCode DistributeParticles(PetscInt numParticles, PetscMPIInt rank, PetscMPIInt size, PetscInt* particlesPerProcess, PetscInt* remainder) {
-    PetscErrorCode ierr;  // Error code for PETSc functions
 
     // Calculate the base number of particles per process
     *particlesPerProcess = numParticles / size;
@@ -231,14 +247,22 @@ PetscErrorCode DistributeParticles(PetscInt numParticles, PetscMPIInt rank, Pets
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode FinalizeSwarmSetup(PetscRandom randx, PetscRandom randy, PetscRandom randz) {
+PetscErrorCode FinalizeSwarmSetup(PetscRandom *randx, PetscRandom *randy, PetscRandom *randz) {
     PetscErrorCode ierr;  // Error code for PETSc functions
+    PetscInt  ParticleInitialization; 
 
-    // Destroy random number generators to free resources
-    ierr = PetscRandomDestroy(&randx); CHKERRQ(ierr);
-    ierr = PetscRandomDestroy(&randy); CHKERRQ(ierr);
-    ierr = PetscRandomDestroy(&randz); CHKERRQ(ierr);
-    LOG_DEFAULT(LOG_DEBUG, "FinalizeSwarmSetup - Destroyed all random number generators.\n");
+    ierr = PetscOptionsGetInt(NULL, NULL, "-pinit", &ParticleInitialization, NULL); CHKERRQ(ierr);
+ 
+    if(ParticleInitialization==1){
+
+      // Destroy random number generators to free resources
+      ierr = PetscRandomDestroy(randx); CHKERRQ(ierr);
+      ierr = PetscRandomDestroy(randy); CHKERRQ(ierr);
+      ierr = PetscRandomDestroy(randz); CHKERRQ(ierr);
+      LOG_DEFAULT(LOG_DEBUG, "FinalizeSwarmSetup - Destroyed all random number generators.\n");
+    }else if(ParticleInitialization==0){
+      LOG_DEFAULT(LOG_DEBUG, "FinalizeSwarmSetup - Not a Random Initialization of Particles.\n");
+    }
 
     return 0;
 }
@@ -264,11 +288,11 @@ PetscErrorCode FinalizeSwarmSetup(PetscRandom randx, PetscRandom randy, PetscRan
 PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles) {
     PetscErrorCode ierr;                      // Error code for PETSc functions
     PetscMPIInt rank, size;                   // MPI rank and size
-    PetscRandom randx, randy, randz;          // Random number generators for x, y, z
     PetscInt particlesPerProcess = 0;         // Number of particles per MPI process
     PetscInt remainder = 0;                   // Remainder particles
-    PetscReal domainLengthY, domainLengthZ;    // Simulation domain dimensions in y and z
-
+    PetscReal domainLengthY, domainLengthZ;   // Simulation domain dimensions in y and z
+    PetscRandom randx,randy,randz;            // Random Number Generators if assigning particles random locations.
+ 
     // Validate input parameters
     if (numParticles <= 0) {
         LOG_DEFAULT(LOG_ERROR, "CreateParticleSwarm - Number of particles must be positive. Given: %d\n", numParticles);
@@ -312,14 +336,11 @@ PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles) {
       ierr = DMView(user->swarm, PETSC_VIEWER_STDOUT_WORLD); CHKERRQ(ierr);
     }
 
-    // Initialize random number generators
-    ierr = InitializeRandomGenerators(user, &randx, &randy, &randz); CHKERRQ(ierr);
-
-    // Assign initial properties to particles
-    ierr = AssignInitialProperties(user, particlesPerProcess, randx, randy, randz); CHKERRQ(ierr);
+      // Assign initial properties to particles
+    ierr = AssignInitialProperties(user, particlesPerProcess,&randx,&randy,&randz); CHKERRQ(ierr);
 
     // Finalize swarm setup by destroying RNGs
-    ierr = FinalizeSwarmSetup(randx, randy, randz); CHKERRQ(ierr);
+    ierr = FinalizeSwarmSetup(&randx, &randy, &randz); CHKERRQ(ierr);
 
     LOG_DEFAULT(LOG_INFO, "CreateParticleSwarm - Particle swarm creation and initialization complete.\n");
 
@@ -713,7 +734,7 @@ PetscErrorCode UpdateSwarmFields(PetscInt i, const Particle *particle,
     }
     
     // Logging the start of swarm fields update
-    LOG(LOG_INFO, "Updating DMSwarm fields for Particle [%D].\n", i);
+    LOG(GLOBAL,LOG_INFO, "Updating DMSwarm fields for Particle [%D].\n", i);
     
     // Update weights
     weights[3 * i]     = particle->weights.x;
@@ -794,12 +815,12 @@ PetscErrorCode LocateAllParticlesInGrid(UserCtx *user) {
         if (particle_detected) {
             // Locate the particle within the grid
             LOG(GLOBAL,LOG_DEBUG, "LocateAllParticlesInGrid - Locating Particle [%D] in grid. \n", i);
-            ierr = LocateParticleInGrid(user, &particle, &d); CHKERRQ(ierr);
+            ierr = LocateParticleInGrid(user, &particle, d); CHKERRQ(ierr);
             LOG(GLOBAL,LOG_DEBUG, "LocateAllParticlesInGrid - Particle [%D] located in cell [%lld, %lld, %lld].\n", 
                 i, particle.cell[0], particle.cell[1], particle.cell[2]);
 
             // Update the weights of the particle for interpolation.
-          ierr = UpdateParticleWeights(&d,&particle);
+          ierr = UpdateParticleWeights(d,&particle);
 	} // particle_detected
         
         // Update DMSwarm fields with possibly modified Particle data
@@ -890,8 +911,7 @@ PetscBool IsParticleInsideBoundingBox(const BoundingBox *bbox, const Particle *p
  *
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  */
-PetscErrorCode UpdateParticleWeights(const PetscReal *d, Particle *particle) {
-    PetscErrorCode ierr = 0;
+PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
 
     // Validate input pointers
     if (!d || !particle) {

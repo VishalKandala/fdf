@@ -20,151 +20,150 @@
 #include "grid.h"           // Grid functions
 #include "logging.h"        // Logging macros
 #include "io.h"             // Data Input and Output functions
+#include "interpolation.h"
 
 
 #define NUM_WEIGHTS 8 // Number of weights in trilinear interpolation
 
-
-
-
 /**
  * @brief Computes the trilinear interpolation weights from the interpolation coefficients.
  *
- * @param[in]  a1 Interpolation coefficient along the x-direction.
- * @param[in]  a2 Interpolation coefficient along the y-direction.
- * @param[in]  a3 Interpolation coefficient along the z-direction.
- * @param[out] w  Array of 8 weights to be computed.
+ * This function computes the weights for trilinear interpolation at the eight corners of a cell
+ * using the interpolation coefficients provided along the x, y, and z directions.
+ *
+ * @param[in]  a1 Interpolation coefficient along the x-direction (normalized coordinate within the cell).
+ * @param[in]  a2 Interpolation coefficient along the y-direction (normalized coordinate within the cell).
+ * @param[in]  a3 Interpolation coefficient along the z-direction (normalized coordinate within the cell).
+ * @param[out] w  Array of 8 weights, each corresponding to one corner of the cell.
+ *
+ * @note
+ * - The coefficients `a1`, `a2`, and `a3` should be in the range [0, 1].
+ * - The order of weights corresponds to the eight corners of a hexahedral cell.
  */
-static inline void ComputeTrilinearWeights(PetscReal a1, PetscReal a2, PetscReal a3, PetscReal *w)
-{
+static inline void ComputeTrilinearWeights(PetscReal a1, PetscReal a2, PetscReal a3, PetscReal *w) {
+    LOG(GLOBAL, LOG_DEBUG, "ComputeTrilinearWeights: Computing weights for a1=%f, a2=%f, a3=%f.\n", a1, a2, a3);
+
+    // Compute complementary coefficients (1 - a)
     PetscReal oa1 = a1 - 1.0; 
     PetscReal oa2 = a2 - 1.0;
     PetscReal oa3 = a3 - 1.0;
 
     // Compute weights for each corner of the cell
-    w[0] = a1  * a2  * a3;
-    w[1] = a1  * oa2 * oa3;
-    w[2] = oa1 * a2  * oa3;
-    w[3] = a1  * a2  * oa3;
-    w[4] = oa1 * oa2 * a3;
-    w[5] = oa1 * oa2 * oa3; 
-    w[6] = oa1 * a2  * a3;
-    w[7] =  a1  * oa2 * a3;
+    w[0] = a1  * a2  * a3;   // Front-bottom-left
+    w[1] = a1  * oa2 * oa3;  // Front-top-right
+    w[2] = oa1 * a2  * oa3;  // Back-bottom-right
+    w[3] = a1  * a2  * oa3;  // Front-bottom-right
+    w[4] = oa1 * oa2 * a3;   // Back-top-left
+    w[5] = oa1 * oa2 * oa3;  // Back-top-right
+    w[6] = oa1 * a2  * a3;   // Back-bottom-left
+    w[7] = a1  * oa2 * a3;   // Front-top-left
+
+    // Log the computed weights for debugging
+    LOG(GLOBAL, LOG_DEBUG, "ComputeTrilinearWeights: Weights computed - "
+        "w0=%f, w1=%f, w2=%f, w3=%f, w4=%f, w5=%f, w6=%f, w7=%f. \n",
+        w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
 }
 
 /**
  * @brief Performs trilinear interpolation of velocities from grid to particles using interpolation coefficients.
  *
- * This function interpolates the velocities at particle positions using trilinear interpolation.
- * It extracts the interpolation coefficients `a1`, `a2`, and `a3` from the `"weights"` field
- * of each particle and computes the interpolation weights on-the-fly.
+ * This function interpolates velocities for particles based on the velocity field defined on the computational grid.
+ * It retrieves cell indices for each particle from the "DMSwarm_CellID" field and assigns the interpolated velocity
+ * using trilinear interpolation from the surrounding grid cells. The function handles boundary checks and ensures
+ * that particles outside the valid grid range are appropriately managed.
  *
- * @param[in] user Pointer to the user-defined context containing grid and swarm information.
+ * Key Steps:
+ * 1. Retrieve the number of local particles and their associated data fields (cell indices and velocities).
+ * 2. Map the global velocity field (`Ucat`) to the local portion for efficient access.
+ * 3. Retrieve interpolation coefficients (`a1`, `a2`, `a3`) for each particle.
+ * 4. Compute trilinear interpolation weights and interpolate velocities from the surrounding grid cells.
+ * 5. Handle edge cases where particles may lie outside the valid grid range.
+ * 6. Restore all data fields and ensure PETSc arrays and vectors are correctly finalized.
+ *
+ * @param[in] user Pointer to the `UserCtx` structure containing:
+ *                 - `user->da`: DMDA for the grid.
+ *                 - `user->swarm`: DMSwarm for particles.
+ *                 - `user->Ucat`: Global velocity vector on the grid.
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode InterpolateParticleVelocities(UserCtx *user)
-{
+PetscErrorCode InterpolateParticleVelocities(UserCtx *user) {
     PetscErrorCode ierr;
-    PetscInt n_local;
-    PetscReal *positions = NULL;
-    PetscReal *weights = NULL;      // Contains a1, a2, a3 for each particle
-    PetscInt *cellIDs;
-    PetscReal *velocities = NULL;
-    Cell cell;
-    Vec Ucat_local;
-    Cmpnts ***u_array = NULL; // 
+    PetscInt n_local;             // Number of local particles
+    PetscInt64 *cellIDs = NULL;     // Array to store cell indices for each particle
+    PetscReal *velocities = NULL; // Array to store particle velocities
+    PetscReal *weights = NULL;    // Array to store interpolation weights
+    Cmpnts ***ucat;               // 3D array to map local grid velocities
+    PetscInt i,j,k;
+    DM fda = user->fda;           // Field DA 
+    DM swarm = user->swarm;       // DMSwarm for the particles
 
-    DM da = user->da;          // DMDA for the grid
-    DM swarm = user->swarm;    // DMSwarm for the particles
 
-    PetscFunctionBeginUser;
+    LOG(GLOBAL, LOG_INFO, "InterpolateParticleVelocities: Starting particle velocity interpolation.\n");
 
-    // Access DMSwarm fields
+    // Verify global velocity field
+    PetscReal max_val;
+    ierr = VecNorm(user->Ucat, NORM_INFINITY, &max_val); CHKERRQ(ierr);
+    LOG(GLOBAL, LOG_INFO, "Global velocity field Ucat maximum magnitude: %f \n", max_val);
+
+    // Retrieve the number of local particles
     ierr = DMSwarmGetLocalSize(swarm, &n_local); CHKERRQ(ierr);
+    LOG(GLOBAL, LOG_INFO, "InterpolateParticleVelocities: Found %d local particles.\n", n_local);
 
+    // Retrieve particle data fields
     ierr = DMSwarmGetField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs); CHKERRQ(ierr);
     ierr = DMSwarmGetField(swarm, "velocity", NULL, NULL, (void**)&velocities); CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr); // Ensure 'weight' field exists
 
-    // Access the local portion of Ucat
-    ierr = DMGetLocalVector(da, &Ucat_local); CHKERRQ(ierr);
-    ierr = DMGlobalToLocalBegin(da, user->Ucat, INSERT_VALUES, Ucat_local); CHKERRQ(ierr);
-    ierr = DMGlobalToLocalEnd(da, user->Ucat, INSERT_VALUES, Ucat_local); CHKERRQ(ierr);
+    // Access the local portion of the global velocity vector (Ucat) using 'fda'
+    ierr = DMDAVecGetArrayRead(user->fda,user->Ucat,&ucat);
 
-    // Access grid velocities
-    ierr = DMDAVecGetArrayRead(da, Ucat_local, &u_array); CHKERRQ(ierr);
 
-    // Loop over local particles
-    for (PetscInt p = 0; p < n_local; ++p) {
+    LOG(GLOBAL, LOG_DEBUG, "InterpolateParticleVelocities: Starting velocity assignment for particles.\n");
+
+    // Log grid dimensions
+    LOG(GLOBAL, LOG_INFO, "Grid dimensions: mx=%d, my=%d, mz=%d \n", user->info.mx, user->info.my, user->info.mz);
+
+    // Loop over all local particles
+    for (PetscInt p = 0; p < n_local; p++) {
         // Retrieve cell indices for the particle
-        PetscInt i = cellIDs[3 * p];
-        PetscInt j = cellIDs[3 * p + 1];
-        PetscInt k = cellIDs[3 * p + 2];
+        i = cellIDs[3 * p];
+        j = cellIDs[3 * p + 1];
+        k = cellIDs[3 * p + 2];
 
-	/*
-        // Retrieve interpolation coefficients from the "weights" field
-        PetscReal a1 = weights[3 * p];       // a1 for particle p
-        PetscReal a2 = weights[3 * p + 1];   // a2 for particle p
-        PetscReal a3 = weights[3 * p + 2];   // a3 for particle p
+        LOG(GLOBAL, LOG_DEBUG, "Particle %d: Host Cell = (%d, %d, %d)\n", p, i, j, k);
 
-        // Compute interpolation weights from coefficients
-        PetscReal w[NUM_WEIGHTS];
-        ComputeTrilinearWeights(a1, a2, a3, w);
-
-        // Initialize interpolated velocity components
-        PetscReal vel_p[3] = {0.0, 0.0, 0.0};
-
-        // Get Cell Corner velocities.
-        GetCellVerticesFromGrid(u_array,i,j,k,cell);
-
-        // Loop over the 8 corners of the cell
-        for (PetscInt corner = 0; corner < NUM_WEIGHTS; ++corner) {
-            // Determine offsets based on corner index
-            PetscInt di = (corner & 1) ? 1 : 0;
-            PetscInt dj = (corner & 2) ? 1 : 0;
-            PetscInt dk = (corner & 4) ? 1 : 0;
-
-            PetscInt ii = i + di;
-            PetscInt jj = j + dj;
-            PetscInt kk = k + dk;
-
-            // Access grid velocities at the grid point (ii, jj, kk)
-            PetscReal *grid_vel = u_array[kk][jj][ii]; // u_array[z][y][x][dof]
-
-            // Accumulate weighted velocities
-            vel_p[0] += w[corner] * grid_vel[0]; // u-component
-            vel_p[1] += w[corner] * grid_vel[1]; // v-component
-            vel_p[2] += w[corner] * grid_vel[2]; // w-component
+        // Validate cell indices (boundary check)
+        if (i < 0 || j < 0 || k < 0 || i >= user->info.mx || j >= user->info.my || k >= user->info.mz) {
+            LOG(GLOBAL, LOG_WARNING, "Particle %d has invalid cell indices (%d, %d, %d)\n. Skipping interpolation.\n", p, i, j, k);
+            velocities[3 * p    ] = 0.0;
+            velocities[3 * p + 1] = 0.0;
+            velocities[3 * p + 2] = 0.0;
+            continue;
         }
 
-        // Store interpolated velocities back into DMSwarm field
-        velocities[3 * p]     = vel_p[0];
-        velocities[3 * p + 1] = vel_p[1];
-        velocities[3 * p + 2] = vel_p[2];
-    
-    */
+        // Assign interpolated velocity to the particle
 
-        // Store interpolated velocities back into DMSwarm field
-        velocities[3 * p]     = u_array[k][j][i].x;
-        velocities[3 * p + 1] = u_array[k][j][i].y;
-        velocities[3 * p + 2] = u_array[k][j][i].z;
+        velocities[3 * p]     = ucat[k][j][i].x; // u-component
+        velocities[3 * p + 1] = ucat[k][j][i].y; // v-component
+        velocities[3 * p + 2] = ucat[k][j][i].z; // w-component
 
+        LOG(GLOBAL, LOG_DEBUG, "Particle %d: Interpolated velocity from (x=%f, y=%f, z=%f) to (x=%f, y=%f, z=%f).\n",
+            p, ucat[k][j][i].x, ucat[k][j][i].y, ucat[k][j][i].z,velocities[3 * p], velocities[3 * p + 1], velocities[3 * p + 2]);
     }
 
-    // Restore grid velocities
-    ierr = DMDAVecRestoreArrayRead(da, Ucat_local, &u_array); CHKERRQ(ierr);
-    ierr = DMRestoreLocalVector(da, &Ucat_local); CHKERRQ(ierr);
+    // Restore the local velocity array
+    ierr = DMDAVecRestoreArrayRead(fda,user->Ucat, &ucat); CHKERRQ(ierr);
 
-    // Restore DMSwarm fields
+    // Restore particle data fields
     ierr = DMSwarmRestoreField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs); CHKERRQ(ierr);
     ierr = DMSwarmRestoreField(swarm, "velocity", NULL, NULL, (void**)&velocities); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr);
 
-    PetscFunctionReturn(0);
+    LOG(GLOBAL, LOG_INFO, "InterpolateParticleVelocities: Particle velocity interpolation completed.\n");
+    return 0;
 }
 
-//////////////////////////////////////////////////////////////////////
-
-static char help[] = "DMSwarm Interpolation - fdf-curvIB ";
 
 /**
  * @brief Initialize PETSc and the simulation context.
@@ -176,13 +175,12 @@ static char help[] = "DMSwarm Interpolation - fdf-curvIB ";
  * @param[out] rstart Flag to restart(1) or start from t = 0 (0).
  * @param[out] ti The timestep to start from if restarting.
  * @param[out] nblk Number of grid blocks.
+ * @param[in] help message required by 'PetscInitialize'
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
 PetscErrorCode InitializeSimulation(UserCtx **user, PetscInt *rank, PetscInt *size, PetscInt *np, PetscInt *rstart, PetscInt *ti, PetscInt *nblk) {
+    
     PetscErrorCode ierr;
-
-    // Initialize PETSc
-    ierr = PetscInitialize(NULL, NULL, NULL, help); CHKERRQ(ierr);
 
     // Read options from control.dat
     ierr = PetscOptionsInsertFile(PETSC_COMM_WORLD, NULL, "control.dat", PETSC_TRUE); CHKERRQ(ierr);
@@ -208,6 +206,7 @@ PetscErrorCode InitializeSimulation(UserCtx **user, PetscInt *rank, PetscInt *si
       ierr = PetscOptionsGetInt(NULL,NULL,"-ti",ti,NULL); CHKERRQ(ierr);
     }
     ierr = PetscOptionsGetInt(NULL, NULL, "-nblk",nblk, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetInt(NULL,NULL,"-pinit",&((*user)->ParticleInitialization),NULL);
 
     LOG(GLOBAL, LOG_INFO, "InitializeSimulation Runtime Options: \n");
     LOG(GLOBAL, LOG_INFO, "rstart = %d \n",*rstart);
@@ -218,27 +217,34 @@ PetscErrorCode InitializeSimulation(UserCtx **user, PetscInt *rank, PetscInt *si
     return 0;
 }
 
-/**
- * @brief Set up the simulation grid and vectors.
- *
- * @param[in,out] user Pointer to the UserCtx structure.
- * @param[in] block_number The number of grid blocks in the domain.
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
- */
-PetscErrorCode SetupGridAndVectors(UserCtx *user,PetscInt block_number) {
+PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
     PetscErrorCode ierr;
+
+    if (!user) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx pointer is null.");
+    if (block_number <= 0) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_OUTOFRANGE, "block_number must be > 0");
 
     // Define grid coordinates
     ierr = DefineGridCoordinates(user); CHKERRQ(ierr);
+    LOG(GLOBAL, LOG_INFO, "Grid setup complete.\n");
 
+    ierr = DMDAGetLocalInfo(user->da, &user->info); CHKERRQ(ierr);
+   
     // Create global vectors for each block
-    for (PetscInt bi = 0; bi < block_number; bi++) {
-        ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Ucat); CHKERRQ(ierr);
-        ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Ucont); CHKERRQ(ierr);
-        ierr = DMCreateGlobalVector(user[bi].da, &user[bi].P); CHKERRQ(ierr);
-        ierr = DMCreateGlobalVector(user[bi].da, &user[bi].Nvert); CHKERRQ(ierr);
-        ierr = DMCreateGlobalVector(user[bi].da, &user[bi].Nvert_o); CHKERRQ(ierr);
-    }
+      for (PetscInt bi = 0; bi < block_number; bi++) {
+        // Check that the DMs are valid
+        if (!user[bi].fda || !user[bi].da) {
+           SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "DMs not initialized \n");
+     }
+
+        PetscPrintf(PETSC_COMM_WORLD, "Creating vectors for block %d: fda=%p, da=%p\n", bi, (void*)user[bi].fda, (void*)user[bi].da);
+
+        // Create global vectors
+	ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Ucat); CHKERRQ(ierr);
+	ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Ucont); CHKERRQ(ierr);
+	ierr = DMCreateGlobalVector(user[bi].da, &user[bi].P); CHKERRQ(ierr);
+	ierr = DMCreateGlobalVector(user[bi].da, &user[bi].Nvert); CHKERRQ(ierr);
+	ierr = DMCreateGlobalVector(user[bi].da, &user[bi].Nvert_o); CHKERRQ(ierr);
+      }
 
     LOG(GLOBAL, LOG_INFO, "Grid and vectors setup completed.\n");
     return 0;
@@ -247,39 +253,50 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user,PetscInt block_number) {
 /**
  * @brief Perform particle swarm initialization, particle-grid interaction, and related operations.
  *
- * @param[in,out] user Pointer to the UserCtx structure.
- * @param[in] np Number of particles.
+ * This function handles the following tasks:
+ * 1. Initializes the particle swarm.
+ * 2. Locates particles within the computational grid.
+ * 3. Updates particle positions based on grid interactions.
+ * 4. Interpolates particle velocities from grid points using trilinear interpolation.
+ *
+ * @param[in,out] user Pointer to the UserCtx structure containing grid and particle swarm information.
+ * @param[in] np Number of particles to initialize in the swarm.
+ * 
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
 PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np) {
     PetscErrorCode ierr;
 
-    // Create and initialize particle swarm
+    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations: Starting particle swarm operations with %d particles.\n", np);
+
+    // Step 1: Create and initialize particle swarm
+    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations: Initializing particle swarm.\n");
     ierr = CreateParticleSwarm(user, np); CHKERRQ(ierr);
-    LOG(GLOBAL, LOG_INFO, "Particle swarm initialized.\n");
+    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations: Particle swarm initialized successfully.\n");
 
-    PetscPrintf(PETSC_COMM_WORLD," Before Locating Host \n");
-
-    // Print particle fields (optional debugging)
+    // Step 2: Debugging particle fields (optional)
+    LOG(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations: Printing initial particle fields (optional).\n");
     ierr = PrintParticleFields(user); CHKERRQ(ierr);
 
-    // Locate particles in the grid
+    // Step 3: Locate particles in the computational grid
+    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations: Locating particles within the grid.\n");
     ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
-    LOG(GLOBAL, LOG_INFO, "Particle positions updated after search.\n");
+    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations: Particle positions updated after grid search.\n");
 
-    PetscPrintf(PETSC_COMM_WORLD," After Locating Host \n");
-
-    // Print particle fields (optional debugging)
+    // Debugging particle fields after location update (optional)
+    LOG(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations: Printing particle fields after location update.\n");
     ierr = PrintParticleFields(user); CHKERRQ(ierr);
 
-    // Interpolate particle velocity from grid points (Trilinear)
+    // Step 4: Interpolate particle velocities
+    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations: Interpolating particle velocities using trilinear interpolation.\n");
     ierr = InterpolateParticleVelocities(user); CHKERRQ(ierr);
+    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations: Particle velocities interpolated successfully.\n");
 
-   PetscPrintf(PETSC_COMM_WORLD," After Interpolating Velocity \n");
-
-    // Print particle fields (optional debugging)
+    // Debugging particle fields after velocity interpolation (optional)
+    LOG(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations: Printing particle fields after velocity interpolation.\n");
     ierr = PrintParticleFields(user); CHKERRQ(ierr);
 
+    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations: Particle swarm operations completed.\n");
     return 0;
 }
 
@@ -310,44 +327,4 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number) {
     return 0;
 }
 
-/**
- * @brief Main function for DMSwarm interpolation.
- *
- * Initializes the grid, reads the velocity field, creates particles, and performs particle-grid interpolation.
- *
- * @param argc Argument count.
- * @param argv Argument vector.
- * @return int Returns 0 on success, non-zero on failure.
- */
-int main(int argc, char **argv) {
-    PetscErrorCode ierr;
-    UserCtx *user = NULL;
-    PetscInt rank, size;
-    PetscInt np = 0,ti = 0;
-    PetscReal umax;
-    PetscInt block_number = 1, rstart = 0;
-    BoundingBox *bboxlist;
 
-    // Initialize simulation
-    ierr = InitializeSimulation(&user, &rank, &size,&np,&rstart,&ti,&block_number); CHKERRQ(ierr);
-    // Setup grid and vectors
-    ierr = SetupGridAndVectors(user,block_number); CHKERRQ(ierr);
-
-    // Read simulation fields
-    ierr = ReadSimulationFields(user, ti); CHKERRQ(ierr);
-
-    // Compute and log max velocity
-    ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
-    PetscPrintf(PETSC_COMM_WORLD,"Maximum velocity magnitude: %f\n", umax);
-
-    // Create Bounding Boxes for each rank
-    ierr = GatherAllBoundingBoxes(user, &bboxlist); CHKERRQ(ierr);
-
-    // Perform particle swarm operations
-    ierr = PerformParticleSwarmOperations(user, np); CHKERRQ(ierr);
-
-    // Finalize simulation
-    ierr = FinalizeSimulation(user,block_number); CHKERRQ(ierr);
-
-    return 0;
-}

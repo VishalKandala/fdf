@@ -113,6 +113,7 @@ typedef struct {
     // Particle-related fields
     DM swarm;               ///< Particle data structure using DMSwarm.
     PetscInt *miglist;      ///< List of ranks for particle migration.
+    PetscInt ParticleInitialization;
 
     // Simulation parameters
     PetscReal dt;           ///< Time step.

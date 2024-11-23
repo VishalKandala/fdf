@@ -83,13 +83,13 @@ PetscErrorCode InitializeRandomGenerators(UserCtx *user, PetscRandom *randx, Pet
  *
  * @param[in,out] user               Pointer to the UserCtx structure containing simulation context.
  * @param[in]     particlesPerProcess Number of particles assigned to the local MPI process.
+ *
  * @param[in]     randx             Random number generator for the x-coordinate.
  * @param[in]     randy             Random number generator for the y-coordinate.
  * @param[in]     randz             Random number generator for the z-coordinate.
- *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode AssignInitialProperties(UserCtx *user, PetscInt particlesPerProcess, PetscRandom randx, PetscRandom randy, PetscRandom randz);
+PetscErrorCode AssignInitialProperties(UserCtx *user, PetscInt particlesPerProcess,PetscRandom* randx,PetscRandom* randy,PetscRandom* randz);
 
 /**
  * @brief Distributes particles evenly across MPI processes, handling any remainders.
@@ -118,7 +118,7 @@ PetscErrorCode DistributeParticles(PetscInt numParticles, PetscMPIInt rank, Pets
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode FinalizeSwarmSetup(PetscRandom randx, PetscRandom randy, PetscRandom randz);
+PetscErrorCode FinalizeSwarmSetup(PetscRandom *randx, PetscRandom *randy, PetscRandom *randz);
 
 /**
  * @brief Prints the coordinates of all particles in the swarm.
@@ -258,6 +258,6 @@ PetscBool IsParticleInsideBoundingBox(const BoundingBox *bbox, const Particle *p
  *
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  */
-PetscErrorCode UpdateParticleWeights(const PetscReal *d, Particle *particle);
+PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle);
 
 #endif // PARTICLE_SWARM_H
