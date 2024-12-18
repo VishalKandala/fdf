@@ -459,13 +459,13 @@ PetscErrorCode PrintParticleFields(UserCtx* user) {
     // Iterate over each local particle and print its position and metadata
     for (PetscInt i = 0; i < localNumParticles; i++) {
         // Synchronized printing to ensure orderly output across MPI processes
-         ierr = PetscPrintf(PETSC_COMM_WORLD,"___________________________________________________________________________________________________________________________________________________________________\n");
+         ierr = PetscPrintf(PETSC_COMM_SELF,"___________________________________________________________________________________________________________________________________________________________________\n");
          ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD,
 				       "|  %d  |  %d  |   %d,  %d,  %d   | %.6f, %.6f, %.6f | %.6f, %.6f, %.6f |  %.6f, %.6f, %.6f  |\n",particleRanks[i],particleIDs[i],cellIDs[3 * i],cellIDs[3 * i + 1], cellIDs[3 * i + 2],positions[3 * i], positions[3 * i + 1], positions[3 * i + 2],velocities[3 * i],velocities[3 * i + 1], velocities[3 * i + 2],weights[3 * i],weights[3 * i + 1], weights[3 * i + 2]); CHKERRQ(ierr);
     }
-    ierr = PetscPrintf(PETSC_COMM_WORLD,"___________________________________________________________________________________________________________________________________________________________________\n");
+    ierr = PetscPrintf(PETSC_COMM_SELF,"___________________________________________________________________________________________________________________________________________________________________\n");
     // Add a blank line after each rank's output
-    ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "\n"); CHKERRQ(ierr);     
+    ierr = PetscSynchronizedPrintf(PETSC_COMM_SELF, "\n"); CHKERRQ(ierr);     
 
     // Flush the synchronized output to ensure all messages are printed
     ierr = PetscSynchronizedFlush(PETSC_COMM_WORLD, PETSC_STDOUT); CHKERRQ(ierr);
