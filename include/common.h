@@ -82,10 +82,13 @@ typedef struct {
     // Grid-related fields
     DM da;                  ///< Data structure for scalar fields.
     DM fda;                 ///< Data structure for vector fields.
-  DM fda2;                  ///< Data structure for RANS fields.
+    DM fda2;                  ///< Data structure for RANS fields.
     PetscInt IM, JM, KM;    ///< Global grid dimensions in x, y, z directions.
     BoundingBox bbox;       ///< Bounding box for the local grid domain.
     DMDALocalInfo info;     ///< Local information about the DMDA.
+    PetscReal rx;           // Stretching ratio in x-direction
+    PetscReal ry;           // Stretching ratio in y-direction
+    PetscReal rz;           // Stretching ratio in z-direction
 
     // Simulation fields
     Vec Ucont;              ///< Contravariant velocity field.

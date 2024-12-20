@@ -119,7 +119,7 @@ PetscErrorCode ParseGridInputs(UserCtx *user, PetscInt *generate_grid, PetscInt 
 
     if (*generate_grid) {
         // Delegate the reading of grid generation inputs, including grid1d
-      ierr = ReadGridGenerationInputs(grid1d,L_x, L_y, L_z, imm, jmm, kmm, nblk); CHKERRQ(ierr);
+      ierr = ReadGridGenerationInputs(user,grid1d,L_x, L_y, L_z, imm, jmm, kmm, nblk); CHKERRQ(ierr);
     } else {
         // Delegate the reading of grid file data, including grid1d // hard coded the file as a temporary hack! 
         ierr = ReadGridFile("grid.dat", nblk, imm, jmm, kmm, grid1d, PETSC_COMM_WORLD); CHKERRQ(ierr);

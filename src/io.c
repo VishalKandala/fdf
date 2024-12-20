@@ -19,6 +19,7 @@
  *
  * This function reads domain dimensions and block parameters for programmatically generating a grid.
  *
+ * @param[in,out] user      Pointer to the UserCtx structure containing grid details.
  * @param[out] grid1d       Pointer to flag indicating if the grid is 1D (1) or 3D (0).
  * @param[out] L_x          Pointer to domain length in the x-direction.
  * @param[out] L_y          Pointer to domain length in the y-direction.
@@ -30,7 +31,7 @@
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode ReadGridGenerationInputs(PetscInt *grid1d, PetscReal *L_x, PetscReal *L_y, PetscReal *L_z,
+PetscErrorCode ReadGridGenerationInputs(UserCtx *user, PetscInt *grid1d, PetscReal *L_x, PetscReal *L_y, PetscReal *L_z,
                                         PetscInt **imm, PetscInt **jmm, PetscInt **kmm, PetscInt *nblk) {
     PetscErrorCode ierr;
 
@@ -39,11 +40,19 @@ PetscErrorCode ReadGridGenerationInputs(PetscInt *grid1d, PetscReal *L_x, PetscR
     // Read the flag indicating if grid is 1D(1) or 3D(0)
     ierr = PetscOptionsGetInt(NULL, NULL, "-grid1d", grid1d, NULL); CHKERRQ(ierr);
 
-    // Read grid dimensions & number of blocks
+    // Set the default stretching ratios
+    user->rx = 1.0;
+    user->ry = 1.0;
+    user->rz = 1.0;
+
+    // Read grid dimensions, number of blocks and stretching ratios.
     ierr = PetscOptionsGetInt(NULL, NULL, "-nblk", nblk, NULL); CHKERRQ(ierr);
     ierr = PetscOptionsGetReal(NULL, NULL, "-L_x", L_x, NULL); CHKERRQ(ierr);
     ierr = PetscOptionsGetReal(NULL, NULL, "-L_y", L_y, NULL); CHKERRQ(ierr);
     ierr = PetscOptionsGetReal(NULL, NULL, "-L_z", L_z, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-r_x", &user->rx, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-r_y", &user->ry, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-r_z", &user->rz, NULL); CHKERRQ(ierr);
     
     LOG(GLOBAL, LOG_INFO, "ReadGridGenerationInputs - Number of grid blocks: %d.\n", *nblk);
   
@@ -60,6 +69,7 @@ PetscErrorCode ReadGridGenerationInputs(PetscInt *grid1d, PetscReal *L_x, PetscR
     ierr = PetscOptionsGetIntArray(NULL, NULL, "-jm", *jmm, nblk, NULL); CHKERRQ(ierr);
     ierr = PetscOptionsGetIntArray(NULL, NULL, "-km", *kmm, nblk, NULL); CHKERRQ(ierr);
 
+    
     LOG(GLOBAL, LOG_INFO, "ReadGridGenerationInputs - Grid parameters read successfully.\n");
 
     return 0;

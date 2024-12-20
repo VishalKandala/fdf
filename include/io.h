@@ -19,6 +19,7 @@
  *
  * Reads domain dimensions and block parameters for programmatically generating a grid.
  *
+ * @param[out] user         Pointer to the UserCtx structure containing the grid data.
  * @param[out] grid1d       Pointer to flag indicating if the grid is 1D (1) or 3D (0).
  * @param[out] L_x          Pointer to domain length in the x-direction.
  * @param[out] L_y          Pointer to domain length in the y-direction.

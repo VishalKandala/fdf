@@ -296,7 +296,7 @@ PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles) {
     // Validate input parameters
     if (numParticles <= 0) {
         LOG_DEFAULT(LOG_ERROR, "CreateParticleSwarm - Number of particles must be positive. Given: %d\n", numParticles);
-        return PETSC_ERR_ARG_OUTOFRANGE;
+        return PETSC_ERR_ARG_OUTOFRANGE;  
     }
 
     // Insert PETSc options from "control.dat" into the option database
