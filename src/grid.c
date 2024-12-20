@@ -91,7 +91,7 @@ PetscErrorCode InitializeGridDM(UserCtx *user, PetscReal L_x, PetscReal L_y, Pet
  *
  * @param[in,out] user          Pointer to the UserCtx structure containing grid details.
  * @param[out]    generate_grid Flag indicating whether the grid should be generated (1) or read from file (0).
- * @param[out]    grid1d              Flag indicating whether the grid is 1D(1) or not(0).
+ * @param[out]    grid1d        Flag indicating whether the grid is 1D(1) or not(0).
  * @param[out]    L_x           Pointer to store the domain length in the x-direction.
  * @param[out]    L_y           Pointer to store the domain length in the y-direction.
  * @param[out]    L_z           Pointer to store the domain length in the z-direction.
@@ -118,16 +118,26 @@ PetscErrorCode ParseGridInputs(UserCtx *user, PetscInt *generate_grid, PetscInt 
     ierr = PetscOptionsGetInt(NULL, NULL, "-grid", generate_grid, NULL); CHKERRQ(ierr);
 
     if (*generate_grid) {
-        // Delegate the reading of grid generation inputs, including grid1d
-      ierr = ReadGridGenerationInputs(user,grid1d,L_x, L_y, L_z, imm, jmm, kmm, nblk); CHKERRQ(ierr);
+        // Delegate the reading of grid generation inputs
+        ierr = ReadGridGenerationInputs(user, grid1d, L_x, L_y, L_z, imm, jmm, kmm, nblk); CHKERRQ(ierr);
     } else {
-        // Delegate the reading of grid file data, including grid1d // hard coded the file as a temporary hack! 
+        // We are reading grid data from a file, check if 'grid.dat' is accessible
+        FILE *testFile = fopen("grid.dat", "r");
+        if (!testFile) {
+            SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_OPEN,
+                    "ParseGridInputs - Could not open 'grid.dat'. Please ensure it exists in the current directory.");
+        } else {
+            fclose(testFile);
+        }
+
+        // If file is accessible, delegate reading of grid file data, including grid1d
         ierr = ReadGridFile("grid.dat", nblk, imm, jmm, kmm, grid1d, PETSC_COMM_WORLD); CHKERRQ(ierr);
     }
 
     LOG(GLOBAL, LOG_INFO, "ParseGridInputs - Grid inputs retrieved successfully.\n");
     return 0;
 }
+
 
 
 /**

@@ -164,26 +164,32 @@ PetscErrorCode InterpolateParticleVelocities(UserCtx *user) {
     return 0;
 }
 
-
 /**
- * @brief Initialize PETSc and the simulation context.
+ * @brief Initialize the simulation context.
  *
- * @param[out] user Pointer to the allocated UserCtx structure.
- * @param[out] rank MPI rank of the process.
- * @param[out] size Number of MPI processes.
- * @param[out] np Number of particles.
- * @param[out] rstart Flag to restart(1) or start from t = 0 (0).
- * @param[out] ti The timestep to start from if restarting.
- * @param[out] nblk Number of grid blocks.
- * @param[in] help message required by 'PetscInitialize'
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ * Checks for the presence of "control.dat" file, reads runtime options, and sets up the user context.
+ *
+ * @param[out] user    Pointer to the allocated UserCtx structure.
+ * @param[out] rank    MPI rank of the process.
+ * @param[out] size    Number of MPI processes.
+ * @param[out] np      Number of particles.
+ * @param[out] rstart  Flag to restart (1) or start from t=0 (0).
+ * @param[out] ti      The timestep to start from if restarting.
+ * @param[out] nblk    Number of grid blocks.
+ *
+ * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  */
 PetscErrorCode InitializeSimulation(UserCtx **user, PetscInt *rank, PetscInt *size, PetscInt *np, PetscInt *rstart, PetscInt *ti, PetscInt *nblk) {
-    
     PetscErrorCode ierr;
 
-    // Read options from control.dat
-    ierr = PetscOptionsInsertFile(PETSC_COMM_WORLD, NULL, "control.dat", PETSC_TRUE); CHKERRQ(ierr);
+    // Attempt to insert options from "control.dat"
+    ierr = PetscOptionsInsertFile(PETSC_COMM_WORLD, NULL, "control.dat", PETSC_TRUE);
+    if (ierr == PETSC_ERR_FILE_OPEN) {
+        SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_OPEN,
+                "InitializeSimulation - Could not open 'control.dat'. Please ensure it exists in the current directory.");
+    } else {
+        CHKERRQ(ierr);
+    }
 
     // Allocate user context
     ierr = PetscCalloc1(1, user); CHKERRQ(ierr);
@@ -192,30 +198,31 @@ PetscErrorCode InitializeSimulation(UserCtx **user, PetscInt *rank, PetscInt *si
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, rank); CHKERRQ(ierr);
     ierr = MPI_Comm_size(PETSC_COMM_WORLD, size); CHKERRQ(ierr);
 
-    // Initialize user context
+    // Initialize user context flags
     (*user)->averaging = PETSC_FALSE;
     (*user)->les = PETSC_FALSE;
     (*user)->rans = PETSC_FALSE;
 
     LOG(GLOBAL, LOG_INFO, "InitializeSimulation - Initialized on rank %d out of %d processes.\n", *rank, *size);
 
-   // Read runtime options
+    // Read runtime options
     ierr = PetscOptionsGetInt(NULL, NULL, "-numParticles", np, NULL); CHKERRQ(ierr);
     ierr = PetscOptionsGetInt(NULL, NULL, "-rstart", rstart, NULL); CHKERRQ(ierr);
-    if((*rstart)==1){
-      ierr = PetscOptionsGetInt(NULL,NULL,"-ti",ti,NULL); CHKERRQ(ierr);
+    if((*rstart) == 1) {
+        ierr = PetscOptionsGetInt(NULL, NULL, "-ti", ti, NULL); CHKERRQ(ierr);
     }
-    ierr = PetscOptionsGetInt(NULL, NULL, "-nblk",nblk, NULL); CHKERRQ(ierr);
-    ierr = PetscOptionsGetInt(NULL,NULL,"-pinit",&((*user)->ParticleInitialization),NULL);
+    ierr = PetscOptionsGetInt(NULL, NULL, "-nblk", nblk, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetInt(NULL, NULL, "-pinit", &((*user)->ParticleInitialization), NULL);
 
-    LOG(GLOBAL, LOG_INFO, "InitializeSimulation Runtime Options: \n");
-    LOG(GLOBAL, LOG_INFO, "rstart = %d \n",*rstart);
-    if(rstart) LOG(GLOBAL, LOG_INFO, "Restarting from time: %d \n",*ti);
-    LOG(GLOBAL, LOG_INFO, "No.of Particles: %d \n", *np);
-    LOG(GLOBAL, LOG_INFO, "No.of Grid blocks: %d\n",*nblk);
+    LOG(GLOBAL, LOG_INFO, "InitializeSimulation Runtime Options:\n");
+    LOG(GLOBAL, LOG_INFO, "rstart = %d\n", *rstart);
+    if((*rstart) == 1) LOG(GLOBAL, LOG_INFO, "Restarting from time: %d\n", *ti);
+    LOG(GLOBAL, LOG_INFO, "No. of Particles: %d\n", *np);
+    LOG(GLOBAL, LOG_INFO, "No. of Grid blocks: %d\n", *nblk);
 
     return 0;
 }
+
 
 PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
     PetscErrorCode ierr;
