@@ -21,7 +21,7 @@
 //#include "logging.h"        // Logging macros
 //#include "io.h"             // Data Input and Output functions
 
-//#include "interpolation.h"
+#include "interpolation.h"
 
 /**
  * @brief Sets the local Cartesian velocity components based on coordinates.
