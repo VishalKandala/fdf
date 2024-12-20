@@ -192,8 +192,11 @@ PetscErrorCode ReadFieldData(UserCtx *user, const char *field_name, Vec field_ve
     ierr = PetscTestFile(filename, FILE_MODE_READ, &fileExists); CHKERRQ(ierr);
     if (!fileExists) {
     LOG(GLOBAL, LOG_WARNING, "ReadFieldData - File '%s' does not exist.\n", filename);
-    SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FILE_OPEN,
-            "ReadFieldData - Could not open file '%s' for reading. File does not exist.", filename);
+    char err_msg[512];
+    PetscSNPrintf(err_msg, sizeof(err_msg), 
+              "ReadFieldData - Could not open file '%s' for reading. File does not exist.", 
+              filename);
+    SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FILE_OPEN, err_msg);
 }  
 //    if (!fileExists) {
 //        LOG(GLOBAL, LOG_WARNING, "ReadFieldData - File '%s' does not exist. Skipping.\n", filename);
