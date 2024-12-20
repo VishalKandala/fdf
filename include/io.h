@@ -31,7 +31,7 @@
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode ReadGridGenerationInputs(PetscInt *grid1d, PetscReal *L_x, PetscReal *L_y, PetscReal *L_z,
+PetscErrorCode ReadGridGenerationInputs(UserCtx *user,PetscInt *grid1d, PetscReal *L_x, PetscReal *L_y, PetscReal *L_z,
                                         PetscInt **imm, PetscInt **jmm, PetscInt **kmm, PetscInt *nblk);
 /**
  * @brief Reads grid parameters from a file.
