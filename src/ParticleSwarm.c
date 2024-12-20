@@ -50,7 +50,7 @@ PetscErrorCode RegisterParticleFields(DM swarm) {
     ierr = DMSwarmRegisterPetscDatatypeField(swarm, "velocity", 3, PETSC_REAL); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "RegisterParticleFields - Registered field 'velocity'.\n");
 
-    ierr = DMSwarmRegisterPetscDatatypeField(swarm, "DMSwarm_CellID", 3, PETSC_INT); CHKERRQ(ierr);
+    ierr = DMSwarmRegisterPetscDatatypeField(swarm, "DMSwarm_CellID", 3, PETSC_INT64); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "RegisterParticleFields - Registered field 'DMSwarm_CellID'.\n");
 
     ierr = DMSwarmRegisterPetscDatatypeField(swarm, "weight", 3, PETSC_REAL); CHKERRQ(ierr);
