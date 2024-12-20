@@ -138,6 +138,54 @@ PetscErrorCode ParseGridInputs(UserCtx *user, PetscInt *generate_grid, PetscInt 
     return 0;
 }
 
+/**
+ * @brief Computes a stretched coordinate along one dimension.
+ *
+ * This function computes a coordinate based on a geometric stretching ratio.
+ * If the ratio (r) is 1.0, a uniform distribution is used:
+ *     x(i) = L * (i/N)
+ *
+ * If r != 1.0, a geometric stretching is applied:
+ *     x(i) = L * [ (r^(i/N) - 1 ) / (r - 1) ]
+ *
+ * Here:
+ * - i   : The current index along the dimension.
+ * - N   : The total number of divisions along that dimension.
+ * - L   : The length of the domain along that dimension.
+ * - r   : The stretching ratio. r > 1.0 stretches the grid in a geometric fashion
+ *         increasing spacing away from the start, whereas 0 < r < 1.0 would
+ *         cluster points near the start.
+ *
+ * @param[in] i Current index (0 <= i <= N).
+ * @param[in] N Number of segments along the dimension.
+ * @param[in] L Total length of the domain.
+ * @param[in] r Stretching ratio.
+ *
+ * @return PetscReal The computed coordinate at index i.
+ *
+ * @note This function does not return a PetscErrorCode because it
+ *       does not allocate memory or call PETSc routines that can fail.
+ *       It is just a helper calculation function.
+ */
+static inline PetscReal ComputeStretchedCoord(PetscInt i, PetscInt N, PetscReal L, PetscReal r) {
+    // Handle the case where N=0 to avoid division by zero (though it should never happen in normal usage)
+    if (N == 0) return 0.0;
+
+    PetscReal fraction = (PetscReal)i / (PetscReal)N;
+
+    if (r == 1.0) {
+        // No stretching (uniform distribution)
+        return L * fraction;
+    } else {
+        // Geometric stretching
+        // r^(fraction) grows (or decays) geometrically depending on r.
+        // When i=0, r^(0)=1, so x(0)=0; when i=N, r^(1)=r, so x(N)=L.
+        // This distributes points between 0 and L non-linearly.
+        PetscReal numerator = PetscPowReal(r, fraction) - 1.0;
+        PetscReal denominator = r - 1.0;
+        return L * (numerator / denominator);
+    }
+}
 
 
 /**
@@ -222,9 +270,9 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user, PetscInt generate_grid, Pets
                     for (j = 0; j <= JM; j++) {
                         for (i = 0; i <= IM; i++) {
                             PetscInt index = ((k * (JM + 1) * (IM + 1)) + (j * (IM + 1)) + i) * 3;
-                            gc[index]     = L_x / IM * i; // X-coordinate
-                            gc[index + 1] = L_y / JM * j; // Y-coordinate
-                            gc[index + 2] = L_z / KM * k; // Z-coordinate
+                            gc[index]     = ComputeStretchedCoord(i, IM, L_x, user->rx);
+                            gc[index + 1] = ComputeStretchedCoord(j, JM, L_y, user->ry);
+                            gc[index + 2] = ComputeStretchedCoord(k, KM, L_z, user->rz);
                         }
                     }
                 }
