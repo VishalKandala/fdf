@@ -238,7 +238,7 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
 
         PetscPrintf(PETSC_COMM_WORLD, "SetupGridAndVectors - Creating vectors for block %d: fda=%p, da=%p\n", bi, (void*)user[bi].fda, (void*)user[bi].da);
 
-        // Create global vectors
+        // Create global vectors (Destroyed in FinalizeSimulation)
 	ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Ucat); CHKERRQ(ierr);
 	ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Ucont); CHKERRQ(ierr);
 	ierr = DMCreateGlobalVector(user[bi].da, &user[bi].P); CHKERRQ(ierr);
@@ -267,36 +267,36 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
 PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np) {
     PetscErrorCode ierr;
 
-    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations: Starting particle swarm operations with %d particles.\n", np);
+    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Starting particle swarm operations with %d particles.\n", np);
 
     // Step 1: Create and initialize particle swarm
-    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations: Initializing particle swarm.\n");
+    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Initializing particle swarm.\n");
     ierr = CreateParticleSwarm(user, np); CHKERRQ(ierr);
-    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations: Particle swarm initialized successfully.\n");
+    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle swarm initialized successfully.\n");
 
     // Step 2: Debugging particle fields (optional)
-    LOG(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations: Printing initial particle fields (optional).\n");
+    LOG(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing initial particle fields (optional).\n");
     ierr = PrintParticleFields(user); CHKERRQ(ierr);
 
     // Step 3: Locate particles in the computational grid
-    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations: Locating particles within the grid.\n");
+    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Locating particles within the grid.\n");
     ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
-    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations: Particle positions updated after grid search.\n");
+    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle positions updated after grid search.\n");
 
     // Debugging particle fields after location update (optional)
-    LOG(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations: Printing particle fields after location update.\n");
+    LOG(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing particle fields after location update.\n");
     ierr = PrintParticleFields(user); CHKERRQ(ierr);
 
     // Step 4: Interpolate particle velocities
-    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations: Interpolating particle velocities using trilinear interpolation.\n");
+    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Interpolating particle velocities using trilinear interpolation.\n");
    // ierr = InterpolateParticleVelocities(user); CHKERRQ(ierr);
-    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations: Particle velocities interpolated successfully.\n");
+   // LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle velocities interpolated successfully.\n");
 
     // Debugging particle fields after velocity interpolation (optional)
-    LOG(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations: Printing particle fields after velocity interpolation.\n");
+   // LOG(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing particle fields after velocity interpolation.\n");
    // ierr = PrintParticleFields(user); CHKERRQ(ierr);
 
-    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations: Particle swarm operations completed.\n");
+    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle swarm operations completed.\n");
     return 0;
 }
 
@@ -312,6 +312,14 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number) {
 
     // Destroy DM and vectors for each block
     for (PetscInt bi = 0; bi < block_number; bi++) {
+        // vectors
+        ierr = VecDestroy(&(user[bi].Ucat)); CHKERRQ(ierr);
+        ierr = VecDestroy(&(user[bi].Ucont)); CHKERRQ(ierr);
+        ierr = VecDestroy(&(user[bi].P)); CHKERRQ(ierr);
+        ierr = VecDestroy(&(user[bi].Nvert)); CHKERRQ(ierr);
+        ierr = VecDestroy(&(user[bi].Nvert_o)); CHKERRQ(ierr);
+
+        // DMs
         ierr = DMDestroy(&(user[bi].fda)); CHKERRQ(ierr);
         ierr = DMDestroy(&(user[bi].da)); CHKERRQ(ierr);
         ierr = DMDestroy(&(user[bi].swarm)); CHKERRQ(ierr);
