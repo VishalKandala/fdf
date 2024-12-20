@@ -21,7 +21,7 @@
 //#include "logging.h"        // Logging macros
 //#include "io.h"             // Data Input and Output functions
 
-#include "interpolation.h"
+//#include "interpolation.h"
 
 /**
  * @brief Sets the local Cartesian velocity components based on coordinates.
@@ -224,7 +224,7 @@ PetscErrorCode UpdateCartesianVelocity(UserCtx *user) {
     PetscInt i, j, k;
     PetscInt lxs,lys,lzs,lxe,lye,lze;
 
-    LOG(GLOBAL, LOG_INFO, "UpdateCartesianVelocity: Starting velocity update process.\n");
+    LOG(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Starting velocity update process.\n");
 
     // Retrieve local DMDA grid information
     DMDALocalInfo info = user->info;
@@ -237,7 +237,7 @@ PetscErrorCode UpdateCartesianVelocity(UserCtx *user) {
 
     lxs = xs; lxe = xe;
     lys = ys; lye = ye;
-    lzs = zs; lze = ze;
+    lzs = zs; lze = ze; 
   
     if (xs==0) lxs = xs+1;
     if (ys==0) lys = ys+1;
@@ -247,7 +247,7 @@ PetscErrorCode UpdateCartesianVelocity(UserCtx *user) {
     if (ye==my) lye = ye-1;
     if (ze==mz) lze = ze-1;
 
-    LOG(GLOBAL, LOG_INFO, "UpdateCartesianVelocity: Local subdomain ranges - lxs: %d, lxe: %d, lys: %d, lye: %d, lzs: %d, lze: %d.\n", lxs, lxe, lys, lye, lzs,lze);
+    LOG(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Local subdomain ranges - lxs: %d, lxe: %d, lys: %d, lye: %d, lzs: %d, lze: %d.\n", lxs, lxe, lys, lye, lzs,lze);
 
     // Access the DMDA coordinate vector
     ierr = DMGetCoordinatesLocal(user->da, &Coor); CHKERRQ(ierr);
@@ -256,22 +256,22 @@ PetscErrorCode UpdateCartesianVelocity(UserCtx *user) {
     // Allocate memory for the temporary 3D array to store interpolated coordinates
     ierr = Allocate3DArray(&centcoor, lze-lzs, lye-lys,lxe-lxs); CHKERRQ(ierr);
 
-    LOG(GLOBAL, LOG_DEBUG, "UpdateCartesianVelocity: Allocated centcoor for interpolated coordinates.\n");
+    LOG(GLOBAL, LOG_DEBUG, "UpdateCartesianVelocity - Allocated centcoor for interpolated coordinates.\n");
 
     // Access the Cartesian velocity vector
     ierr = DMDAVecGetArray(user->fda, user->Ucat, &ucat); CHKERRQ(ierr);
 
     // Interpolate coordinate values from cell corners to cell centers
-    LOG(GLOBAL, LOG_INFO, "UpdateCartesianVelocity: Interpolating coordinates from corners to centers.\n");
+    LOG(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Interpolating coordinates from corners to centers.\n");
     ierr = InterpolateFieldFromCornerToCenter(coor, centcoor, &info); CHKERRQ(ierr);
 
     // Update the Cartesian velocity at each cell center
-    LOG(GLOBAL, LOG_INFO, "UpdateCartesianVelocity: Updating velocity values at cell centers.\n");
+    LOG(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Updating velocity values at cell centers.\n");
     for (k = lzs; k < lze; k++) {
         for (j = lys; j < lye; j++) {
             for (i = lxs; i < lxe; i++) {
                 ierr = SetLocalCartesianVelocity(&ucat[k][j][i], &centcoor[k-lzs][j-lys][i-lxs]); CHKERRQ(ierr);
-                LOG(GLOBAL, LOG_DEBUG, "Updated velocity at (%d, %d, %d): x=%f, y=%f, z=%f \n",
+                LOG(GLOBAL, LOG_DEBUG, "UpdateCartesianVelocity - Updated velocity at (%d, %d, %d): x=%f, y=%f, z=%f \n",
                     k, j, i, ucat[k][j][i].x, ucat[k][j][i].y, ucat[k][j][i].z);
             }
         }

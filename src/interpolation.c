@@ -225,7 +225,7 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
 
     // Define grid coordinates
     ierr = DefineGridCoordinates(user); CHKERRQ(ierr);
-    LOG(GLOBAL, LOG_INFO, "Grid setup complete.\n");
+    LOG(GLOBAL, LOG_INFO, "SetupGridAndVectors - Grid setup complete.\n");
 
     ierr = DMDAGetLocalInfo(user->da, &user->info); CHKERRQ(ierr);
    
@@ -236,7 +236,7 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
            SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "DMs not initialized \n");
      }
 
-        PetscPrintf(PETSC_COMM_WORLD, "Creating vectors for block %d: fda=%p, da=%p\n", bi, (void*)user[bi].fda, (void*)user[bi].da);
+        PetscPrintf(PETSC_COMM_WORLD, "SetupGridAndVectors - Creating vectors for block %d: fda=%p, da=%p\n", bi, (void*)user[bi].fda, (void*)user[bi].da);
 
         // Create global vectors
 	ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Ucat); CHKERRQ(ierr);
@@ -244,9 +244,9 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
 	ierr = DMCreateGlobalVector(user[bi].da, &user[bi].P); CHKERRQ(ierr);
 	ierr = DMCreateGlobalVector(user[bi].da, &user[bi].Nvert); CHKERRQ(ierr);
 	ierr = DMCreateGlobalVector(user[bi].da, &user[bi].Nvert_o); CHKERRQ(ierr);
-      }
+      } //bi 
 
-    LOG(GLOBAL, LOG_INFO, "Grid and vectors setup completed.\n");
+    LOG(GLOBAL, LOG_INFO, "SetupGridAndVectors - Grid and vectors setup completed.\n");
     return 0;
 }
 
