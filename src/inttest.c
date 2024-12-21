@@ -359,7 +359,7 @@ int main(int argc, char **argv) {
     ierr = GatherAllBoundingBoxes(user, &bboxlist); CHKERRQ(ierr);
 
     // Perform operations related to the particle swarm, such as initialization, movement, and interpolation
-    ierr = PerformParticleSwarmOperations(user, np); CHKERRQ(ierr);
+    ierr = PerformParticleSwarmOperations(user, np, bboxlist); CHKERRQ(ierr);
 
     // Finalize the simulation by cleaning up data structures, closing files, and freeing memory
     ierr = FinalizeSimulation(user, block_number); CHKERRQ(ierr);

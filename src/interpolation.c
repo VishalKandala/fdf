@@ -261,51 +261,64 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
  * @brief Perform particle swarm initialization, particle-grid interaction, and related operations.
  *
  * This function handles the following tasks:
- * 1. Initializes the particle swarm.
+ * 1. Initializes the particle swarm using the provided bounding box list (bboxlist) to determine initial placement
+ *    if ParticleInitialization is 0.
  * 2. Locates particles within the computational grid.
- * 3. Updates particle positions based on grid interactions.
+ * 3. Updates particle positions based on grid interactions (if such logic exists elsewhere in the code).
  * 4. Interpolates particle velocities from grid points using trilinear interpolation.
  *
- * @param[in,out] user Pointer to the UserCtx structure containing grid and particle swarm information.
- * @param[in] np Number of particles to initialize in the swarm.
- * 
+ * @param[in,out] user     Pointer to the UserCtx structure containing grid and particle swarm information.
+ * @param[in]     np       Number of particles to initialize in the swarm.
+ * @param[in]     bboxlist Pointer to an array of BoundingBox structures, one per MPI rank.
+ *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ *
+ * @note
+ * - Ensure that `np` (number of particles) is positive.
+ * - The `bboxlist` array must be correctly computed and passed in before calling this function.
+ * - If ParticleInitialization == 0, particles will be placed at the midpoint of the local bounding box.
  */
-PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np) {
+PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, BoundingBox *bboxlist) {
     PetscErrorCode ierr;
 
     LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Starting particle swarm operations with %d particles.\n", np);
 
-    // Step 1: Create and initialize particle swarm
+    // Step 1: Create and initialize the particle swarm
+    // Here we pass in the bboxlist, which will be used by CreateParticleSwarm() and subsequently
+    // by AssignInitialProperties() to position particles if ParticleInitialization == 0.
     LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Initializing particle swarm.\n");
-    ierr = CreateParticleSwarm(user, np); CHKERRQ(ierr);
+    ierr = CreateParticleSwarm(user, np, bboxlist); CHKERRQ(ierr);
     LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle swarm initialized successfully.\n");
 
-    // Step 2: Debugging particle fields (optional)
+    // Step 2: Print particle fields for debugging (optional)
     LOG(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing initial particle fields (optional).\n");
     ierr = PrintParticleFields(user); CHKERRQ(ierr);
 
-    // Step 3: Locate particles in the computational grid
+    // Step 3: Locate particles within the computational grid
+    // This updates each particle's cell indices and interpolation weights as needed.
     LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Locating particles within the grid.\n");
     ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
     LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle positions updated after grid search.\n");
 
-    // Debugging particle fields after location update (optional)
+    // Print particle fields again after location update (optional)
     LOG(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing particle fields after location update.\n");
     ierr = PrintParticleFields(user); CHKERRQ(ierr);
 
-    // Step 4: Interpolate particle velocities
+    // Step 4: Interpolate particle velocities using trilinear interpolation
+    // This requires that particles have valid cell indices and weights from the previous step.
     LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Interpolating particle velocities using trilinear interpolation.\n");
     ierr = InterpolateParticleVelocities(user); CHKERRQ(ierr);
     LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle velocities interpolated successfully.\n");
 
-    // Debugging particle fields after velocity interpolation (optional)
-   LOG(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing particle fields after velocity interpolation.\n");
-   ierr = PrintParticleFields(user); CHKERRQ(ierr);
+    // Print particle fields again after velocity interpolation (optional)
+    LOG(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing particle fields after velocity interpolation.\n");
+    ierr = PrintParticleFields(user); CHKERRQ(ierr);
 
     LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle swarm operations completed.\n");
+
     return 0;
 }
+
 
 /**
  * @brief Finalize the simulation and free resources.

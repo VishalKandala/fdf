@@ -65,13 +65,28 @@ PetscErrorCode InitializeSimulation(UserCtx **user, PetscInt *rank, PetscInt *si
 PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number);
 
 /**
- * @brief Initializes the particle swarm and performs interpolation.
+ * @brief Perform particle swarm initialization, particle-grid interaction, and related operations.
  *
- * @param[in,out] user Pointer to the UserCtx structure.
- * @param[in] np Number of particles.
+ * This function handles the following tasks:
+ * 1. Initializes the particle swarm using the provided bounding box list (bboxlist) to determine initial placement
+ *    if ParticleInitialization is 0.
+ * 2. Locates particles within the computational grid.
+ * 3. Updates particle positions based on grid interactions (if such logic exists elsewhere in the code).
+ * 4. Interpolates particle velocities from grid points using trilinear interpolation.
+ *
+ * @param[in,out] user     Pointer to the UserCtx structure containing grid and particle swarm information.
+ * @param[in]     np       Number of particles to initialize in the swarm.
+ * @param[in]     bboxlist Pointer to an array of BoundingBox structures, one per MPI rank.
+ *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ *
+ * @note
+ * - Ensure that `np` (number of particles) is positive.
+ * - The `bboxlist` array must be correctly computed and passed in before calling this function.
+ * - If ParticleInitialization == 0, particles will be placed at the midpoint of the local bounding box.
  */
-PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np);
+PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, BoundingBox *bboxlist);
+
 
 /**
  * @brief Cleans up resources and finalizes the simulation.

@@ -28,16 +28,22 @@
  * number of particles isn't divisible by the number of processes, the remainder is distributed
  * to the first few ranks.
  *
- * @param[in,out] user          Pointer to the UserCtx structure containing simulation context.
- * @param[in]     numParticles  Total number of particles to create across all MPI processes.
+ * Additionally, it now takes a 'bboxlist' array as an input parameter and passes it on to
+ * AssignInitialProperties(), enabling particle initialization at the midpoint of each rank's
+ * bounding box if ParticleInitialization is set to 0.
  *
- * @return PetscErrorCode       Returns 0 on success, non-zero on failure.
+ * @param[in,out] user          Pointer to the UserCtx structure containing the simulation context.
+ * @param[in]     numParticles  Total number of particles to create across all MPI processes.
+ * @param[in]     bboxlist      Pointer to an array of BoundingBox structures, one per rank.
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  *
  * @note
  * - Ensure that `numParticles` is a positive integer.
  * - The `control.dat` file should contain necessary PETSc options.
+ * - The `bboxlist` array should be properly populated before calling this function.
  */
-PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles);
+PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles, BoundingBox *bboxlist);
 
 /**
  * @brief Initializes the DMSwarm object within the UserCtx structure.
@@ -78,18 +84,19 @@ PetscErrorCode InitializeRandomGenerators(UserCtx *user, PetscRandom *randx, Pet
 /**
  * @brief Assigns initial positions, velocities, IDs, CellIDs, and weights to particles.
  *
- * This function populates the particle fields with initial data, including random positions within the domain,
- * zero velocities, unique particle IDs, default CellIDs, and zero weights.
+ * When ParticleInitialization == 1, the particles are placed randomly within the global bounding box using RNGs.
+ * When ParticleInitialization == 0, the particles are placed at the midpoint of the local rank's bounding box using bboxlist.
  *
  * @param[in,out] user               Pointer to the UserCtx structure containing simulation context.
  * @param[in]     particlesPerProcess Number of particles assigned to the local MPI process.
+ * @param[in]     randx             Random number generator for the x-coordinate (used if ParticleInitialization==1).
+ * @param[in]     randy             Random number generator for the y-coordinate (used if ParticleInitialization==1).
+ * @param[in]     randz             Random number generator for the z-coordinate (used if ParticleInitialization==1).
+ * @param[in]     bboxlist          Pointer to the array of BoundingBoxes for all ranks.
  *
- * @param[in]     randx             Random number generator for the x-coordinate.
- * @param[in]     randy             Random number generator for the y-coordinate.
- * @param[in]     randz             Random number generator for the z-coordinate.
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode AssignInitialProperties(UserCtx *user, PetscInt particlesPerProcess,PetscRandom* randx,PetscRandom* randy,PetscRandom* randz);
+PetscErrorCode AssignInitialProperties(UserCtx* user, PetscInt particlesPerProcess, PetscRandom *randx, PetscRandom *randy, PetscRandom *randz, BoundingBox *bboxlist);
 
 /**
  * @brief Distributes particles evenly across MPI processes, handling any remainders.

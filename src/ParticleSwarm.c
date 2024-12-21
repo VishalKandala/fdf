@@ -105,92 +105,95 @@ PetscErrorCode InitializeRandomGenerators(UserCtx* user, PetscRandom *randx, Pet
 /**
  * @brief Assigns initial positions, velocities, IDs, CellIDs, and weights to particles.
  *
- * This function populates the particle fields with initial data, including random positions within the domain,
- * zero velocities, unique particle IDs, default CellIDs, and zero weights.
+ * When ParticleInitialization == 1, the particles are placed randomly within the global bounding box using RNGs.
+ * When ParticleInitialization == 0, the particles are placed at the midpoint of the local rank's bounding box using bboxlist.
  *
  * @param[in,out] user               Pointer to the UserCtx structure containing simulation context.
  * @param[in]     particlesPerProcess Number of particles assigned to the local MPI process.
+ * @param[in]     randx             Random number generator for the x-coordinate (used if ParticleInitialization==1).
+ * @param[in]     randy             Random number generator for the y-coordinate (used if ParticleInitialization==1).
+ * @param[in]     randz             Random number generator for the z-coordinate (used if ParticleInitialization==1).
+ * @param[in]     bboxlist          Pointer to the array of BoundingBoxes for all ranks.
  *
- * @param[in]     randx             Random number generator for the x-coordinate.
- * @param[in]     randy             Random number generator for the y-coordinate.
- * @param[in]     randz             Random number generator for the z-coordinate.
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode AssignInitialProperties(UserCtx* user, PetscInt particlesPerProcess, PetscRandom *randx, PetscRandom *randy, PetscRandom *randz) {
+PetscErrorCode AssignInitialProperties(UserCtx* user, PetscInt particlesPerProcess, PetscRandom *randx, PetscRandom *randy, PetscRandom *randz, BoundingBox *bboxlist) {
     PetscErrorCode ierr;                   // Error code for PETSc functions
     DM swarm = user->swarm;                // DMSwarm object managing particles
     PetscReal *positions, *velocities, *weights; // Pointers to particle data fields
     PetscInt64 *particleIDs, *cellIDs;     // Pointers to particle ID and CellID fields
-    PetscInt rank;           // MPI rank of the current process
-   
+    PetscInt rank;                         // MPI rank of the current process
 
+    // Retrieve the MPI rank of the current process
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD,&rank); CHKERRQ(ierr);
+
+    // Print initialization type
     PetscPrintf(PETSC_COMM_WORLD," Initialization : %d \n",user->ParticleInitialization);
 
-    if(user->ParticleInitialization==1){
-      // Initialize random number generators
-      ierr = InitializeRandomGenerators(user, randx, randy, randz); CHKERRQ(ierr);
+    // If random initialization is requested
+    if (user->ParticleInitialization == 1) {
+        // Initialize random number generators
+        ierr = InitializeRandomGenerators(user, randx, randy, randz); CHKERRQ(ierr);
     }
-  
-    // Determine the current process rank
-    MPI_Comm_rank(PETSC_COMM_WORLD,&rank);
 
-    // Access the 'position' field from the DMSwarm
+    // Access particle fields
     ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "AssignInitialProperties - Accessed field 'position'.\n");
 
-    // Access the 'velocity' field from the DMSwarm
     ierr = DMSwarmGetField(swarm, "velocity", NULL, NULL, (void**)&velocities); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "AssignInitialProperties - Accessed field 'velocity'.\n");
 
-    // Access the 'DMSwarm_pid' field from the DMSwarm
     ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&particleIDs); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "AssignInitialProperties - Accessed field 'DMSwarm_pid'.\n");
 
-    // Access the 'DMSwarm_CellID' field from the DMSwarm
     ierr = DMSwarmGetField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "AssignInitialProperties - Accessed field 'DMSwarm_CellID'.\n");
 
-    // Access the 'weight' field from the DMSwarm
     ierr = DMSwarmGetField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "AssignInitialProperties - Accessed field 'weight'.\n");
 
+    // Retrieve the current rank's bounding box
+    BoundingBox localBBox = bboxlist[rank];
+
+    // Compute midpoint of the local bounding box
+    PetscReal midx = 0.5*(localBBox.min_coords.x + localBBox.max_coords.x);
+    PetscReal midy = 0.5*(localBBox.min_coords.y + localBBox.max_coords.y);
+    PetscReal midz = 0.5*(localBBox.min_coords.z + localBBox.max_coords.z);
+
     // Initialize particle properties
     for (PetscInt p = 0; p < particlesPerProcess; p++) {
+        if (user->ParticleInitialization == 1) {
+            // Random initialization
+            ierr = PetscRandomGetValue(*randx, &positions[p * 3 + 0]); CHKERRQ(ierr);
+            ierr = PetscRandomGetValue(*randy, &positions[p * 3 + 1]); CHKERRQ(ierr);
+            ierr = PetscRandomGetValue(*randz, &positions[p * 3 + 2]); CHKERRQ(ierr);
+        } else {
+            // Initialize at midpoint of local bounding box
+            positions[3 * p + 0] = midx;
+            positions[3 * p + 1] = midy;
+            positions[3 * p + 2] = midz;
+        }
 
-      if(user->ParticleInitialization==1){
-          // Generate random positions within the simulation domain
-          ierr = PetscRandomGetValue(*randx, &positions[p * 3 + 0]); CHKERRQ(ierr);
-          ierr = PetscRandomGetValue(*randy, &positions[p * 3 + 1]); CHKERRQ(ierr);
-          ierr = PetscRandomGetValue(*randz, &positions[p * 3 + 2]); CHKERRQ(ierr);
-          LOG_DEFAULT(LOG_DEBUG, "AssignInitialProperties - Particle %d position set to (%.4f, %.4f, %.4f).\n",p, positions[p * 3 + 0], positions[p * 3 + 1], positions[p * 3 + 2]);
-      }else {
-   
-          positions[3 * p + 0] = 0.6;
-          positions[3 * p + 1] = 0.6;
-          positions[3 * p + 2] = 0.6; 
-      }
-      
+        LOG_DEFAULT(LOG_DEBUG, "AssignInitialProperties - Particle %d position set to (%.4f, %.4f, %.4f).\n",
+                    p, positions[p * 3], positions[p * 3 + 1], positions[p * 3 + 2]);
+
         // Initialize velocities to zero
         velocities[3 * p + 0] = 0.0;
         velocities[3 * p + 1] = 0.0;
         velocities[3 * p + 2] = 0.0;
-        LOG_DEFAULT(LOG_DEBUG, "AssignInitialProperties - Particle %d velocity initialized to (0.0, 0.0, 0.0).\n", p);
 
         // Assign unique IDs to particles
         particleIDs[p] = rank * particlesPerProcess + p;
-        LOG_DEFAULT(LOG_DEBUG, "AssignInitialProperties - Particle %d assigned ID %" PetscInt64_FMT ".\n", p, particleIDs[p]);
 
-        // Initialize CellIDs to -1 (front, bottom, left corner grid node indices)
+        // Initialize CellIDs to -1
         cellIDs[3 * p + 0] = -1;
         cellIDs[3 * p + 1] = -1;
         cellIDs[3 * p + 2] = -1;
-        LOG_DEFAULT(LOG_DEBUG, "AssignInitialProperties - Particle %d CellIDs initialized to (0, 0, 0).\n", p);
 
         // Initialize interpolation weights to zero
         weights[3 * p + 0] = 0.0;
         weights[3 * p + 1] = 0.0;
         weights[3 * p + 2] = 0.0;
-        LOG_DEFAULT(LOG_DEBUG, "AssignInitialProperties - Particle %d weights initialized to (0.0, 0.0, 0.0).\n", p);
     }
 
     // Restore particle data fields
@@ -203,7 +206,6 @@ PetscErrorCode AssignInitialProperties(UserCtx* user, PetscInt particlesPerProce
 
     return 0;
 }
-
 
 /**
  * @brief Distributes particles evenly across MPI processes, handling any remainders.
@@ -276,76 +278,83 @@ PetscErrorCode FinalizeSwarmSetup(PetscRandom *randx, PetscRandom *randy, PetscR
  * number of particles isn't divisible by the number of processes, the remainder is distributed
  * to the first few ranks.
  *
- * @param[in,out] user          Pointer to the UserCtx structure containing simulation context.
- * @param[in]     numParticles  Total number of particles to create across all MPI processes.
+ * Additionally, it now takes a 'bboxlist' array as an input parameter and passes it on to
+ * AssignInitialProperties(), enabling particle initialization at the midpoint of each rank's
+ * bounding box if ParticleInitialization is set to 0.
  *
- * @return PetscErrorCode         Returns 0 on success, non-zero on failure.
+ * @param[in,out] user          Pointer to the UserCtx structure containing the simulation context.
+ * @param[in]     numParticles  Total number of particles to create across all MPI processes.
+ * @param[in]     bboxlist      Pointer to an array of BoundingBox structures, one per rank.
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  *
  * @note
  * - Ensure that `numParticles` is a positive integer.
  * - The `control.dat` file should contain necessary PETSc options.
+ * - The `bboxlist` array should be properly populated before calling this function.
  */
-PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles) {
-    PetscErrorCode ierr;                      // Error code for PETSc functions
-    PetscMPIInt rank, size;                   // MPI rank and size
-    PetscInt particlesPerProcess = 0;         // Number of particles per MPI process
-    PetscInt remainder = 0;                   // Remainder particles
-    PetscReal domainLengthY, domainLengthZ;   // Simulation domain dimensions in y and z
-    PetscRandom randx,randy,randz;            // Random Number Generators if assigning particles random locations.
- 
+PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles, BoundingBox *bboxlist) {
+    PetscErrorCode ierr;                      // PETSc error handling variable
+    PetscMPIInt rank, size;                   // Variables to store MPI rank and size
+    PetscInt particlesPerProcess = 0;         // Number of particles assigned to the local MPI process
+    PetscInt remainder = 0;                   // Remainder of particles after division
+    PetscReal domainLengthY, domainLengthZ;   // Domain dimensions in y and z directions
+    PetscRandom randx, randy, randz;          // Random Number Generators if assigning particles randomly
+    
     // Validate input parameters
     if (numParticles <= 0) {
         LOG_DEFAULT(LOG_ERROR, "CreateParticleSwarm - Number of particles must be positive. Given: %d\n", numParticles);
-        return PETSC_ERR_ARG_OUTOFRANGE;  
+        return PETSC_ERR_ARG_OUTOFRANGE;
     }
 
-    // Insert PETSc options from "control.dat" into the option database
+    // Insert PETSc options from "control.dat" into the PETSc options database
     ierr = PetscOptionsInsertFile(PETSC_COMM_WORLD, NULL, "control.dat", PETSC_TRUE); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "CreateParticleSwarm - Inserted options from control.dat\n");
 
-    // Retrieve simulation domain dimensions from PETSc options
-    // Uncomment and set Lx if needed
-    // ierr = PetscOptionsGetReal(NULL, NULL, "-L_x", &domainLengthX, NULL); CHKERRQ(ierr);
+    // Retrieve domain dimensions from PETSc options
+    // Note: L_x could be retrieved similarly if needed. Here we assume L_x=1.0 if not retrieved.
     ierr = PetscOptionsGetReal(NULL, NULL, "-L_y", &domainLengthY, NULL); CHKERRQ(ierr);
     ierr = PetscOptionsGetReal(NULL, NULL, "-L_z", &domainLengthZ, NULL); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_DEBUG, "CreateParticleSwarm - Domain dimensions: Lx=%.2f, Ly=%.2f, Lz=%.2f\n", 
-                1.0, domainLengthY, domainLengthZ); // Assuming Lx=1.0 if not retrieved
+                1.0, domainLengthY, domainLengthZ);
 
-    // Initialize MPI rank and size
+    // Retrieve MPI rank and size
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
     ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_INFO, "CreateParticleSwarm - Rank %d out of %d processes.\n", rank, size);
 
-    // Distribute particles across MPI processes
-   // ierr = DistributeParticles(numParticles, rank, size, &particlesPerProcess, &remainder); CHKERRQ(ierr);
+    // Distribute particles among MPI processes
+    ierr = DistributeParticles(numParticles, rank, size, &particlesPerProcess, &remainder); CHKERRQ(ierr);
 
-    // Initialize the DMSwarm
+    // Initialize the DMSwarm - creates the swarm, sets the type and dimension
     ierr = InitializeSwarm(user); CHKERRQ(ierr);
 
-    // Register particle fields
+    // Register particle fields (position, velocity, CellID, weight, etc.)
     ierr = RegisterParticleFields(user->swarm); CHKERRQ(ierr);
 
-    // Set the local number of particles and number of fields per particle (4 particles buffer is added for migration).
+    // Set the local number of particles for this rank and additional buffer for particle migration
     ierr = DMSwarmSetLocalSizes(user->swarm, particlesPerProcess, 4); CHKERRQ(ierr);
     LOG_DEFAULT(LOG_INFO, "CreateParticleSwarm - Set local swarm size: %d particles.\n", particlesPerProcess);
 
-    // Log detailed information about the swarm for debug.
-    if(get_log_level()==LOG_DEBUG){
-      
-      LOG(GLOBAL, LOG_INFO, "CreateParticleSwarm - Viewing DMSwarm:\n");
-      ierr = DMView(user->swarm, PETSC_VIEWER_STDOUT_WORLD); CHKERRQ(ierr);
+    // Optionally, log detailed DM info in debug mode
+    if (get_log_level() == LOG_DEBUG) {
+        LOG(GLOBAL, LOG_INFO, "CreateParticleSwarm - Viewing DMSwarm:\n");
+        ierr = DMView(user->swarm, PETSC_VIEWER_STDOUT_WORLD); CHKERRQ(ierr);
     }
 
-      // Assign initial properties to particles
-    ierr = AssignInitialProperties(user, particlesPerProcess,&randx,&randy,&randz); CHKERRQ(ierr);
+    // Assign initial properties to particles
+    // The bboxlist array is passed here so that if ParticleInitialization == 0,
+    // particles can be placed at the midpoint of the local bounding box corresponding to this rank.
+    ierr = AssignInitialProperties(user, particlesPerProcess, &randx, &randy, &randz, bboxlist); CHKERRQ(ierr);
 
-    // Finalize swarm setup by destroying RNGs
+    // Finalize swarm setup by destroying RNGs if ParticleInitialization == 1
     ierr = FinalizeSwarmSetup(&randx, &randy, &randz); CHKERRQ(ierr);
 
     LOG_DEFAULT(LOG_INFO, "CreateParticleSwarm - Particle swarm creation and initialization complete.\n");
 
     return 0;
 }
+
 
 /**
  * @brief Prints the coordinates of all particles in the swarm.
