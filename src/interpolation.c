@@ -296,12 +296,12 @@ PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np) {
 
     // Step 4: Interpolate particle velocities
     LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Interpolating particle velocities using trilinear interpolation.\n");
-   // ierr = InterpolateParticleVelocities(user); CHKERRQ(ierr);
-   // LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle velocities interpolated successfully.\n");
+    ierr = InterpolateParticleVelocities(user); CHKERRQ(ierr);
+    LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle velocities interpolated successfully.\n");
 
     // Debugging particle fields after velocity interpolation (optional)
-   // LOG(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing particle fields after velocity interpolation.\n");
-   // ierr = PrintParticleFields(user); CHKERRQ(ierr);
+   LOG(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing particle fields after velocity interpolation.\n");
+   ierr = PrintParticleFields(user); CHKERRQ(ierr);
 
     LOG(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle swarm operations completed.\n");
     return 0;
