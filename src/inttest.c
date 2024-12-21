@@ -298,14 +298,17 @@ PetscErrorCode UpdateCartesianVelocity(UserCtx *user) {
  * Initializes the grid, reads/writes the velocity field depending on command line options,
  * creates particles, and performs particle-grid interpolation.
  *
- * This version introduces a command-line option `-read_fields` to toggle between:
+ * Introduces a command-line option `-read_fields` to toggle between:
  * - Updating and writing the Cartesian velocity fields (default)
  * - Reading the Cartesian velocity fields from file
  *
+ * Additionally, after gathering the bounding boxes on rank 0, it now calls a separate function,
+ * `BroadcastAllBoundingBoxes()`, to distribute bboxlist to all ranks.
+ *
  * Usage example:
- * - To run the code with update and write steps:
+ * - To run with update and write steps:
  *   `mpirun -np X ./your_executable`
- * - To run the code with reading fields from file:
+ * - To run with reading fields:
  *   `mpirun -np X ./your_executable -read_fields`
  *
  * @param argc Argument count.
@@ -314,55 +317,54 @@ PetscErrorCode UpdateCartesianVelocity(UserCtx *user) {
  * @return int Returns 0 on success, non-zero on failure.
  */
 int main(int argc, char **argv) {
-    UserCtx *user = NULL;     // User-defined context holding simulation parameters and data structures
-    PetscErrorCode ierr;      // Error handling variable for PETSc routines
-    PetscInt block_number = 1; // Number of grid blocks (default to 1, may be updated by initialization)
-    PetscInt rstart = 0;      // Starting index for particles or subdomain ranges
-    PetscInt np = 0;          // Number of particles
-    PetscInt ti = 0;          // Time index or iteration counter
-    PetscInt rank, size;      // MPI rank and size variables
-    BoundingBox *bboxlist;    // Array of bounding boxes collected from all ranks
-    PetscReal umax;           // Variable to store the maximum velocity magnitude
-    PetscBool readFields = PETSC_FALSE; // Flag indicating whether to read fields from file
+    UserCtx *user = NULL;     // User context
+    PetscErrorCode ierr;      // PETSc error handling
+    PetscInt block_number = 1;
+    PetscInt rstart = 0;
+    PetscInt np = 0;
+    PetscInt ti = 0;
+    PetscInt rank, size;
+    BoundingBox *bboxlist;    // Array of bounding boxes
+    PetscReal umax;
+    PetscBool readFields = PETSC_FALSE;
     static char help[] = " Test for interpolation - swarm-curvIB";
 
     // Initialize PETSc
     ierr = PetscInitialize(&argc, &argv, (char *)0, help); CHKERRQ(ierr);
 
-    // Check if the user requested reading fields from files instead of updating them
+    // Check if user requested to read fields instead of updating
     ierr = PetscOptionsGetBool(NULL, NULL, "-read_fields", &readFields, NULL); CHKERRQ(ierr);
 
-    // Initialize simulation data structures, MPI, and other parameters
+    // Initialize simulation: user context, MPI rank/size, np, etc.
     ierr = InitializeSimulation(&user, &rank, &size, &np, &rstart, &ti, &block_number); CHKERRQ(ierr);
 
-    // Setup the computational grid, including DMDAs and solution vectors
+    // Setup the computational grid
     ierr = SetupGridAndVectors(user, block_number); CHKERRQ(ierr);
 
-    // If we are NOT reading the fields, we update and write them out
+    // Either update and write fields, or read fields from file
     if (!readFields) {
-        // Update the Cartesian Velocity Vector based on current conditions
         ierr = UpdateCartesianVelocity(user); CHKERRQ(ierr);
-
-        // Write the current Cartesian Velocity Vector to file for future reference
         ierr = WriteSimulationFields(user); CHKERRQ(ierr);
     } else {
-        // If readFields == PETSC_TRUE, we skip the update and write steps, and read from file instead
-        // Read the Simulation Fields (velocity, etc.) from the file for the given time index ti
         ierr = ReadSimulationFields(user, ti); CHKERRQ(ierr);
     }
 
-    // Compute and display the maximum velocity magnitude in the global Ucat vector
+    // Compute and print maximum velocity magnitude
     ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
     PetscPrintf(PETSC_COMM_WORLD, "Maximum velocity magnitude: %f\n", umax);
 
-    // Gather the bounding boxes of subdomains from all ranks
+    // Gather bounding boxes on rank 0
     ierr = GatherAllBoundingBoxes(user, &bboxlist); CHKERRQ(ierr);
 
-    // Perform operations related to the particle swarm, such as initialization, movement, and interpolation
+    // Broadcast bboxlist to all ranks
+    ierr = BroadcastAllBoundingBoxes(user, &bboxlist); CHKERRQ(ierr);
+
+    // Perform particle swarm operations with bboxlist knowledge on all ranks
     ierr = PerformParticleSwarmOperations(user, np, bboxlist); CHKERRQ(ierr);
 
-    // Finalize the simulation by cleaning up data structures, closing files, and freeing memory
-    ierr = FinalizeSimulation(user, block_number); CHKERRQ(ierr);
+    // Finalize simulation
+    ierr = FinalizeSimulation(user, block_number,bboxlist); CHKERRQ(ierr);
 
     return 0;
 }
+

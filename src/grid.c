@@ -749,3 +749,40 @@ PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
     LOG(GLOBAL, LOG_INFO, "GatherAllBoundingBoxes: Exiting the function successfully.\n");
     return 0;
 }
+
+/**
+ * @brief Broadcasts the bounding box information collected on rank 0 to all other ranks.
+ *
+ * This function assumes that `GatherAllBoundingBoxes()` was previously called, so `bboxlist`
+ * is allocated and populated on rank 0. All other ranks will allocate memory for `bboxlist`,
+ * and this function will use MPI_Bcast to distribute the bounding box data to them.
+ *
+ * @param[in]     user      Pointer to the UserCtx structure. (Currently unused in this function, but kept for consistency.)
+ * @param[in,out] bboxlist  Pointer to the array of BoundingBoxes. On rank 0, this should point to
+ *                          a valid array of size 'size' (where size is the number of MPI ranks).
+ *                          On non-root ranks, this function will allocate memory for `bboxlist`.
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on MPI or PETSc-related errors.
+ */
+PetscErrorCode BroadcastAllBoundingBoxes(UserCtx *user, BoundingBox **bboxlist) {
+    PetscErrorCode ierr;
+    PetscMPIInt rank, size;
+
+    // Get MPI rank and size
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
+
+    // On non-root ranks, allocate memory for bboxlist before receiving the broadcast
+    if (rank != 0) {
+        *bboxlist = (BoundingBox *)malloc(size * sizeof(BoundingBox));
+        if (!*bboxlist) SETERRABORT(PETSC_COMM_WORLD, PETSC_ERR_MEM, "Failed to allocate memory for bboxlist on non-root ranks.");
+    }
+
+    // Broadcast bboxlist from rank 0 to all other ranks
+    ierr = MPI_Bcast(*bboxlist, (int)(size * sizeof(BoundingBox)), MPI_BYTE, 0, PETSC_COMM_WORLD);
+    if (ierr != MPI_SUCCESS) {
+        SETERRABORT(PETSC_COMM_WORLD, PETSC_ERR_LIB, "MPI_Bcast failed for bboxlist.");
+    }
+
+    return 0;
+}

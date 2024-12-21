@@ -150,4 +150,20 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox);
  */
 PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes);
 
+/**
+ * @brief Broadcasts the bounding box information collected on rank 0 to all other ranks.
+ *
+ * This function assumes that `GatherAllBoundingBoxes()` was previously called, so `bboxlist`
+ * is allocated and populated on rank 0. All other ranks will allocate memory for `bboxlist`,
+ * and this function will use MPI_Bcast to distribute the bounding box data to them.
+ *
+ * @param[in]     user      Pointer to the UserCtx structure. (Currently unused in this function, but kept for consistency.)
+ * @param[in,out] bboxlist  Pointer to the array of BoundingBoxes. On rank 0, this should point to
+ *                          a valid array of size 'size' (where size is the number of MPI ranks).
+ *                          On non-root ranks, this function will allocate memory for `bboxlist`.
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on MPI or PETSc-related errors.
+ */
+PetscErrorCode BroadcastAllBoundingBoxes(UserCtx *user, BoundingBox **bboxlist);
+
 #endif // GRID_H

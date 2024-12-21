@@ -325,10 +325,19 @@ PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, Boundi
  *
  * @param[in,out] user Pointer to the UserCtx structure.
  * @param[in] block_number The number of grid blocks in the domain.
+ * @param[in,out] bboxlist  Pointer to the array of BoundingBoxes.
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number) {
+PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number,BoundingBox *bboxlist) {
     PetscErrorCode ierr;
+    PetscMPIInt rank;
+
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, rank); CHKERRQ(ierr);
+
+    // Free bboxlist on non-root ranks if needed
+        if(rank){
+            free(bboxlist);
+        }
 
     // Destroy DM and vectors for each block
     for (PetscInt bi = 0; bi < block_number; bi++) {

@@ -93,8 +93,9 @@ PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, Boundi
  *
  * @param[in,out] user Pointer to the UserCtx structure.
  * @param[in] block_number Number of grid blocks.
+ * @param[in]     bboxlist Pointer to an array of BoundingBox structures, one per MPI rank.
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number);
+PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, BoundingBox* bboxlist);
 
 #endif // INTERPOLATION_H
