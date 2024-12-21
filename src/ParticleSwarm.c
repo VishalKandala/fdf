@@ -317,7 +317,7 @@ PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles) {
     LOG_DEFAULT(LOG_INFO, "CreateParticleSwarm - Rank %d out of %d processes.\n", rank, size);
 
     // Distribute particles across MPI processes
-    ierr = DistributeParticles(numParticles, rank, size, &particlesPerProcess, &remainder); CHKERRQ(ierr);
+   // ierr = DistributeParticles(numParticles, rank, size, &particlesPerProcess, &remainder); CHKERRQ(ierr);
 
     // Initialize the DMSwarm
     ierr = InitializeSwarm(user); CHKERRQ(ierr);
