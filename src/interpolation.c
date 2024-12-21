@@ -319,7 +319,6 @@ PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, Boundi
     return 0;
 }
 
-
 /**
  * @brief Finalize the simulation and free resources.
  *
@@ -328,27 +327,20 @@ PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, Boundi
  * @param[in,out] bboxlist  Pointer to the array of BoundingBoxes.
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number,BoundingBox *bboxlist) {
+PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, BoundingBox *bboxlist) {
     PetscErrorCode ierr;
     PetscMPIInt rank;
 
-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, rank); CHKERRQ(ierr);
-
-    // Free bboxlist on non-root ranks if needed
-        if(rank){
-            free(bboxlist);
-        }
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr); // Corrected: use &rank
 
     // Destroy DM and vectors for each block
     for (PetscInt bi = 0; bi < block_number; bi++) {
-        // vectors
         ierr = VecDestroy(&(user[bi].Ucat)); CHKERRQ(ierr);
         ierr = VecDestroy(&(user[bi].Ucont)); CHKERRQ(ierr);
         ierr = VecDestroy(&(user[bi].P)); CHKERRQ(ierr);
         ierr = VecDestroy(&(user[bi].Nvert)); CHKERRQ(ierr);
         ierr = VecDestroy(&(user[bi].Nvert_o)); CHKERRQ(ierr);
 
-        // DMs
         ierr = DMDestroy(&(user[bi].fda)); CHKERRQ(ierr);
         ierr = DMDestroy(&(user[bi].da)); CHKERRQ(ierr);
         ierr = DMDestroy(&(user[bi].swarm)); CHKERRQ(ierr);
@@ -357,11 +349,15 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number,BoundingB
     // Free user context
     ierr = PetscFree(user); CHKERRQ(ierr);
 
+    // Now free bboxlist on all ranks since all allocated their own copy
+    if (bboxlist) {
+        free(bboxlist);
+        bboxlist = NULL;
+    }
+
     LOG(GLOBAL, LOG_INFO, "Simulation finalized and resources cleaned up.\n");
 
     // Finalize PETSc
     ierr = PetscFinalize(); CHKERRQ(ierr);
     return 0;
 }
-
-
