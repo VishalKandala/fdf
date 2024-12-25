@@ -816,7 +816,7 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
     PetscBool Cell_found = PETSC_FALSE;
     Cmpnts p = particle->loc;
     Cell current_cell;
-    const PetscReal threshold = 1e-10;
+    const PetscReal threshold = 1e-14 ;
 
     // Initialize traversal parameters
     ierr = InitializeTraversalParameters(user, particle, &idx, &idy, &idz, &traversal_steps); CHKERRQ(ierr);
@@ -848,16 +848,16 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
             LOG(LOCAL,LOG_INFO, "LocateParticleInGrid - Particle found in cell (%d, %d, %d).\n", idx, idy, idz);
             break;
         }
-        else if (position == 1) { // On boundary
+        //else if (position == 1) { // On boundary
             // Depending on application, decide whether to consider it inside or check neighbors
             // Here, we treat it as inside
-            Cell_found = PETSC_TRUE;
-            particle->cell[0] = idx;
-            particle->cell[1] = idy;
-            particle->cell[2] = idz;
-            LOG(LOCAL,LOG_INFO, "LocateParticleInGrid - Particle is on the boundary of cell (%d, %d, %d).\n", idx, idy, idz);
-            break;
-        }
+        //    Cell_found = PETSC_TRUE;
+        //   particle->cell[0] = idx;
+        //    particle->cell[1] = idy;
+        //    particle->cell[2] = idz;
+        //    LOG(LOCAL,LOG_INFO, "LocateParticleInGrid - Particle is on the boundary of cell (%d, %d, %d).\n", idx, idy, idz);
+        //    break;
+        //}
         else { // Outside the cell
             // Update cell indices based on positive distances
             ierr = UpdateCellIndicesBasedOnDistances(d, &idx, &idy, &idz); CHKERRQ(ierr);
