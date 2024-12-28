@@ -113,4 +113,66 @@ LogLevel get_log_level();
         } \
     } while (0)
 
+
+/**
+ * @brief Logging macro for PETSc-based applications with scope control, 
+ *        using synchronized output across processes.
+ *
+ * This macro uses `PetscSynchronizedPrintf` and `PetscSynchronizedFlush` to 
+ * ensure messages from different ranks are printed in a synchronized (rank-by-rank) 
+ * manner, preventing interleaved outputs.
+ *
+ * @param scope Specifies the logging scope:
+ *              - LOCAL:  Logs on the current process using MPI_COMM_SELF.
+ *              - GLOBAL: Logs on all processes using MPI_COMM_WORLD.
+ * @param level The severity level of the message (e.g., LOG_INFO, LOG_ERROR).
+ * @param fmt   The format string for the message (similar to printf).
+ * @param ...   Additional arguments for the format string (optional).
+ *
+ * Example usage:
+ *     LOG_SYNC(LOCAL, LOG_ERROR, "An error occurred at index %d.\n", idx);
+ *     LOG_SYNC(GLOBAL, LOG_INFO, "Synchronized info: rank = %d.\n", rank);
+ */
+#define LOG_SYNC(scope, level, fmt, ...) \
+    do { \
+        /* Determine the MPI communicator based on the scope */ \
+        MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
+        /* Check if the log level is within the allowed range */ \
+        if ((int)(level) <= (int)get_log_level()) { \
+            /* Synchronized print (collective) on the specified communicator */ \
+            PetscSynchronizedPrintf(comm, fmt, ##__VA_ARGS__); \
+            /* Ensure all ranks have finished printing before continuing */ \
+            PetscSynchronizedFlush(comm, PETSC_STDOUT); \
+        } \
+    } while (0)
+
+/**
+ * @brief Default synchronized logging macro for PETSc-based applications.
+ *
+ * This macro simplifies logging by defaulting the scope to GLOBAL 
+ * (i.e., `MPI_COMM_WORLD`) and provides synchronized output across 
+ * all processes.
+ *
+ * @param level The severity level of the message (e.g., LOG_ERROR, LOG_INFO).
+ * @param fmt   The format string for the log message (similar to printf).
+ * @param ...   Additional arguments for the format string (optional).
+ *
+ * Example usage:
+ *     LOG_SYNC_DEFAULT(LOG_ERROR, "Error at index %d.\n", idx);
+ *     LOG_SYNC_DEFAULT(LOG_INFO,  "Process rank: %d.\n", rank);
+ *
+ * @note
+ * - By default, this macro logs across all MPI processes using `MPI_COMM_WORLD`.
+ * - If local (per-process) logging is required, use the more general `LOG_SYNC` macro.
+ * - The log level is filtered based on the value returned by `get_log_level()`.
+ */
+#define LOG_SYNC_DEFAULT(level, fmt, ...) \
+    do { \
+        if ((int)(level) <= (int)get_log_level()) { \
+            PetscSynchronizedPrintf(MPI_COMM_WORLD, fmt, ##__VA_ARGS__); \
+            PetscSynchronizedFlush(MPI_COMM_WORLD, PETSC_STDOUT); \
+        } \
+    } while (0)
+
+
 #endif // LOGGING_H
