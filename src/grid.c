@@ -37,7 +37,7 @@ PetscErrorCode InitializeGridDM(UserCtx *user, PetscReal L_x, PetscReal L_y, Pet
     }
 
     // Log the start of grid initialization
-    LOG(GLOBAL, LOG_INFO, "InitializeGridDM - Starting DMDA grid initialization for IM=%d, JM=%d, KM=%d.\n",
+    LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - Starting DMDA grid initialization for IM=%d, JM=%d, KM=%d.\n",
         user->IM, user->JM, user->KM);
 
     // Create a 3D DMDA grid
@@ -50,35 +50,35 @@ PetscErrorCode InitializeGridDM(UserCtx *user, PetscReal L_x, PetscReal L_y, Pet
                         1,                                                     // Stencil width
                         NULL, NULL, NULL,                                      // Array partitioning
                         &(user->da)); CHKERRQ(ierr);
-    LOG(GLOBAL, LOG_DEBUG, "InitializeGridDM - Created 3D DMDA grid.\n");
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Created 3D DMDA grid.\n");
 
     // Set up the DMDA
     ierr = DMSetUp(user->da); CHKERRQ(ierr);
-    LOG(GLOBAL, LOG_DEBUG, "InitializeGridDM - DMDA setup completed.\n");
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - DMDA setup completed.\n");
 
     // Assign coordinates based on domain size (L_x, L_y, L_z)
     PetscReal x_min = 0.0, x_max = L_x;
     PetscReal y_min = 0.0, y_max = L_y;
     PetscReal z_min = 0.0, z_max = L_z;
     ierr = DMDASetUniformCoordinates(user->da, x_min, x_max, y_min, y_max, z_min, z_max); CHKERRQ(ierr);
-    LOG(GLOBAL, LOG_DEBUG, "InitializeGridDM - Coordinates set in the range [%f, %f] x [%f, %f] x [%f, %f].\n", 
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Coordinates set in the range [%f, %f] x [%f, %f] x [%f, %f].\n", 
         x_min, x_max, y_min, y_max, z_min, z_max);
 
     // Retrieve the coordinate DM
     ierr = DMGetCoordinateDM(user->da, &(user->fda)); CHKERRQ(ierr);
-    LOG(GLOBAL, LOG_DEBUG, "InitializeGridDM - Coordinate DM retrieved.\n");
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Coordinate DM retrieved.\n");
 
     // Debugging logs for DMDA and its coordinate DM
     if (get_log_level() == LOG_DEBUG) {
-        LOG(GLOBAL, LOG_INFO, "InitializeGridDM - Viewing DMDA:\n");
+        LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - Viewing DMDA:\n");
         ierr = DMView(user->da, PETSC_VIEWER_STDOUT_WORLD); CHKERRQ(ierr);
 
-        LOG(GLOBAL, LOG_INFO, "InitializeGridDM - Viewing coordinate DM:\n");
+        LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - Viewing coordinate DM:\n");
         ierr = DMView(user->fda, PETSC_VIEWER_STDOUT_WORLD); CHKERRQ(ierr);
     }
 
     // Log the successful completion of grid initialization
-    LOG(GLOBAL, LOG_INFO, "InitializeGridDM - DMDA grid initialization completed successfully.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - DMDA grid initialization completed successfully.\n");
 
     return 0;
 }
@@ -108,11 +108,11 @@ PetscErrorCode ParseGridInputs(UserCtx *user, PetscInt *generate_grid, PetscInt 
                                PetscInt *nblk, FILE *fd) {
     PetscErrorCode ierr;
 
-    LOG(GLOBAL, LOG_INFO, "ParseGridInputs - Starting retrieval of grid inputs.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ParseGridInputs - Starting retrieval of grid inputs.\n");
 
     // Insert options from the control file
     ierr = PetscOptionsInsertFile(PETSC_COMM_WORLD, NULL, "control.dat", PETSC_TRUE); CHKERRQ(ierr);
-    LOG(GLOBAL, LOG_DEBUG, "ParseGridInputs - Loaded options from control.dat.\n");
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "ParseGridInputs - Loaded options from control.dat.\n");
 
     // Read the basic grid settings
     ierr = PetscOptionsGetInt(NULL, NULL, "-grid", generate_grid, NULL); CHKERRQ(ierr);
@@ -134,7 +134,7 @@ PetscErrorCode ParseGridInputs(UserCtx *user, PetscInt *generate_grid, PetscInt 
         ierr = ReadGridFile("grid.dat", nblk, imm, jmm, kmm, grid1d, PETSC_COMM_WORLD); CHKERRQ(ierr);
     }
 
-    LOG(GLOBAL, LOG_INFO, "ParseGridInputs - Grid inputs retrieved successfully.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ParseGridInputs - Grid inputs retrieved successfully.\n");
     return 0;
 }
 
@@ -221,7 +221,7 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user, PetscInt generate_grid, Pets
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
 
     // Log the start of grid population
-    LOG(GLOBAL, LOG_INFO, "AssignGridCoordinates - Starting grid population for rank %d.\n", rank);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "AssignGridCoordinates - Starting grid population for rank %d.\n", rank);
 
     // Retrieve local grid information
     DMDALocalInfo info;
@@ -238,7 +238,7 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user, PetscInt generate_grid, Pets
         // For 3D grid, allocate memory for all grid points (including boundaries) and three coordinates per point
         ierr = PetscMalloc1(3 * (IM + 1) * (JM + 1) * (KM + 1), &gc); CHKERRQ(ierr);
     }
-    LOG(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Memory allocated for grid coordinates.\n");
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Memory allocated for grid coordinates.\n");
 
     // Access the DMDA coordinate vector
     ierr = DMGetCoordinatesLocal(user->da, &Coor); CHKERRQ(ierr);
@@ -263,7 +263,7 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user, PetscInt generate_grid, Pets
                         }
                     }
                 }
-                LOG(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Rank 0 read 3D grid coordinates from file.\n");
+                LOG_ALLOW(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Rank 0 read 3D grid coordinates from file.\n");
             } else {
                 // Generate coordinates programmatically
                 for (k = 0; k <= KM; k++) {
@@ -276,7 +276,7 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user, PetscInt generate_grid, Pets
                         }
                     }
                 }
-                LOG(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Rank 0 generated 3D grid coordinates programmatically.\n");
+                LOG_ALLOW(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Rank 0 generated 3D grid coordinates programmatically.\n");
             }
         }
     }
@@ -284,11 +284,11 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user, PetscInt generate_grid, Pets
     // Broadcast grid coordinates to all ranks from rank 0
     if (grid1d) {
         ierr = MPI_Bcast(gc, IM + JM + KM, MPIU_REAL, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
-        LOG(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Broadcasted 1D grid coordinates.\n");
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Broadcasted 1D grid coordinates.\n");
     } else {
         PetscInt total_points = 3 * (IM + 1) * (JM + 1) * (KM + 1);
         ierr = MPI_Bcast(gc, total_points, MPIU_REAL, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
-        LOG(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Broadcasted 3D grid coordinates.\n");
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Broadcasted 3D grid coordinates.\n");
     }
 
     // Assign coordinates to the local grid
@@ -310,7 +310,7 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user, PetscInt generate_grid, Pets
         }
     }
 
-    LOG(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Local grid coordinates assigned for rank %d.\n", rank);
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Local grid coordinates assigned for rank %d.\n", rank);
 
     // Clean up and restore arrays
     ierr = PetscFree(gc); CHKERRQ(ierr);
@@ -323,7 +323,7 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user, PetscInt generate_grid, Pets
     ierr = DMGlobalToLocalBegin(user->fda, gCoor, INSERT_VALUES, Coor); CHKERRQ(ierr);
     ierr = DMGlobalToLocalEnd(user->fda, gCoor, INSERT_VALUES, Coor); CHKERRQ(ierr);
 
-    LOG(GLOBAL, LOG_INFO, "AssignGridCoordinates - Grid population completed for rank %d.\n", rank);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "AssignGridCoordinates - Grid population completed for rank %d.\n", rank);
 
     return 0;
 }
@@ -369,7 +369,7 @@ PetscErrorCode DetermineGridSizes(PetscInt bi, UserCtx *user, PetscInt *IM, Pets
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
 
     // Log the start of the function
-    LOG(GLOBAL, LOG_INFO, "DetermineGridSizes - Starting grid size determination for block %d on rank %d.\n", bi, rank);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "DetermineGridSizes - Starting grid size determination for block %d on rank %d.\n", bi, rank);
 
     if (rank == 0) {
         if (!generate_grid) {
@@ -382,14 +382,14 @@ PetscErrorCode DetermineGridSizes(PetscInt bi, UserCtx *user, PetscInt *IM, Pets
                 SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FILE_READ, 
                         "DetermineGridSizes - Failed to read grid dimensions from file.");
             }
-            LOG(GLOBAL, LOG_DEBUG, "DetermineGridSizes - Read grid dimensions from file: IM=%d, JM=%d, KM=%d.\n", 
+            LOG_ALLOW(GLOBAL, LOG_DEBUG, "DetermineGridSizes - Read grid dimensions from file: IM=%d, JM=%d, KM=%d.\n", 
                 *IM, *JM, *KM);
         } else {
             // Get grid dimensions from input arrays
             *IM = imm[bi];
             *JM = jmm[bi];
             *KM = kmm[bi];
-            LOG(GLOBAL, LOG_DEBUG, 
+            LOG_ALLOW(GLOBAL, LOG_DEBUG, 
                 "DetermineGridSizes - Programmatically generated grid dimensions: IM=%d, JM=%d, KM=%d.\n", 
                 *IM, *JM, *KM);
         }
@@ -399,19 +399,19 @@ PetscErrorCode DetermineGridSizes(PetscInt bi, UserCtx *user, PetscInt *IM, Pets
     ierr = MPI_Bcast(IM, 1, MPI_INT, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
     ierr = MPI_Bcast(JM, 1, MPI_INT, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
     ierr = MPI_Bcast(KM, 1, MPI_INT, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
-    LOG(GLOBAL, LOG_DEBUG, "DetermineGridSizes - Broadcasted grid dimensions: IM=%d, JM=%d, KM=%d.\n", 
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "DetermineGridSizes - Broadcasted grid dimensions: IM=%d, JM=%d, KM=%d.\n", 
         *IM, *JM, *KM);
 
     // Update the user context on all ranks
     user->IM = *IM;
     user->JM = *JM;
     user->KM = *KM;
-    LOG(GLOBAL, LOG_DEBUG, 
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, 
         "DetermineGridSizes - Updated UserCtx: IM=%d, JM=%d, KM=%d on rank %d.\n", 
         user->IM, user->JM, user->KM, rank);
 
     // Log the end of the function
-    LOG(GLOBAL, LOG_INFO, "DetermineGridSizes - Completed grid size determination for block %d on rank %d.\n", bi, rank);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "DetermineGridSizes - Completed grid size determination for block %d on rank %d.\n", bi, rank);
 
     return 0;
 }
@@ -438,36 +438,36 @@ PetscErrorCode FinalizeGridSetup(PetscInt generate_grid, FILE *fd, PetscInt *imm
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
 
     // Log the start of the function
-    LOG(GLOBAL, LOG_INFO, "FinalizeGridSetup - Starting grid finalization on rank %d.\n", rank);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "FinalizeGridSetup - Starting grid finalization on rank %d.\n", rank);
 
     // Handle file closing for non-programmatic grid setup
     if (!generate_grid && rank == 0) {
         if (fd != NULL) {
             fclose(fd);
-            LOG(GLOBAL, LOG_DEBUG, "FinalizeGridSetup - Closed grid file on rank %d.\n", rank);
+            LOG_ALLOW(GLOBAL, LOG_DEBUG, "FinalizeGridSetup - Closed grid file on rank %d.\n", rank);
         } else {
-            LOG(GLOBAL, LOG_WARNING, "FinalizeGridSetup - File pointer is NULL on rank %d. Nothing to close.\n", rank);
+            LOG_ALLOW(GLOBAL, LOG_WARNING, "FinalizeGridSetup - File pointer is NULL on rank %d. Nothing to close.\n", rank);
         }
     }
 
     // Free memory allocated for imm, jmm, and kmm
     if (imm != NULL) {
         ierr = PetscFree(imm); CHKERRQ(ierr);
-        LOG(GLOBAL, LOG_DEBUG, "FinalizeGridSetup - Freed memory for imm on rank %d.\n", rank);
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "FinalizeGridSetup - Freed memory for imm on rank %d.\n", rank);
     }
 
     if (jmm != NULL) {
         ierr = PetscFree(jmm); CHKERRQ(ierr);
-        LOG(GLOBAL, LOG_DEBUG, "FinalizeGridSetup - Freed memory for jmm on rank %d.\n", rank);
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "FinalizeGridSetup - Freed memory for jmm on rank %d.\n", rank);
     }
 
     if (kmm != NULL) {
         ierr = PetscFree(kmm); CHKERRQ(ierr);
-        LOG(GLOBAL, LOG_DEBUG, "FinalizeGridSetup - Freed memory for kmm on rank %d.\n", rank);
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "FinalizeGridSetup - Freed memory for kmm on rank %d.\n", rank);
     }
 
     // Log the end of the function
-    LOG(GLOBAL, LOG_INFO, "FinalizeGridSetup - Completed grid finalization on rank %d.\n", rank);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "FinalizeGridSetup - Completed grid finalization on rank %d.\n", rank);
 
     return 0;
 }
@@ -498,7 +498,7 @@ PetscErrorCode DefineGridCoordinates(UserCtx *user) {
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
 
     // Log the start of the function
-    LOG(GLOBAL, LOG_INFO, "DefineGridCoordinates - Starting grid configuration on rank %d.\n", rank);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "DefineGridCoordinates - Starting grid configuration on rank %d.\n", rank);
 
     // Parse input parameters for grid setup
     ierr = ParseGridInputs(user, &generate_grid, &grid1d, &L_x, &L_y, &L_z, &imm, &jmm, &kmm, &block_number, fd); CHKERRQ(ierr);
@@ -513,7 +513,7 @@ PetscErrorCode DefineGridCoordinates(UserCtx *user) {
         // Determine grid sizes for the current block
         ierr = DetermineGridSizes(bi, user, &IM, &JM, &KM, fd, generate_grid, imm, jmm, kmm, &block_number); CHKERRQ(ierr);
 
-        LOG(GLOBAL,LOG_INFO,"DefineGridCoordinates - IM,JM,KM - %d,%d,%d \n",IM,JM,KM);
+        LOG_ALLOW(GLOBAL,LOG_INFO,"DefineGridCoordinates - IM,JM,KM - %d,%d,%d \n",IM,JM,KM);
 
         // Set up the DM for the current block
         ierr = InitializeGridDM(user,L_x,L_y,L_z); CHKERRQ(ierr);
@@ -524,7 +524,7 @@ PetscErrorCode DefineGridCoordinates(UserCtx *user) {
         // Log the block's subdomain ownership details
         DMDALocalInfo info = user->info;
         ierr = DMDAGetLocalInfo(user->da, &info);
-        LOG(GLOBAL, LOG_INFO, 
+        LOG_ALLOW(GLOBAL, LOG_INFO, 
             "DefineGridCoordinates - Rank %d owns subdomain for block %d: xs=%d, xe=%d, ys=%d, ye=%d, zs=%d, ze=%d.\n", 
             rank, bi, info.xs, info.xs + info.xm, info.ys, info.ys + info.ym, info.zs, info.zs + info.zm);
     }
@@ -533,7 +533,7 @@ PetscErrorCode DefineGridCoordinates(UserCtx *user) {
     ierr = FinalizeGridSetup(generate_grid, fd, imm, jmm, kmm); CHKERRQ(ierr);
 
     // Log the end of the function
-    LOG(GLOBAL, LOG_INFO, "DefineGridCoordinates - Completed grid configuration on rank %d.\n", rank);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "DefineGridCoordinates - Completed grid configuration on rank %d.\n", rank);
 
     return 0;
 }
@@ -569,15 +569,15 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
     Cmpnts minCoords, maxCoords;
 
     // Start of function execution
-    LOG(GLOBAL, LOG_INFO, "ComputeLocalBoundingBox: Entering the function.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ComputeLocalBoundingBox: Entering the function.\n");
 
     // Validate input pointers
     if (!user) {
-        LOG(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Input 'user' pointer is NULL.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Input 'user' pointer is NULL.\n");
         return -1;
     }
     if (!localBBox) {
-        LOG(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Output 'localBBox' pointer is NULL.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Output 'localBBox' pointer is NULL.\n");
         return -1;
     }
 
@@ -587,26 +587,26 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
     // Get the local coordinates vector from the DMDA
     ierr = DMGetCoordinatesLocal(user->da, &coordinates);
     if (ierr) {
-        LOG(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Error getting local coordinates vector.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Error getting local coordinates vector.\n");
         return ierr;
     }
 
     if (!coordinates) {
-        LOG(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Coordinates vector is NULL.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Coordinates vector is NULL.\n");
         return -1;
     }
 
     // Access the coordinate array for reading
     ierr = DMDAVecGetArrayRead(user->fda, coordinates, &coordArray);
     if (ierr) {
-        LOG(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Error accessing coordinate array.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Error accessing coordinate array.\n");
         return ierr;
     }
 
     // Get the local grid information (indices and sizes)
     ierr = DMDAGetLocalInfo(user->da, &info);
     if (ierr) {
-        LOG(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Error getting DMDA local info.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Error getting DMDA local info.\n");
         return ierr;
     }
 
@@ -618,7 +618,7 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
     minCoords.x = minCoords.y = minCoords.z = PETSC_MAX_REAL;
     maxCoords.x = maxCoords.y = maxCoords.z = PETSC_MIN_REAL;
 
-    LOG(LOCAL, LOG_DEBUG, "ComputeLocalBoundingBox: Grid indices: xs=%d, xe=%d, ys=%d, ye=%d, zs=%d, ze=%d.\n", xs, xe, ys, ye, zs, ze);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "ComputeLocalBoundingBox: Grid indices: xs=%d, xe=%d, ys=%d, ye=%d, zs=%d, ze=%d.\n", xs, xe, ys, ye, zs, ze);
 
     // Iterate over the local grid to find min and max coordinates
     for (k = zs; k < ze; k++) {
@@ -639,13 +639,13 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
     }
 
     // Log the computed min and max coordinates
-    LOG(LOCAL, LOG_INFO, "ComputeLocalBoundingBox: Rank - %d - Computed bounding box - minCoords=(%.6f, %.6f, %.6f), maxCoords=(%.6f, %.6f, %.6f).\n",
+    LOG_ALLOW(LOCAL, LOG_INFO, "ComputeLocalBoundingBox: Rank - %d - Computed bounding box - minCoords=(%.6f, %.6f, %.6f), maxCoords=(%.6f, %.6f, %.6f).\n",
         rank,minCoords.x, minCoords.y, minCoords.z, maxCoords.x, maxCoords.y, maxCoords.z);
 
     // Restore the coordinate array
     ierr = DMDAVecRestoreArrayRead(user->fda, coordinates, &coordArray);
     if (ierr) {
-        LOG(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Error restoring coordinate array.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Error restoring coordinate array.\n");
         return ierr;
     }
 
@@ -656,7 +656,7 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
     // Update the bounding box inside the UserCtx for consistency
     user->bbox = *localBBox;
 
-    LOG(GLOBAL, LOG_INFO, "ComputeLocalBoundingBox: Exiting the function successfully.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ComputeLocalBoundingBox: Exiting the function successfully.\n");
     return 0;
 }
 
@@ -683,36 +683,36 @@ PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
     BoundingBox *bboxArray = NULL;
     BoundingBox localBBox;
 
-    LOG(GLOBAL, LOG_INFO, "GatherAllBoundingBoxes: Entering the function. \n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "GatherAllBoundingBoxes: Entering the function. \n");
 
     // Validate input pointers
     if (!user) {
-        LOG(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Input 'user' pointer is NULL.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Input 'user' pointer is NULL.\n");
         return -1;
     }
     if (!allBBoxes) {
-        LOG(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Output 'allBBoxes' pointer is NULL.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Output 'allBBoxes' pointer is NULL.\n");
         return -1;
     }
 
     // Get the rank and size of the MPI communicator
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank);
     if (ierr != MPI_SUCCESS) {
-        LOG(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Error getting MPI rank.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Error getting MPI rank.\n");
         return ierr;
     }
     ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size);
     if (ierr != MPI_SUCCESS) {
-        LOG(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Error getting MPI size.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Error getting MPI size.\n");
         return ierr;
     }
 
-    LOG(LOCAL, LOG_INFO, "GatherAllBoundingBoxes: MPI rank=%d, size=%d.\n", rank, size);
+    LOG_ALLOW(LOCAL, LOG_INFO, "GatherAllBoundingBoxes: MPI rank=%d, size=%d.\n", rank, size);
 
     // Compute the local bounding box on each process
     ierr = ComputeLocalBoundingBox(user, &localBBox);
     if (ierr) {
-        LOG(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Error computing local bounding box.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Error computing local bounding box.\n");
         return ierr;
     }
     
@@ -722,10 +722,10 @@ PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
     if (rank == 0) {
         bboxArray = (BoundingBox *)malloc(size * sizeof(BoundingBox));
         if (!bboxArray) {
-            LOG(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Memory allocation failed for bounding box array.\n");
+            LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Memory allocation failed for bounding box array.\n");
             return -1;
         }
-        LOG(LOCAL, LOG_DEBUG, "GatherAllBoundingBoxes: Allocated memory for bounding box array on rank 0.\n");
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "GatherAllBoundingBoxes: Allocated memory for bounding box array on rank 0.\n");
     }
 
     // Perform MPI_Gather to collect all local bounding boxes on rank 0
@@ -733,7 +733,7 @@ PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
                       bboxArray, sizeof(BoundingBox), MPI_BYTE,
                       0, PETSC_COMM_WORLD);
     if (ierr != MPI_SUCCESS) {
-        LOG(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Error during MPI_Gather operation.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Error during MPI_Gather operation.\n");
         if (rank == 0 && bboxArray) free(bboxArray); // Clean up if allocation was done
         return ierr;
     }
@@ -741,12 +741,12 @@ PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
     // On rank 0, assign the gathered bounding boxes to the output pointer
     if (rank == 0) {
         *allBBoxes = bboxArray;
-        LOG(GLOBAL, LOG_INFO, "GatherAllBoundingBoxes: Successfully gathered bounding boxes on rank 0.\n");
+        LOG_ALLOW(GLOBAL, LOG_INFO, "GatherAllBoundingBoxes: Successfully gathered bounding boxes on rank 0.\n");
     } else {
         *allBBoxes = NULL;
     }
 
-    LOG(GLOBAL, LOG_INFO, "GatherAllBoundingBoxes: Exiting the function successfully.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "GatherAllBoundingBoxes: Exiting the function successfully.\n");
     return 0;
 }
 

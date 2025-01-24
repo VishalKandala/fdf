@@ -35,7 +35,7 @@ PetscErrorCode ReadGridGenerationInputs(UserCtx *user, PetscInt *grid1d, PetscRe
                                         PetscInt **imm, PetscInt **jmm, PetscInt **kmm, PetscInt *nblk) {
     PetscErrorCode ierr;
 
-    LOG(GLOBAL, LOG_INFO, "ReadGridGenerationInputs - Reading grid generation parameters.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridGenerationInputs - Reading grid generation parameters.\n");
 
     // Read the flag indicating if grid is 1D(1) or 3D(0)
     ierr = PetscOptionsGetInt(NULL, NULL, "-grid1d", grid1d, NULL); CHKERRQ(ierr);
@@ -54,7 +54,7 @@ PetscErrorCode ReadGridGenerationInputs(UserCtx *user, PetscInt *grid1d, PetscRe
     ierr = PetscOptionsGetReal(NULL, NULL, "-r_y", &user->ry, NULL); CHKERRQ(ierr);
     ierr = PetscOptionsGetReal(NULL, NULL, "-r_z", &user->rz, NULL); CHKERRQ(ierr);
     
-    LOG(GLOBAL, LOG_INFO, "ReadGridGenerationInputs - Number of grid blocks: %d.\n", *nblk);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridGenerationInputs - Number of grid blocks: %d.\n", *nblk);
   
     // Ensure if 'nblk' is not mentioned in the control.dat file, the default value is set to 1.
     if(*nblk==0) *nblk = 1;
@@ -70,7 +70,7 @@ PetscErrorCode ReadGridGenerationInputs(UserCtx *user, PetscInt *grid1d, PetscRe
     ierr = PetscOptionsGetIntArray(NULL, NULL, "-km", *kmm, nblk, NULL); CHKERRQ(ierr);
 
     
-    LOG(GLOBAL, LOG_INFO, "ReadGridGenerationInputs - Grid parameters read successfully.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridGenerationInputs - Grid parameters read successfully.\n");
 
     return 0;
 }
@@ -98,7 +98,7 @@ PetscErrorCode ReadGridFile(const char *filename, PetscInt *nblk, PetscInt **imm
     PetscInt rank;
 
     
-    LOG(GLOBAL, LOG_INFO, "ReadGridFile - Reading grid data from file: %s.\n", filename);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridFile - Reading grid data from file: %s.\n", filename);
 
     ierr = MPI_Comm_rank(comm, &rank); CHKERRQ(ierr);
 
@@ -112,7 +112,7 @@ PetscErrorCode ReadGridFile(const char *filename, PetscInt *nblk, PetscInt **imm
         // Read number of blocks
         fscanf(fd, "%d\n", nblk);
 
-	LOG(GLOBAL, LOG_INFO, "ReadGridGridFile - Number of grid blocks: %d.\n", *nblk);
+	LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridGridFile - Number of grid blocks: %d.\n", *nblk);
   
 	// Ensure if 'nblk' is not mentioned in the control.dat file, the default value is set to 1.
 	if(*nblk==0) *nblk = 1;
@@ -145,8 +145,8 @@ PetscErrorCode ReadGridFile(const char *filename, PetscInt *nblk, PetscInt **imm
     ierr = MPI_Bcast(kmm, *nblk, MPI_INT, 0, comm); CHKERRQ(ierr);
     ierr = MPI_Bcast(grid1d, 1, MPI_INT, 0, comm); CHKERRQ(ierr);
 
-    LOG(GLOBAL, LOG_DEBUG, "ReadGridFile - Blocks: nblk=%d, grid1d=%d.\n", *nblk, *grid1d);
-    LOG(GLOBAL, LOG_INFO, "ReadGridFile - Grid file data retrieved successfully.\n");
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadGridFile - Blocks: nblk=%d, grid1d=%d.\n", *nblk, *grid1d);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridFile - Grid file data retrieved successfully.\n");
 
     return 0;
 }
@@ -186,12 +186,12 @@ PetscErrorCode ReadFieldData(UserCtx *user, const char *field_name, Vec field_ve
     user->_this = 0; // Bad hack for now! until the use of _this is figured out! 
     snprintf(filename, sizeof(filename), "results/%s%05d_%d.%s", field_name, ti, user->_this, ext);
 
-    LOG(GLOBAL, LOG_DEBUG, "ReadFieldData - Attempting to read file: %s\n", filename);
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadFieldData - Attempting to read file: %s\n", filename);
 
     // Check if the file exists before attempting to open it
     ierr = PetscTestFile(filename, FILE_MODE_READ, &fileExists); CHKERRQ(ierr);
     if (!fileExists) {
-    LOG(GLOBAL, LOG_WARNING, "ReadFieldData - File '%s' does not exist.\n", filename);
+    LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadFieldData - File '%s' does not exist.\n", filename);
     char err_msg[512];
     PetscSNPrintf(err_msg, sizeof(err_msg), 
               "ReadFieldData - Could not open file '%s' for reading. File does not exist.", 
@@ -201,7 +201,7 @@ PetscErrorCode ReadFieldData(UserCtx *user, const char *field_name, Vec field_ve
     // Attempt to open the file
     ierr = PetscViewerBinaryOpen(PETSC_COMM_WORLD, filename, FILE_MODE_READ, &viewer);
     if (ierr) {
-        LOG(GLOBAL, LOG_WARNING, "ReadFieldData - Failed to open file: %s. Skipping this field.\n", filename);
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadFieldData - Failed to open file: %s. Skipping this field.\n", filename);
         return 0; // Continue execution despite missing file
     }
 
@@ -211,7 +211,7 @@ PetscErrorCode ReadFieldData(UserCtx *user, const char *field_name, Vec field_ve
     // Close the file viewer
     ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
 
-    LOG(GLOBAL, LOG_INFO, "ReadFieldData - Successfully loaded data for field: %s\n", field_name);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadFieldData - Successfully loaded data for field: %s\n", field_name);
 
     return 0;
 }
@@ -232,7 +232,7 @@ PetscErrorCode ReadSimulationFields(UserCtx *user,PetscInt ti)
 {
     PetscErrorCode ierr;
 
-    LOG(GLOBAL, LOG_INFO, "ReadSimulationFields - Starting to read simulation fields.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadSimulationFields - Starting to read simulation fields.\n");
 
     // Read Cartesian velocity field
     ierr = ReadFieldData(user, "ufield", user->Ucat, ti, "dat"); CHKERRQ(ierr);
@@ -261,7 +261,7 @@ PetscErrorCode ReadSimulationFields(UserCtx *user,PetscInt ti)
       ierr = ReadStatisticalFields(user,ti); CHKERRQ(ierr);
     }
 
-    LOG(GLOBAL, LOG_INFO, "ReadSimulationFields - Finished reading simulation fields.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadSimulationFields - Finished reading simulation fields.\n");
 
     return 0;
 }
@@ -281,14 +281,14 @@ PetscErrorCode ReadStatisticalFields(UserCtx *user,PetscInt ti)
 {
     PetscErrorCode ierr;
 
-    LOG(GLOBAL, LOG_INFO, "ReadStatisticalFields - Starting to read statistical fields.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadStatisticalFields - Starting to read statistical fields.\n");
 
     ierr = ReadFieldData(user, "su0", user->Ucat_sum, ti, "dat"); CHKERRQ(ierr);
     ierr = ReadFieldData(user, "su1", user->Ucat_cross_sum, ti, "dat"); CHKERRQ(ierr);
     ierr = ReadFieldData(user, "su2", user->Ucat_square_sum, ti, "dat"); CHKERRQ(ierr);
     ierr = ReadFieldData(user, "sp", user->P_sum, ti, "dat"); CHKERRQ(ierr);
 
-    LOG(GLOBAL, LOG_INFO, "ReadStatisticalFields - Finished reading statistical fields.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadStatisticalFields - Finished reading statistical fields.\n");
 
     return 0;
 }
@@ -309,7 +309,7 @@ PetscErrorCode ReadLESFields(UserCtx *user,PetscInt ti)
     PetscErrorCode ierr;
     Vec Cs;
 
-    LOG(GLOBAL, LOG_INFO, "ReadLESFields - Starting to read LES fields.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadLESFields - Starting to read LES fields.\n");
 
     VecDuplicate(user->P, &Cs);
     ierr = ReadFieldData(user, "cs", Cs, ti, "dat"); CHKERRQ(ierr);
@@ -317,7 +317,7 @@ PetscErrorCode ReadLESFields(UserCtx *user,PetscInt ti)
     DMGlobalToLocalEnd(user->da, Cs, INSERT_VALUES, user->lCs);
     VecDestroy(&Cs);
 
-    LOG(GLOBAL, LOG_INFO, "ReadLESFields - Finished reading LES fields.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadLESFields - Finished reading LES fields.\n");
 
     return 0;
 }
@@ -337,7 +337,7 @@ PetscErrorCode ReadRANSFields(UserCtx *user,PetscInt ti)
 {
     PetscErrorCode ierr;
 
-    LOG(GLOBAL, LOG_INFO, "ReadRANSFields - Starting to read RANS fields.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadRANSFields - Starting to read RANS fields.\n");
 
     ierr = ReadFieldData(user, "kfield", user->K_Omega, ti, "dat"); CHKERRQ(ierr);
     VecCopy(user->K_Omega, user->K_Omega_o);
@@ -348,7 +348,7 @@ PetscErrorCode ReadRANSFields(UserCtx *user,PetscInt ti)
     DMGlobalToLocalBegin(user->fda2, user->K_Omega_o, INSERT_VALUES, user->lK_Omega_o);
     DMGlobalToLocalEnd(user->fda2, user->K_Omega_o, INSERT_VALUES, user->lK_Omega_o);
 
-    LOG(GLOBAL, LOG_INFO, "ReadRANSFields - Finished reading RANS fields.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadRANSFields - Finished reading RANS fields.\n");
 
     return 0;
 }
@@ -376,7 +376,7 @@ PetscErrorCode WriteFieldData(UserCtx *user, const char *field_name, Vec field_v
     // Construct the file name
     snprintf(filen, sizeof(filen), "results/%s%05d_%d.%s", field_name, ti, user->_this, ext);
 
-    LOG(GLOBAL, LOG_DEBUG, "WriteFieldData - Attempting to write file: %s\n", filen);
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "WriteFieldData - Attempting to write file: %s\n", filen);
 
     // Open the file for writing
     ierr = PetscViewerBinaryOpen(PETSC_COMM_WORLD, filen, FILE_MODE_WRITE, &viewer); CHKERRQ(ierr);
@@ -387,7 +387,7 @@ PetscErrorCode WriteFieldData(UserCtx *user, const char *field_name, Vec field_v
     // Close the file viewer
     ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
 
-    LOG(GLOBAL, LOG_INFO, "WriteFieldData - Successfully wrote data for field: %s\n", field_name);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "WriteFieldData - Successfully wrote data for field: %s\n", field_name);
 
     return 0;
 }
@@ -407,7 +407,7 @@ PetscErrorCode WriteSimulationFields(UserCtx *user)
 {
     PetscErrorCode ierr;
 
-    LOG(GLOBAL, LOG_INFO, "WriteSimulationFields - Starting to write simulation fields.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "WriteSimulationFields - Starting to write simulation fields.\n");
 
     // Write contravariant velocity field
     ierr = WriteFieldData(user, "vfield", user->Ucont, user->ti, "dat"); CHKERRQ(ierr);
@@ -436,7 +436,7 @@ PetscErrorCode WriteSimulationFields(UserCtx *user)
         ierr = WriteStatisticalFields(user); CHKERRQ(ierr);
     }
 
-    LOG(GLOBAL, LOG_INFO, "WriteSimulationFields - Finished writing simulation fields.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "WriteSimulationFields - Finished writing simulation fields.\n");
 
     return 0;
 }
@@ -455,14 +455,14 @@ PetscErrorCode WriteStatisticalFields(UserCtx *user)
 {
     PetscErrorCode ierr;
 
-    LOG(GLOBAL, LOG_INFO, "WriteStatisticalFields - Starting to write statistical fields.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "WriteStatisticalFields - Starting to write statistical fields.\n");
 
     ierr = WriteFieldData(user, "su0", user->Ucat_sum, user->ti, "dat"); CHKERRQ(ierr);
     ierr = WriteFieldData(user, "su1", user->Ucat_cross_sum, user->ti, "dat"); CHKERRQ(ierr);
     ierr = WriteFieldData(user, "su2", user->Ucat_square_sum, user->ti, "dat"); CHKERRQ(ierr);
     ierr = WriteFieldData(user, "sp", user->P_sum, user->ti, "dat"); CHKERRQ(ierr);
 
-    LOG(GLOBAL, LOG_INFO, "WriteStatisticalFields - Finished writing statistical fields.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "WriteStatisticalFields - Finished writing statistical fields.\n");
 
     return 0;
 }
@@ -482,7 +482,7 @@ PetscErrorCode WriteLESFields(UserCtx *user)
     PetscErrorCode ierr;
     Vec Cs;
 
-    LOG(GLOBAL, LOG_INFO, "WriteLESFields - Starting to write LES fields.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "WriteLESFields - Starting to write LES fields.\n");
 
     VecDuplicate(user->P, &Cs);
     DMLocalToGlobalBegin(user->da, user->lCs, INSERT_VALUES, Cs);
@@ -490,7 +490,7 @@ PetscErrorCode WriteLESFields(UserCtx *user)
     ierr = WriteFieldData(user, "cs", Cs, user->ti, "dat"); CHKERRQ(ierr);
     VecDestroy(&Cs);
 
-    LOG(GLOBAL, LOG_INFO, "WriteLESFields - Finished writing LES fields.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "WriteLESFields - Finished writing LES fields.\n");
 
     return 0;
 }
@@ -509,17 +509,82 @@ PetscErrorCode WriteRANSFields(UserCtx *user)
 {
     PetscErrorCode ierr;
 
-    LOG(GLOBAL, LOG_INFO, "WriteRANSFields - Starting to write RANS fields.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "WriteRANSFields - Starting to write RANS fields.\n");
 
     ierr = WriteFieldData(user, "kfield", user->K_Omega, user->ti, "dat"); CHKERRQ(ierr);
 
-    LOG(GLOBAL, LOG_INFO, "WriteRANSFields - Finished writing RANS fields.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "WriteRANSFields - Finished writing RANS fields.\n");
 
     return 0;
 }
 
+/**
+ * @brief Writes data from a specific field in a PETSc Swarm to a file.
+ *
+ * This function retrieves the Swarm from the UserCtx (i.e., `user->swarm`) and
+ * creates a global PETSc vector from the specified Swarm field. It then calls
+ * the existing WriteFieldData() function to handle the actual I/O operation.
+ * After writing the data, the function destroys the temporary global vector 
+ * to avoid memory leaks.
+ *
+ * @param[in] user       Pointer to the UserCtx structure containing simulation context
+ *                       and the PetscSwarm (as `user->swarm`).
+ * @param[in] field_name Name of the Swarm field to be written (e.g., "my_field").
+ * @param[in] ti         Time index used to construct the output file name.
+ * @param[in] ext        File extension (e.g., "dat", "bin").
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ *
+ * @note Compatible with PETSc 3.14.4.
+ */
+PetscErrorCode WriteSwarmField(UserCtx *user, const char *field_name, PetscInt ti, const char *ext)
+{
+  PetscErrorCode ierr;
+  Vec            fieldVec;
+  DM     swarm;  
 
+  PetscFunctionBegin; /* PETSc macro indicating start of function */
 
+  /* 
+   * 1) Retrieve the PetscSwarm from the user context.
+   *    Ensure user->swarm is initialized and not NULL.
+   */
+  swarm = user->swarm;      
 
+  /* 
+   * 2) Create a global vector from the specified swarm field.
+   *    This function is available in PETSc 3.14.4.
+   *    It provides a read/write "view" of the swarm field as a global Vec.
+   */
+  LOG_ALLOW(GLOBAL, LOG_DEBUG,
+            "WriteSwarmField - Attempting to create global vector from field: %s\n",
+            field_name);
+  ierr = DMSwarmCreateGlobalVectorFromField(swarm, field_name, &fieldVec);CHKERRQ(ierr);
 
+  /*
+   * 3) Use your existing WriteFieldData() to write the global vector to a file.
+   *    The field name, time index, and extension are passed along for naming.
+   */
+  LOG_ALLOW(GLOBAL, LOG_DEBUG,
+            "WriteSwarmField - Calling WriteFieldData for field: %s\n",
+            field_name);
+  ierr = WriteFieldData(user, field_name, fieldVec, ti, ext);CHKERRQ(ierr);
+
+  /*
+   * 4) Destroy the global vector once the data is successfully written.
+   *    This step is crucial for avoiding memory leaks. 
+   *    DMSwarmDestroyGlobalVectorFromField() is also available in PETSc 3.14.4.
+   */
+  LOG_ALLOW(GLOBAL, LOG_DEBUG,
+            "WriteSwarmField - Destroying the global vector for field: %s\n",
+            field_name);
+  ierr = DMSwarmDestroyGlobalVectorFromField(swarm, field_name, &fieldVec);CHKERRQ(ierr);
+
+  /* Log and return success. */
+  LOG_ALLOW(GLOBAL, LOG_INFO,
+            "WriteSwarmField - Successfully wrote swarm data for field: %s\n",
+            field_name);
+
+  PetscFunctionReturn(0); /* PETSc macro indicating end of function */
+}
 

@@ -76,7 +76,7 @@ LogLevel get_log_level();
         /* Determine the MPI communicator based on the scope */ \
         MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
         /* Check if the log level is within the allowed range */ \
-        if ((int)(level) <= (int)get_log_level()) {		  \
+        if ((int)(level) <= (int)get_log_level()) { \
             /* Print the message to the specified communicator */ \
             PetscPrintf(comm, fmt, ##__VA_ARGS__); \
         } \
@@ -107,12 +107,11 @@ LogLevel get_log_level();
         /* Set the communicator to global (MPI_COMM_WORLD) by default */ \
         MPI_Comm comm = MPI_COMM_WORLD; \
         /* Check if the log level is within the allowed range */ \
-        if ((int)(level) <= (int)get_log_level()) {			\
+        if ((int)(level) <= (int)get_log_level()) { \
             /* Print the message using PetscPrintf with the global communicator */ \
             PetscPrintf(comm, fmt, ##__VA_ARGS__); \
         } \
     } while (0)
-
 
 /**
  * @brief Logging macro for PETSc-based applications with scope control, 
@@ -170,6 +169,80 @@ LogLevel get_log_level();
     do { \
         if ((int)(level) <= (int)get_log_level()) { \
             PetscSynchronizedPrintf(MPI_COMM_WORLD, fmt, ##__VA_ARGS__); \
+            PetscSynchronizedFlush(MPI_COMM_WORLD, PETSC_STDOUT); \
+        } \
+    } while (0)
+
+/* ------------------------------------------------------------------- */
+/*  Per-function allow-list for logging                                */
+/* ------------------------------------------------------------------- */
+
+/**
+ * @brief Sets the global list of function names that are allowed to log.
+ *
+ * You can replace the entire list of allowed function names at runtime.
+ */
+void set_allowed_functions(const char** functionList, int count);
+
+/**
+ * @brief Checks if a given function is in the allow-list.
+ *
+ * This helper is used internally by the LOG_ALLOW macro.
+ */
+PetscBool is_function_allowed(const char* functionName);
+
+/**
+ * @brief Logging macro that checks both the log level and whether the calling function
+ *        is in the allowed-function list before printing. Useful for selective, per-function logging.
+ *
+ * @param scope Specifies the logging scope (LOCAL or GLOBAL).
+ * @param level The severity level of the message (e.g., LOG_INFO, LOG_ERROR).
+ * @param fmt   The format string for the message (similar to printf).
+ * @param ...   Additional arguments for the format string (optional).
+ *
+ * Example usage:
+ *     LOG_ALLOW(LOCAL, LOG_DEBUG, "Debugging info in function: %s\n", __func__);
+ */
+#define LOG_ALLOW(scope, level, fmt, ...) \
+    do { \
+        MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
+        if ((int)(level) <= (int)get_log_level() && is_function_allowed(__func__)) { \
+            PetscPrintf(comm, "[%s] " fmt, __func__, ##__VA_ARGS__); \
+        } \
+    } while (0)
+
+
+/**
+ * @brief Logging macro that checks both the log level and whether the calling function
+ *        is in the allowed-function list, using synchronized output across ranks.
+ *
+ * This macro uses `PetscSynchronizedPrintf` and `PetscSynchronizedFlush` to ensure
+ * messages from different ranks are printed in a rank-ordered fashion. It also filters
+ * out messages from functions not present in the allow-list (set via `set_allowed_functions()`).
+ *
+ * @param scope Specifies the logging scope:
+ *              - LOCAL:  Logs on the current process using MPI_COMM_SELF.
+ *              - GLOBAL: Logs on all processes using MPI_COMM_WORLD.
+ * @param level The severity level of the message (e.g., LOG_INFO, LOG_ERROR).
+ * @param fmt   The format string for the message (similar to printf).
+ * @param ...   Additional arguments for the format string (optional).
+ *
+ * Example usage:
+ *     LOG_ALLOW_SYNC(LOCAL,  LOG_DEBUG, "Debug info: rank = %d\n", rank);
+ *     LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,  "Synchronized info in %s\n", __func__);
+ *
+ * Notes:
+ * - A function only produces output if it appears in the allow-list (`is_function_allowed(__func__)`).
+ * - The log level is filtered based on the value returned by `get_log_level()`.
+ * - If the function is allowed, printing is rank-synchronized (i.e., each rank’s output appears in order).
+ */
+#define LOG_ALLOW_SYNC(level, fmt, ...) \
+    do { \
+        /* Check both the logging level and the function allow-list */ \
+        if ((int)(level) <= (int)get_log_level() && is_function_allowed(__func__)) { \
+            /* Synchronized print (collective) on the specified communicator */ \
+            PetscSynchronizedPrintf(MPI_COMM_WORLD, "[%s] " fmt, __func__, ##__VA_ARGS__); \
+            /* Flush to ensure messages appear in rank order (0,1,2,...) */ \
             PetscSynchronizedFlush(MPI_COMM_WORLD, PETSC_STDOUT); \
         } \
     } while (0)

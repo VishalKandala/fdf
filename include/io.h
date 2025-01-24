@@ -189,4 +189,25 @@ PetscErrorCode WriteLESFields(UserCtx *user);
  */
 PetscErrorCode WriteRANSFields(UserCtx *user);
 
+/**
+ * @brief Writes data from a specific field in a PETSc Swarm to a file.
+ *
+ * This function retrieves the Swarm from the UserCtx (i.e., `user->swarm`) and
+ * creates a global PETSc vector from the specified Swarm field. It then calls
+ * the existing WriteFieldData() function to handle the actual I/O operation.
+ * After writing the data, the function destroys the temporary global vector 
+ * to avoid memory leaks.
+ *
+ * @param[in] user       Pointer to the UserCtx structure containing simulation context
+ *                       and the PetscSwarm (as `user->swarm`).
+ * @param[in] field_name Name of the Swarm field to be written (e.g., "my_field").
+ * @param[in] ti         Time index used to construct the output file name.
+ * @param[in] ext        File extension (e.g., "dat", "bin").
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ *
+ * @note Compatible with PETSc 3.14.4.
+ */
+PetscErrorCode WriteSwarmField(UserCtx *user, const char *field_name, PetscInt ti, const char *ext);
+
 #endif // IO_H

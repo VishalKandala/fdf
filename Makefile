@@ -50,23 +50,27 @@ DATALIS_EXE       = $(BINDIR)/datalis
 DATAFILE_EXE      = $(BINDIR)/datafile
 SWARM_TEST_EXE    = $(BINDIR)/swarm_test
 
+# New Executable
+POSTPROCESS_EXE   = $(BINDIR)/postprocess
+
 # -----------------------------------------------------
 # Phony Targets
 # -----------------------------------------------------
 .PHONY: all cleanobj clean_all tags \
         testt data inttest \
-        itfcsearch data_vtk datalis datafile swarm_test
+        itfcsearch data_vtk datalis datafile swarm_test \
+        postprocess
 
 # -----------------------------------------------------
 # Default Target
 # -----------------------------------------------------
 all: testt data inttest \
-     itfcsearch data_vtk datalis datafile swarm_test
+     itfcsearch data_vtk datalis datafile swarm_test \
+     postprocess
 
 # -----------------------------------------------------
 # Create Necessary Directories
 # -----------------------------------------------------
-# Ensure directories exist using order-only prerequisites
 dirs: | $(OBJDIR) $(BINDIR)
 
 $(OBJDIR):
@@ -78,22 +82,20 @@ $(BINDIR):
 # -----------------------------------------------------
 # Compilation Rule
 # -----------------------------------------------------
-# Compile .c files in src/ to .o files in obj/
-# $< refers to the source file
-# $@ refers to the target object file
 $(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # -----------------------------------------------------
-# Executable Targets
-# -----------------------------------------------------
 # 1. testt executable
+# -----------------------------------------------------
 testt: dirs $(TESTT_EXE)
 
 $(TESTT_EXE): $(OBJSC)
 	$(CLINKER) $(CFLAGS) -o $@ $(OBJSC) $(PETSC_LIB)
 
+# -----------------------------------------------------
 # 2. data executable
+# -----------------------------------------------------
 data: dirs $(DATA_EXE)
 
 $(DATA_EXE): $(OBJDIR)/variables.o $(OBJDIR)/compgeom.o $(OBJDIR)/data_ibm.o \
@@ -101,25 +103,77 @@ $(DATA_EXE): $(OBJDIR)/variables.o $(OBJDIR)/compgeom.o $(OBJDIR)/data_ibm.o \
              $(OBJDIR)/fish.o $(OBJDIR)/data.o
 	$(CLINKER) -o $@ $^ $(PETSC_LIB) $(PETSC_SNES_LIB) $(PETSC_TS_LIB) $(LIBS)
 
-# 4. swarm_interp executable
+# -----------------------------------------------------
+# 3. inttest (swarm_interp) executable
+# -----------------------------------------------------
 inttest: dirs $(INTTEST_EXE)
 
 $(INTTEST_EXE): $(OBJDIR)/inttest.o $(OBJDIR)/interpolation.o $(OBJDIR)/walkingsearch.o \
-                     $(OBJDIR)/ParticleSwarm.o $(OBJDIR)/logging.o \
-                     $(OBJDIR)/grid.o  $(OBJDIR)/io.o 
+                $(OBJDIR)/ParticleSwarm.o $(OBJDIR)/logging.o \
+                $(OBJDIR)/grid.o  $(OBJDIR)/io.o
 	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB)
 
-# ... (Other executables defined similarly)
+# -----------------------------------------------------
+# 4. itfcsearch
+# -----------------------------------------------------
+itfcsearch: dirs $(ITFCSEARCH_EXE)
+
+$(ITFCSEARCH_EXE): $(OBJDIR)/itfcsearch.o \
+                   $(OBJDIR)/walkingsearch.o $(OBJDIR)/logging.o \
+                   $(OBJDIR)/grid.o  $(OBJDIR)/io.o
+	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB)
+
+# -----------------------------------------------------
+# 5. data_vtk
+# -----------------------------------------------------
+data_vtk: dirs $(DATA_VTK_EXE)
+
+$(DATA_VTK_EXE): $(OBJDIR)/data_vtk.o $(OBJDIR)/logging.o \
+                 $(OBJDIR)/io.o $(OBJDIR)/grid.o
+	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB)
+
+# -----------------------------------------------------
+# 6. datalis
+# -----------------------------------------------------
+datalis: dirs $(DATALIS_EXE)
+
+$(DATALIS_EXE): $(OBJDIR)/datalis.o $(OBJDIR)/logging.o $(OBJDIR)/io.o
+	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB)
+
+# -----------------------------------------------------
+# 7. datafile
+# -----------------------------------------------------
+datafile: dirs $(DATAFILE_EXE)
+
+$(DATAFILE_EXE): $(OBJDIR)/datafile.o $(OBJDIR)/logging.o $(OBJDIR)/io.o
+	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB)
+
+# -----------------------------------------------------
+# 8. swarm_test
+# -----------------------------------------------------
+swarm_test: dirs $(SWARM_TEST_EXE)
+
+$(SWARM_TEST_EXE): $(OBJDIR)/swarm_test.o $(OBJDIR)/logging.o \
+                   $(OBJDIR)/io.o  $(OBJDIR)/grid.o
+	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB)
+
+# -----------------------------------------------------
+# NEW: 9. postprocess executable
+# -----------------------------------------------------
+postprocess: dirs $(POSTPROCESS_EXE)
+
+# If postprocess.c needs other object files, list them here.
+# We link postprocess.o, plus logging.o, io.o, etc.
+$(POSTPROCESS_EXE): $(OBJDIR)/postprocess.o $(OBJDIR)/interpolation.o $(OBJDIR)/walkingsearch.o $(OBJDIR)/grid.o $(OBJDIR)/ParticleSwarm.o $(OBJDIR)/logging.o $(OBJDIR)/io.o
+	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(LIBS)
 
 # -----------------------------------------------------
 # Custom Targets
 # -----------------------------------------------------
-# Target for generating TAGS
 .PHONY: tags
 tags:
-	find $(SRCDIR) $(INCLUDEDIR) $(SCRIPTSDIR) -type f \( -name "*.c" -o -name "*.h" -o -name "*.py" \) -print | etags -f TAGS -
+	find $(SRCDIR) $(INCDIR) $(SCRIPTDIR) -type f \( -name "*.c" -o -name "*.h" -o -name "*.py" \) -print | etags -f TAGS -
 
-# Clean TAGS file
 .PHONY: clean_tags
 clean_tags:
 	rm -f TAGS

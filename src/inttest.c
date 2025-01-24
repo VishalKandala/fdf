@@ -36,7 +36,7 @@
  */
 static inline PetscErrorCode SetLocalCartesianVelocity(Cmpnts *ucat, Cmpnts *coor) {
     // Log input coordinate values for debugging purposes
-    LOG(LOCAL, LOG_DEBUG, "SetLocalCartesianVelocity: Input Coordinates - x: %f, y: %f, z: %f \n", coor->x, coor->y, coor->z);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "SetLocalCartesianVelocity: Input Coordinates - x: %f, y: %f, z: %f \n", coor->x, coor->y, coor->z);
 
     // Compute velocity components as the sine of the coordinates
     ucat->x = sin(coor->x);
@@ -44,7 +44,7 @@ static inline PetscErrorCode SetLocalCartesianVelocity(Cmpnts *ucat, Cmpnts *coo
     ucat->z = sin(coor->z);
 
     // Log computed velocity components
-    LOG(LOCAL, LOG_DEBUG, "SetLocalCartesianVelocity: Computed Velocity - x: %f, y: %f, z: %f \n", ucat->x, ucat->y, ucat->z);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "SetLocalCartesianVelocity: Computed Velocity - x: %f, y: %f, z: %f \n", ucat->x, ucat->y, ucat->z);
 
     return 0;
 }
@@ -63,6 +63,9 @@ static inline PetscErrorCode SetLocalCartesianVelocity(Cmpnts *ucat, Cmpnts *coo
  * @return PetscErrorCode Returns 0 on successful execution, non-zero on failure.
  */
 PetscErrorCode InterpolateFieldFromCornerToCenter(Cmpnts ***field, Cmpnts ***centfield, DMDALocalInfo *info) {
+    
+
+
     PetscInt i, j, k, ic, jc, kc;
     PetscInt lxs,lys,lzs,lxe,lye,lze;
 
@@ -84,7 +87,7 @@ PetscErrorCode InterpolateFieldFromCornerToCenter(Cmpnts ***field, Cmpnts ***cen
     if (ye==my) lye = ye-1;
     if (ze==mz) lze = ze-1;
 
-    LOG(LOCAL, LOG_INFO, "InterpolateFieldFromCornerToCenter: Starting interpolation with local ranges xs=%d, xe=%d, ys=%d, ye=%d, zs=%d, ze=%d. \n", xs, xe, ys, ye, zs, ze);
+    LOG_ALLOW(LOCAL, LOG_INFO, "InterpolateFieldFromCornerToCenter: Starting interpolation with local ranges xs=%d, xe=%d, ys=%d, ye=%d, zs=%d, ze=%d. \n", xs, xe, ys, ye, zs, ze);
 
     // Loop over all cell centers in the local grid
     for (k = lzs; k < lze; k++) {
@@ -111,13 +114,13 @@ PetscErrorCode InterpolateFieldFromCornerToCenter(Cmpnts ***field, Cmpnts ***cen
                                            field[k+1][j][i].z + field[k+1][j][i+1].z +
                                            field[k+1][j+1][i].z + field[k+1][j+1][i+1].z) / 8.0;
 
-                LOG(LOCAL, LOG_DEBUG, "InterpolateFieldFromCornerToCenter: Center (%d, %d, %d) - x: %f, y: %f, z: %f \n",
+                LOG_ALLOW(LOCAL, LOG_DEBUG, "InterpolateFieldFromCornerToCenter: Center (%d, %d, %d) - x: %f, y: %f, z: %f \n",
                     ic, jc, kc, centfield[kc][jc][ic].x, centfield[kc][jc][ic].y, centfield[kc][jc][ic].z);
             }
         }
     }
 
-    LOG(LOCAL, LOG_INFO, "InterpolateFieldFromCornerToCenter: Completed interpolation.\n");
+    LOG_ALLOW(LOCAL, LOG_INFO, "InterpolateFieldFromCornerToCenter: Completed interpolation.\n");
     return 0;
 }
 
@@ -137,7 +140,7 @@ PetscErrorCode InterpolateFieldFromCornerToCenter(Cmpnts ***field, Cmpnts ***cen
 PetscErrorCode Allocate3DArray(Cmpnts ****array, PetscInt nz, PetscInt ny, PetscInt nx) {
     PetscErrorCode ierr;
 
-    LOG(LOCAL, LOG_INFO, "Allocate3DArray: Allocating 3D array of size (%d x %d x %d).\n", nz, ny, nx);
+    LOG_ALLOW(LOCAL, LOG_INFO, "Allocate3DArray: Allocating 3D array of size (%d x %d x %d).\n", nz, ny, nx);
 
     // Allocate memory for each dimension
     ierr = PetscMalloc1(nz, array); CHKERRQ(ierr);
@@ -154,7 +157,7 @@ PetscErrorCode Allocate3DArray(Cmpnts ****array, PetscInt nz, PetscInt ny, Petsc
         }
     }
 
-    LOG(LOCAL, LOG_INFO, "Allocate3DArray: Successfully allocated 3D array.\n");
+    LOG_ALLOW(LOCAL, LOG_INFO, "Allocate3DArray: Successfully allocated 3D array.\n");
     return 0;
 }
 
@@ -172,7 +175,7 @@ PetscErrorCode Allocate3DArray(Cmpnts ****array, PetscInt nz, PetscInt ny, Petsc
 PetscErrorCode Deallocate3DArray(Cmpnts ***array, PetscInt nz, PetscInt ny) {
     PetscErrorCode ierr;
 
-    LOG(LOCAL, LOG_INFO, "Deallocate3DArray: Deallocating 3D array of size (%d x %d).\n", nz, ny);
+    LOG_ALLOW(LOCAL, LOG_INFO, "Deallocate3DArray: Deallocating 3D array of size (%d x %d).\n", nz, ny);
 
     // Free memory layer by layer
     for (PetscInt k = 0; k < nz; k++) {
@@ -183,7 +186,7 @@ PetscErrorCode Deallocate3DArray(Cmpnts ***array, PetscInt nz, PetscInt ny) {
     }
     ierr = PetscFree(array); CHKERRQ(ierr);
 
-    LOG(LOCAL, LOG_INFO, "Deallocate3DArray: Successfully deallocated 3D array.\n");
+    LOG_ALLOW(LOCAL, LOG_INFO, "Deallocate3DArray: Successfully deallocated 3D array.\n");
     return 0;
 }
 
@@ -224,7 +227,7 @@ PetscErrorCode UpdateCartesianVelocity(UserCtx *user) {
     PetscInt i, j, k;
     PetscInt lxs,lys,lzs,lxe,lye,lze;
 
-    LOG(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Starting velocity update process.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Starting velocity update process.\n");
 
     // Retrieve local DMDA grid information
     DMDALocalInfo info = user->info;
@@ -247,7 +250,7 @@ PetscErrorCode UpdateCartesianVelocity(UserCtx *user) {
     if (ye==my) lye = ye-1;
     if (ze==mz) lze = ze-1;
 
-    LOG(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Local subdomain ranges - lxs: %d, lxe: %d, lys: %d, lye: %d, lzs: %d, lze: %d.\n", lxs, lxe, lys, lye, lzs,lze);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Local subdomain ranges - lxs: %d, lxe: %d, lys: %d, lye: %d, lzs: %d, lze: %d.\n", lxs, lxe, lys, lye, lzs,lze);
 
     // Access the DMDA coordinate vector
     ierr = DMGetCoordinatesLocal(user->da, &Coor); CHKERRQ(ierr);
@@ -256,22 +259,22 @@ PetscErrorCode UpdateCartesianVelocity(UserCtx *user) {
     // Allocate memory for the temporary 3D array to store interpolated coordinates
     ierr = Allocate3DArray(&centcoor, lze-lzs, lye-lys,lxe-lxs); CHKERRQ(ierr);
 
-    LOG(GLOBAL, LOG_DEBUG, "UpdateCartesianVelocity - Allocated centcoor for interpolated coordinates.\n");
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "UpdateCartesianVelocity - Allocated centcoor for interpolated coordinates.\n");
 
     // Access the Cartesian velocity vector
     ierr = DMDAVecGetArray(user->fda, user->Ucat, &ucat); CHKERRQ(ierr);
 
     // Interpolate coordinate values from cell corners to cell centers
-    LOG(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Interpolating coordinates from corners to centers.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Interpolating coordinates from corners to centers.\n");
     ierr = InterpolateFieldFromCornerToCenter(coor, centcoor, &info); CHKERRQ(ierr);
 
     // Update the Cartesian velocity at each cell center
-    LOG(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Updating velocity values at cell centers.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Updating velocity values at cell centers.\n");
     for (k = lzs; k < lze; k++) {
         for (j = lys; j < lye; j++) {
             for (i = lxs; i < lxe; i++) {
                 ierr = SetLocalCartesianVelocity(&ucat[k][j][i], &centcoor[k-lzs][j-lys][i-lxs]); CHKERRQ(ierr);
-                LOG(GLOBAL, LOG_DEBUG, "UpdateCartesianVelocity - Updated velocity at (%d, %d, %d): x=%f, y=%f, z=%f \n",
+                LOG_ALLOW(GLOBAL, LOG_DEBUG, "UpdateCartesianVelocity - Updated velocity at (%d, %d, %d): x=%f, y=%f, z=%f \n",
                     k, j, i, ucat[k][j][i].x, ucat[k][j][i].y, ucat[k][j][i].z);
             }
         }
@@ -279,13 +282,13 @@ PetscErrorCode UpdateCartesianVelocity(UserCtx *user) {
 
     // Deallocate memory for the temporary interpolated array
     ierr = Deallocate3DArray(centcoor,lze-lzs,lye-lys); CHKERRQ(ierr);
-    LOG(GLOBAL, LOG_DEBUG, "UpdateCartesianVelocity: Deallocated centcoor.\n");
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "UpdateCartesianVelocity: Deallocated centcoor.\n");
 
     // Restore coordinate and velocity arrays
     ierr = DMDAVecRestoreArray(user->fda, user->Ucat, &ucat); CHKERRQ(ierr);
     ierr = DMDAVecRestoreArrayRead(user->fda, Coor, &coor); CHKERRQ(ierr);
 
-    LOG(GLOBAL, LOG_INFO, "UpdateCartesianVelocity: Completed velocity update process.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "UpdateCartesianVelocity: Completed velocity update process.\n");
     return 0;
 }
 
@@ -329,14 +332,36 @@ int main(int argc, char **argv) {
     PetscBool readFields = PETSC_FALSE;
     static char help[] = " Test for interpolation - swarm-curvIB";
 
-    // Initialize PETSc
+    // -------------------- 1. PETSc Initialization --------------------
     ierr = PetscInitialize(&argc, &argv, (char *)0, help); CHKERRQ(ierr);
+
+    // -------------------- 2. Setup Logging Allow-List ----------------
+    // Only these function names will produce LOG_ALLOW (or LOG_ALLOW_SYNC) output.
+    // You can add more as needed (e.g., "InitializeSimulation", "PerformParticleSwarmOperations", etc.).
+    const char *allowedFuncs[] = {
+        "main",                 // We'll allow logging from this main function
+        "SetupGridAndVectors",
+        "InitializeSimulation", // Example: also allow logs from InitializeSimulation
+        // "BroadcastAllBoundingBoxes",    // Uncomment to allow logs from that function, etc.
+        // "PerformParticleSwarmOperations"
+    };
+    set_allowed_functions(allowedFuncs, 2);
+
+    // -------------------- 3. Demonstrate LOG_ALLOW in main -----------
+    // This message will only be printed if "main" is in the allow-list
+    // AND if the LOG_LEVEL environment variable is high enough (e.g., INFO or DEBUG).
+    LOG_ALLOW(GLOBAL, LOG_INFO, "==> Starting main with function-based logging...\n");
 
     // Check if user requested to read fields instead of updating
     ierr = PetscOptionsGetBool(NULL, NULL, "-read_fields", &readFields, NULL); CHKERRQ(ierr);
 
     // Initialize simulation: user context, MPI rank/size, np, etc.
     ierr = InitializeSimulation(&user, &rank, &size, &np, &rstart, &ti, &block_number); CHKERRQ(ierr);
+
+    // Another demonstration of LOG_ALLOW
+    LOG_ALLOW(GLOBAL, LOG_INFO,
+              "main: readFields = %s, rank = %d, size = %d\n",
+              readFields ? "true" : "false", rank, size);
 
     // Setup the computational grid
     ierr = SetupGridAndVectors(user, block_number); CHKERRQ(ierr);
@@ -363,8 +388,9 @@ int main(int argc, char **argv) {
     ierr = PerformParticleSwarmOperations(user, np, bboxlist); CHKERRQ(ierr);
 
     // Finalize simulation
-    ierr = FinalizeSimulation(user, block_number,bboxlist); CHKERRQ(ierr);
+    ierr = FinalizeSimulation(user, block_number, bboxlist); CHKERRQ(ierr);
 
     return 0;
 }
+
 
