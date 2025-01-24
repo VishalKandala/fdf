@@ -210,4 +210,60 @@ PetscErrorCode WriteRANSFields(UserCtx *user);
  */
 PetscErrorCode WriteSwarmField(UserCtx *user, const char *field_name, PetscInt ti, const char *ext);
 
+/* --------------------------------------------------------------------
+   ReadDataFileToArray
+
+   Reads a simple ASCII .dat file containing one numeric value per line.
+
+   PARAMETERS:
+     filename   - (input)  path to the .dat file
+     data_out   - (output) pointer to newly allocated array (rank 0 
+                          broadcasts to all ranks so each rank gets a copy)
+     Nout       - (output) number of values read; same on all ranks
+     comm       - (input)  MPI communicator (we use rank 0 for I/O)
+
+   RETURN:
+     PetscErrorCode (0 = success, or error code on failure)
+
+   NOTES:
+     1) This function checks file existence on rank 0 and broadcasts
+        the result. If the file doesn't exist, it sets an error.
+     2) The array is allocated on all ranks, and the data is
+        broadcast so each rank has a local copy.
+     3) If your file format is more complex (e.g. multiple columns,
+        binary, etc.), you can adapt the reading logic here.
+-------------------------------------------------------------------- */
+int ReadDataFileToArray(const char   *filename,
+                        double      **data_out,
+                        int          *Nout,
+                        MPI_Comm      comm);
+
+/* --------------------------------------------------------------------
+   CreateVTKFileFromMetadata
+
+   Creates a .vts (if fileType=VTK_STRUCTURED) or .vtp (if fileType=VTK_POLYDATA),
+   writing out the data contained in the VTKMetaData structure.
+
+   PARAMETERS:
+     filename   - (input) path to the output file, e.g. "myfile.vts" or "myfile.vtp"
+     meta       - (input) pointer to the VTKMetaData struct with all geometry/fields
+     comm       - (input) MPI communicator (only rank 0 writes the file)
+
+   RETURN:
+     PetscErrorCode (0 = success, or error code on failure)
+
+   NOTES:
+     1) The function writes an XML header, the appended binary data blocks
+        (coordinates, scalar field, connectivity if needed), and the closing tags.
+     2) If meta->fileType = VTK_STRUCTURED, it calls .vts-specific logic.
+        If meta->fileType = VTK_POLYDATA, it calls .vtp logic.
+     3) Coordinates and field arrays must be properly sized. For instance,
+        if fileType=VTK_STRUCTURED, coords => length=3*nnodes, field=>nnodes.
+        If fileType=VTK_POLYDATA, coords => length=3*npoints, field=>npoints,
+        plus connectivity/offsets => length=npoints each.
+-------------------------------------------------------------------- */
+int CreateVTKFileFromMetadata(const char       *filename,
+                              const VTKMetaData *meta,
+                              MPI_Comm          comm);
+
 #endif // IO_H

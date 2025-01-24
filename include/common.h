@@ -132,6 +132,77 @@ typedef struct {
     PetscInt ti;            ///< Current timestep index.
 } UserCtx;
 
+/* --------------------------------------------------------------------
+   VTKFileType
+
+   This enum indicates whether we should write a .vts (StructuredGrid)
+   or a .vtp (PolyData) output file when we finalize the VTK data.
+
+   - VTK_STRUCTURED => .vts
+   - VTK_POLYDATA   => .vtp
+
+   Example usage:
+     VTKFileType fileType = VTK_STRUCTURED; // for structured data
+     VTKFileType fileType = VTK_POLYDATA;   // for particle data
+-------------------------------------------------------------------- */
+typedef enum {
+    VTK_STRUCTURED,
+    VTK_POLYDATA
+} VTKFileType;
+
+/* --------------------------------------------------------------------
+   VTKMetaData
+
+   This structure collects all the data necessary to create either a
+   .vts or .vtp file. The file type is chosen by "fileType".
+
+   FIELDS (common to both .vts and .vtp):
+   - fileType          : (enum) which type of VTK file to write
+   - coords            : pointer to array of coordinates
+   - scalarField       : pointer to array of scalar data
+   - scalarFieldName   : name of the scalar field, used in the VTK XML
+   - numScalarFields   : how many scalar fields we have (simple example = 1)
+
+   FIELDS (structured .vts only):
+   - mx, my, mz        : global dimensions of the domain (e.g., from DMDA)
+   - nnodes            : total # of "interior" or relevant nodes 
+                         (often (mx-1)*(my-1)*(mz-1))
+
+   FIELDS (particle .vtp only):
+   - npoints           : total # of particle points
+   - connectivity, offsets : arrays defining each particle as a single-vertex cell
+-------------------------------------------------------------------- */
+typedef struct _n_VTKMetaData {
+    /* 1) File type: VTK_STRUCTURED or VTK_POLYDATA */
+    VTKFileType  fileType;
+
+    /* 2) For VTK_STRUCTURED => .vts */
+    int          mx, my, mz;   /* domain dimensions */
+    int          nnodes;       /* number of mesh nodes to output */
+
+    /* 3) For VTK_POLYDATA => .vtp */
+    int          npoints;      /* number of particle points */
+
+    /* 4) Shared coordinate & field data */
+    /*    coords => if .vts => length = 3*nnodes
+     *               if .vtp => length = 3*npoints
+     */
+    double      *coords;
+
+    /*    scalarField => if .vts => length = nnodes
+     *                    if .vtp => length = npoints
+     */
+    double      *scalarField;
+    const char  *scalarFieldName;
+    int          numScalarFields;
+
+    /* 5) For polydata connectivity => arrays of length 'npoints'
+     *    (one single-vertex cell per point).
+     */
+    int         *connectivity; 
+    int         *offsets;
+} VTKMetaData;
+
 // Add other shared types (e.g., IBMNodes, IBMInfo) if needed
 
 #endif // COMMON_H
