@@ -184,21 +184,19 @@ typedef struct _n_VTKMetaData {
     int          npoints;      /* number of particle points */
 
     /* 4) Shared coordinate & field data */
-    /*    coords => if .vts => length = 3*nnodes
-     *               if .vtp => length = 3*npoints
-     */
-    double      *coords;
+    double      *coords;       /* Coordinates (3 components per point/node) */
 
-    /*    scalarField => if .vts => length = nnodes
-     *                    if .vtp => length = npoints
-     */
+    /* Scalar field metadata */
     double      *scalarField;
     const char  *scalarFieldName;
     int          numScalarFields;
 
-    /* 5) For polydata connectivity => arrays of length 'npoints'
-     *    (one single-vertex cell per point).
-     */
+    /* Vector field metadata (new fields for 3D vectors) */
+    double      *vectorField;       /* Vector data (interleaved x,y,z components) */
+    const char  *vectorFieldName;   /* Name of the vector field (e.g., "velocity") */
+    int          numVectorFields;   /* Number of vector fields (0 or 1) */
+
+    /* 5) For polydata connectivity */
     int         *connectivity; 
     int         *offsets;
 } VTKMetaData;

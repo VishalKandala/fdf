@@ -595,7 +595,6 @@ PetscErrorCode WriteSwarmField(UserCtx *user, const char *field_name, PetscInt t
      - WriteVTSXMLHeader, WriteVTPXMLHeader
      - WriteVTSXMLFooter, WriteVTPXMLFooter
      - WriteVTKFileHeader, WriteVTKFileFooter
-*/
 
 static int WriteVTKAppendedBlock(FILE *fp,
                                  const void *buf,
@@ -608,6 +607,7 @@ static int WriteVTSXMLHeader(FILE       *fp,
                              int         mz,
                              int         nnodes,
                              const char *fieldName,
+                             int         numComponents,
                              int         boffset,
                              int        *boffsetOut);
 
@@ -630,7 +630,7 @@ static int WriteVTKFileFooter(FILE *fp,
                               const VTKMetaData *meta);
 
 
-/* =====================================================================
+=====================================================================
    1) ReadDataFileToArray
 
    See the function-level comments in io.h for a summary.
@@ -642,29 +642,34 @@ int ReadDataFileToArray(const char   *filename,
                         int          *Nout,
                         MPI_Comm      comm)
 {
-    int         rank, size;
-    FILE       *fp = NULL;
-    int         N   = 0;          /* number of lines/values read on rank 0 */
-    double     *array = NULL;     /* pointer to local array (allocated on each rank) */
-    int         fileExistsFlag = 0; /* 0 = doesn't exist, 1 = does exist */
+    /* STEP 0: Prepare local variables & log function entry */
+    int    rank, size;
+    PetscErrorCode ierr;
+    FILE  *fp = NULL;
+    int    N   = 0;            /* number of lines/values read on rank 0 */
+    double *array = NULL;      /* pointer to local array on each rank */
+    int    fileExistsFlag = 0; /* 0 = doesn't exist, 1 = does exist */
 
-    /* Log function entry (optional) */
+    PetscPrintf(comm, "=== STEP 0: Entering ReadDataFileToArray => file: %s ===\n", filename);
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
               "ReadDataFileToArray - Start reading from file: %s\n",
               filename);
 
     /* Basic error checking: data_out, Nout must be non-null. */
     if (!filename || !data_out || !Nout) {
+        PetscPrintf(comm,
+            "[ERROR] ReadDataFileToArray - Null pointer argument (filename/data_out/Nout).\n");
         LOG_ALLOW(GLOBAL, LOG_WARNING,
                   "ReadDataFileToArray - Null pointer argument provided.\n");
-        return 1; /* or use a PETSc error code, e.g. SETERRQ(...) if integrated with PETSc */
+        return 1;
     }
 
-    /* Get rank and size for coordinating I/O. */
+    /* Determine rank/size for coordinating I/O. */
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &size);
 
-    /* 1) On rank 0, try to open the file to see if it exists. */
+    /* STEP 1: On rank 0, check if file can be opened. */
+    PetscPrintf(comm, "STEP 1: Checking file existence on rank %d...\n", rank);
     if (!rank) {
         fp = fopen(filename, "r");
         if (fp) {
@@ -673,52 +678,62 @@ int ReadDataFileToArray(const char   *filename,
         }
     }
 
-    /* 2) Broadcast existence to all ranks. */
-    MPI_Bcast(&fileExistsFlag, 1, MPI_INT, 0, comm);
+    /* STEP 2: Broadcast file existence to all ranks. */
+    PetscPrintf(comm, "STEP 2: Broadcasting fileExistsFlag (%d) to all %d ranks...\n",
+                fileExistsFlag, size);
+    // In ReadDataFileToArray:
+    ierr = MPI_Bcast(&fileExistsFlag, 1, MPI_INT, 0, comm); CHKERRQ(ierr);
 
     if (!fileExistsFlag) {
-        /* If file does not exist, log a warning and return an error. */
+        /* If file does not exist, log & return. */
         if (!rank) {
+            PetscPrintf(comm,
+                "[ERROR] ReadDataFileToArray - File '%s' not found.\n", filename);
             LOG_ALLOW(GLOBAL, LOG_WARNING,
                       "ReadDataFileToArray - File '%s' not found.\n",
                       filename);
         }
-        return 2; /* some error code. If integrated with PETSc, you might do SETERRQ(...) */
+        return 2;
     }
 
-    /* 3) Now rank 0 re-opens the file and reads all lines. */
+    /* STEP 3: Rank 0 re-opens and reads the file, counting lines, etc. */
+    PetscPrintf(comm, "STEP 3: If rank=0, open and parse file: %s\n", filename);
     if (!rank) {
         fp = fopen(filename, "r");
         if (!fp) {
+            PetscPrintf(comm,
+                "[ERROR] ReadDataFileToArray - Could not reopen file '%s'.\n", filename);
             LOG_ALLOW(GLOBAL, LOG_WARNING,
                       "ReadDataFileToArray - File '%s' could not be opened for reading.\n",
                       filename);
             return 3;
         }
 
-        /* a) Count lines first. */
+        /* (3a) Count lines first. */
         {
             char line[256];
             while (fgets(line, sizeof(line), fp)) {
                 N++;
             }
         }
+        PetscPrintf(comm,"ReadDataFileToArray - File '%s' has %d lines.\n",filename, N);
+
         LOG_ALLOW(GLOBAL, LOG_DEBUG,
                   "ReadDataFileToArray - File '%s' has %d lines.\n",
                   filename, N);
 
-        /* b) Allocate array. We use double here; if you prefer "PetscScalar",
-              adapt accordingly. */
-        /* We'll broadcast the array to all ranks, so rank 0 keeps it. */
+        /* (3b) Allocate array on rank 0. */
         array = (double*)malloc(N * sizeof(double));
         if (!array) {
             fclose(fp);
+            PetscPrintf(comm,
+                "[ERROR] ReadDataFileToArray - malloc failed for array.\n");
             LOG_ALLOW(GLOBAL, LOG_WARNING,
                       "ReadDataFileToArray - malloc failed for array.\n");
             return 4;
         }
 
-        /* c) Rewind file and parse each line into array. */
+        /* (3c) Rewind & read values into array. */
         rewind(fp);
         {
             int i = 0;
@@ -732,18 +747,26 @@ int ReadDataFileToArray(const char   *filename,
         }
         fclose(fp);
 
+        PetscPrintf(comm,
+            "   => Rank 0 read %d values from '%s'.\n", N, filename);
         LOG_ALLOW(GLOBAL, LOG_INFO,
                   "ReadDataFileToArray - Successfully read %d values from '%s'.\n",
                   N, filename);
     }
 
-    /* 4) Broadcast the integer N to all ranks so they can allocate the array too. */
-    MPI_Bcast(&N, 1, MPI_INT, 0, comm);
+    /* STEP 4: Broadcast the integer N to all ranks. */
+    PetscPrintf(comm,
+        "STEP 4: Broadcasting total count N=%d to all ranks...\n", N);
+    ierr = MPI_Bcast(&N, 1, MPI_INT, 0, comm); CHKERRQ(ierr);
 
-    /* 5) Each rank allocates an array to receive the broadcast. */
+    /* STEP 5: Each rank allocates an array to receive the broadcast if rank>0. */
+    PetscPrintf(comm,
+        "STEP 5: Each rank (including rank 0) ensures array allocated => length=%d.\n", N);
     if (rank) {
         array = (double*)malloc(N * sizeof(double));
         if (!array) {
+            PetscPrintf(comm,
+                "[ERROR] ReadDataFileToArray - malloc failed on rank %d.\n", rank);
             LOG_ALLOW(GLOBAL, LOG_WARNING,
                       "ReadDataFileToArray - malloc failed on rank %d.\n",
                       rank);
@@ -751,10 +774,14 @@ int ReadDataFileToArray(const char   *filename,
         }
     }
 
-    /* 6) Broadcast the actual data from rank 0 to others. */
-    MPI_Bcast(array, N, MPI_DOUBLE, 0, comm);
+    /* STEP 6: Broadcast the actual data from rank 0 to all. */
+    PetscPrintf(comm,
+        "STEP 6: Broadcasting data array of length=%d from rank 0 to others...\n", N);
+    ierr = MPI_Bcast(array, N, MPI_DOUBLE, 0, comm); CHKERRQ(ierr);
 
-    /* 7) Assign outputs. */
+    /* STEP 7: Assign outputs on all ranks. */
+    PetscPrintf(comm,
+        "STEP 7: Storing array pointer & count in data_out/Nout.\n");
     *data_out = array;
     *Nout     = N;
 
@@ -762,6 +789,7 @@ int ReadDataFileToArray(const char   *filename,
               "ReadDataFileToArray - Done. Provided array of length=%d to all ranks.\n",
               N);
 
+    PetscPrintf(comm, "=== Exiting ReadDataFileToArray => success, array length=%d ===\n", N);
     return 0; /* success */
 }
 
@@ -792,17 +820,39 @@ static int WriteVTKAppendedBlock(FILE       *fp,
                                  int         nvals,
                                  int         dsize)
 {
+    /* STEP 0: Prepare basic info about the block size */
     int blockSize = nvals * dsize;
 
+    /* Print a message to all ranks describing what we’re about to do. 
+       You can adjust PETSC_COMM_WORLD or PETSC_COMM_SELF if needed. */
+    PetscPrintf(PETSC_COMM_WORLD,
+        "=== STEP 0: WriteVTKAppendedBlock => Writing %d elements, each %d bytes, blockSize=%d bytes.\n",
+        nvals, dsize, blockSize);
+
+    /* Keep the existing LOG_ALLOW line for logging-level control. */
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
               "WriteVTKAppendedBlock - Writing block with %d elems, blockSize=%d bytes.\n",
               nvals, blockSize);
 
-    /* 1) Write the blockSize as a 4-byte integer. */
+    /* Writes raw data to VTK's appended data section.
+       - `nvals`: Number of elements (e.g., 3*npoints for vectors)
+       - `dsize`: Size of each element (e.g., sizeof(double))
+    */
+
+    /* STEP 1: Write the blockSize as a 4-byte integer */
+    PetscPrintf(PETSC_COMM_WORLD,
+        "STEP 1: Writing blockSize (%d) as a 4-byte integer...\n", blockSize);
     fwrite(&blockSize, sizeof(int), 1, fp);
 
-    /* 2) Write the raw data array. */
+    /* STEP 2: Write the raw data array */
+    PetscPrintf(PETSC_COMM_WORLD,
+        "STEP 2: Writing raw data array => nvals=%d, dsize=%d bytes each.\n",
+        nvals, dsize);
     fwrite(buf, dsize, (size_t)nvals, fp);
+
+    /* STEP 3: Done */
+    PetscPrintf(PETSC_COMM_WORLD,
+        "STEP 3: Finished writing appended block. Returning success.\n");
 
     return 0; /* success */
 }
@@ -912,57 +962,42 @@ static int WriteVTSXMLFooter(FILE *fp)
        _
    We update boffset for coords, scalar array, connectivity, offsets.
 -------------------------------------------------------------------- */
-static int WriteVTPXMLHeader(FILE       *fp,
-                             int         npoints,
-                             const char *fieldName,
-                             int         boffset,
-                             int        *boffsetOut)
-{
-    LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "WriteVTPXMLHeader - Writing .vtp header for %d points.\n", npoints);
+/* -- WriteVTPXMLHeader ---------------------------------------------
+   Writes the XML tags for a .vtp (PolyData) file.
+   Now includes numComponents to handle 3D vector fields.
+-------------------------------------------------------------------- */
 
-    const char *byte_order = "LittleEndian";
-    const char *precision  = "Float64";
-
+static int WriteVTPXMLHeader(FILE *fp, int npoints, const char *fieldName,
+                             int numComponents, int boffset, int *boffsetOut) {
+    const char *precision = "Float64";
     fprintf(fp, "<?xml version=\"1.0\"?>\n");
-    fprintf(fp, "<VTKFile type=\"PolyData\" version=\"0.1\" byte_order=\"%s\">\n",
-            byte_order);
+    fprintf(fp, "<VTKFile type=\"PolyData\" version=\"0.1\" byte_order=\"LittleEndian\">\n");
     fprintf(fp, "  <PolyData>\n");
-    fprintf(fp, "    <Piece NumberOfPoints=\"%d\" NumberOfVerts=\"%d\">\n",
-            npoints, npoints);
+    fprintf(fp, "    <Piece NumberOfPoints=\"%d\" NumberOfVerts=\"%d\">\n", npoints, npoints);
 
-    /* Points => 3*npoints => offset1 */
+    // Points (coordinates)
     fprintf(fp, "      <Points>\n");
-    fprintf(fp, "        <DataArray type=\"%s\" Name=\"Position\" NumberOfComponents=\"3\" "
-                "format=\"appended\" offset=\"%d\" />\n",
+    fprintf(fp, "        <DataArray type=\"%s\" Name=\"Position\" NumberOfComponents=\"3\" format=\"appended\" offset=\"%d\"/>\n",
             precision, boffset);
-    boffset += (int)sizeof(int) + 3 * npoints * (int)sizeof(double);
+    boffset += sizeof(int) + 3 * npoints * sizeof(double); // 4-byte header + data
     fprintf(fp, "      </Points>\n");
 
-    /* Single scalar field => offset2 */
+    // PointData (scalar/vector)
     fprintf(fp, "      <PointData>\n");
-    fprintf(fp, "        <DataArray type=\"%s\" Name=\"%s\" NumberOfComponents=\"1\" "
-                "format=\"appended\" offset=\"%d\" />\n",
-            precision, fieldName, boffset);
-    boffset += (int)sizeof(int) + npoints * (int)sizeof(double);
+    fprintf(fp, "        <DataArray type=\"%s\" Name=\"%s\" NumberOfComponents=\"%d\" format=\"appended\" offset=\"%d\"/>\n",
+            precision, fieldName, numComponents, boffset);
+    boffset += sizeof(int) + numComponents * npoints * sizeof(double);
     fprintf(fp, "      </PointData>\n");
 
-    /* Verts => connectivity + offsets => offset3, offset4 */
+    // Connectivity and offsets
     fprintf(fp, "      <Verts>\n");
-    fprintf(fp, "        <DataArray type=\"Int32\" Name=\"connectivity\" format=\"appended\" "
-                "offset=\"%d\" />\n", boffset);
-    boffset += (int)sizeof(int) + npoints * (int)sizeof(int);
-
-    fprintf(fp, "        <DataArray type=\"Int32\" Name=\"offsets\" format=\"appended\" "
-                "offset=\"%d\" />\n", boffset);
-    boffset += (int)sizeof(int) + npoints * (int)sizeof(int);
+    fprintf(fp, "        <DataArray type=\"Int32\" Name=\"connectivity\" format=\"appended\" offset=\"%d\"/>\n", boffset);
+    boffset += sizeof(int) + npoints * sizeof(int);
+    fprintf(fp, "        <DataArray type=\"Int32\" Name=\"offsets\" format=\"appended\" offset=\"%d\"/>\n", boffset);
+    boffset += sizeof(int) + npoints * sizeof(int);
     fprintf(fp, "      </Verts>\n");
 
-    fprintf(fp, "    </Piece>\n");
-    fprintf(fp, "  </PolyData>\n");
-    fprintf(fp, "  <AppendedData encoding=\"raw\">\n");
-    fprintf(fp, "_");
-
+    fprintf(fp, "    </Piece>\n  </PolyData>\n  <AppendedData encoding=\"raw\">\n_\n");
     *boffsetOut = boffset;
     return 0;
 }
@@ -988,25 +1023,23 @@ static int WriteVTPXMLFooter(FILE *fp)
    based on meta->fileType. 
    We maintain a 'boffset' for appended data offset tracking.
 -------------------------------------------------------------------- */
-static int WriteVTKFileHeader(FILE *fp,
-                              const VTKMetaData *meta,
-                              int boffset,
-                              int *boffsetOut)
-{
-    LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "WriteVTKFileHeader - Deciding .vts or .vtp from fileType=%d\n",
-              (int)meta->fileType);
 
+static int WriteVTKFileHeader(FILE *fp, const VTKMetaData *meta, int boffset, int *boffsetOut) {
     if (meta->fileType == VTK_STRUCTURED) {
-        return WriteVTSXMLHeader(fp,
-                                 meta->mx, meta->my, meta->mz,
-                                 meta->nnodes,
-                                 meta->scalarFieldName,
+        return WriteVTSXMLHeader(fp, meta->mx, meta->my, meta->mz,
+                                 meta->nnodes, meta->scalarFieldName,
                                  boffset, boffsetOut);
     } else {
-        return WriteVTPXMLHeader(fp,
-                                 meta->npoints,
-                                 meta->scalarFieldName,
+        const char *fieldName;
+        int numComponents;
+        if (meta->numVectorFields > 0) {
+            fieldName = meta->vectorFieldName;
+            numComponents = 3; // Vector field
+        } else {
+            fieldName = meta->scalarFieldName;
+            numComponents = 1; // Scalar field
+        }
+        return WriteVTPXMLHeader(fp, meta->npoints, fieldName, numComponents,
                                  boffset, boffsetOut);
     }
 }
@@ -1048,65 +1081,113 @@ int CreateVTKFileFromMetadata(const char       *filename,
     int rank, size;
     int boffset = 0;
 
+    /* STEP 0: Basic info about ranks and the file type */
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &size);
 
-    LOG_ALLOW(GLOBAL, LOG_INFO,
-              "CreateVTKFileFromMetadata - Writing file '%s' using fileType=%s\n",
-              filename,
-              (meta->fileType == VTK_STRUCTURED ? "VTK_STRUCTURED" : "VTK_POLYDATA"));
+    /* Print summary of operation to all ranks, including fileType */
+    PetscPrintf(PETSC_COMM_WORLD,
+        "=== STEP 0: CreateVTKFileFromMetadata => Writing '%s', fileType=%s (ranks=%d)\n",
+        filename,
+        (meta->fileType == VTK_STRUCTURED) ? "VTK_STRUCTURED" : "VTK_POLYDATA",
+        size
+    );
 
-    /* Only rank 0 does the actual file writing. */
+    /*
+       If you still want to use LOG_ALLOW here, you can uncomment the lines below
+       or add them in parallel. For now, we keep them commented out as in your snippet:
+
+       // LOG_ALLOW(GLOBAL, LOG_INFO,
+       //           "CreateVTKFileFromMetadata - Writing file '%s' using fileType=%s\n",
+       //           filename,
+       //           (meta->fileType == VTK_STRUCTURED ? "VTK_STRUCTURED" : "VTK_POLYDATA"));
+    */
+
+    /* STEP 1: Only rank 0 performs the file output. Others do nothing. */
+    PetscPrintf(PETSC_COMM_WORLD, "STEP 1: Checking if (rank=%d) is 0 to write file...\n", rank);
     if (!rank) {
+        /* STEP 1a: Open file in binary write mode */
+        PetscPrintf(PETSC_COMM_WORLD,
+            "STEP 1a: Rank 0 opening file '%s' for writing...\n", filename);
+
         FILE *fp = fopen(filename, "wb");
         if (!fp) {
             LOG_ALLOW(GLOBAL, LOG_WARNING,
                       "CreateVTKFileFromMetadata - Could not open '%s' for writing.\n",
                       filename);
+            PetscPrintf(PETSC_COMM_WORLD,
+                "[ERROR] CreateVTKFileFromMetadata: fopen('%s','wb') failed.\n", filename);
             return 11;
         }
 
-        /* 1) Write the file header => sets up appended data offsets. */
+        /* STEP 2: Write the VTK file header (structured vs. polydata) */
+        PetscPrintf(PETSC_COMM_WORLD,
+            "STEP 2: Writing VTK file header (fileType=%s).\n",
+            (meta->fileType == VTK_STRUCTURED) ? "Structured" : "Polydata");
+
         WriteVTKFileHeader(fp, meta, boffset, &boffset);
 
-        /* 2) Write the coordinate array. 
-              - If .vts => length=3*nnodes
-              - If .vtp => length=3*npoints
-        */
-        int ncoords = (meta->fileType == VTK_STRUCTURED)
-                      ? 3 * meta->nnodes
-                      : 3 * meta->npoints;
-        if (ncoords > 0 && meta->coords) {
-            WriteVTKAppendedBlock(fp, meta->coords, ncoords, sizeof(double));
-        }
+        /* STEP 3: Write the coordinate array */
+        PetscPrintf(PETSC_COMM_WORLD,
+            "STEP 3: Writing coordinate array (if available)...\n");
+	
+        if(!rank){
+            int ncoords = (meta->fileType == VTK_STRUCTURED)
+                          ? 3 * meta->nnodes
+                          : 3 * meta->npoints;
+            if (ncoords > 0 && meta->coords) {
+                PetscPrintf(PETSC_COMM_WORLD,
+                    "   Writing %d coords as appended block...\n", ncoords);
+                WriteVTKAppendedBlock(fp, meta->coords, ncoords, sizeof(double));
+            } else {
+                PetscPrintf(PETSC_COMM_WORLD,
+                    "   No coords to write (ncoords=%d or coords=NULL).\n", ncoords);
+            }
 
-        /* 3) If we have a scalarField, write it. 
-              - If .vts => length=nnodes
-              - If .vtp => length=npoints
-        */
-        if (meta->scalarField && meta->numScalarFields > 0) {
-            int nvals = (meta->fileType == VTK_STRUCTURED)
-                        ? meta->nnodes
-                        : meta->npoints;
+	    /* STEP 4: Write scalar or vector field */
+	    PetscPrintf(PETSC_COMM_WORLD, "STEP 4: Writing field data...\n");
+	    if (meta->numScalarFields > 0 && meta->scalarField) {
+            // Scalar field (1 component)
+            int nvals = (meta->fileType == VTK_STRUCTURED) ? meta->nnodes : meta->npoints;
             WriteVTKAppendedBlock(fp, meta->scalarField, nvals, sizeof(double));
-        }
+	    } else if (meta->numVectorFields > 0 && meta->vectorField) {
+            // Vector field (3 components)
+            int nvals = (meta->fileType == VTK_STRUCTURED) ? meta->nnodes * 3 : meta->npoints * 3;
+            WriteVTKAppendedBlock(fp, meta->vectorField, nvals, sizeof(double));
+	    } else {
+            PetscPrintf(PETSC_COMM_WORLD, "   No field data to write.\n");
+	    }
 
-        /* 4) If .vtp => also write connectivity and offsets. */
-        if (meta->fileType == VTK_POLYDATA) {
-            WriteVTKAppendedBlock(fp, meta->connectivity, meta->npoints, sizeof(int));
-            WriteVTKAppendedBlock(fp, meta->offsets, meta->npoints, sizeof(int));
-        }
+        /// STEP 5: If .vtp => also write connectivity and offsets
+	// (The code snippet is commented out in your example. We'll keep it commented.)
 
-        /* 5) Write the footer and close. */
+            if (meta->fileType == VTK_POLYDATA) {
+               PetscPrintf(PETSC_COMM_WORLD,
+                   "STEP 5: Writing connectivity & offsets for polydata (npoints=%d).\n",
+                   meta->npoints);
+               WriteVTKAppendedBlock(fp, meta->connectivity, meta->npoints, sizeof(int));
+               WriteVTKAppendedBlock(fp, meta->offsets,      meta->npoints, sizeof(int));
+            }
+        
+
+        /* STEP 6: Write the footer and close the file */
+        PetscPrintf(PETSC_COMM_WORLD, "STEP 6: Writing VTK footer, then closing file.\n");
         WriteVTKFileFooter(fp, meta);
+
         fclose(fp);
 
+        /* STEP 7: Log success message */
         LOG_ALLOW(GLOBAL, LOG_INFO,
                   "CreateVTKFileFromMetadata - Successfully wrote file '%s'.\n",
                   filename);
-    }
+        PetscPrintf(PETSC_COMM_WORLD,
+            "STEP 7: File '%s' written successfully.\n", filename);
+	} // rank
 
+    /* STEP 8: Non-rank-0 does nothing, function done. */
+    PetscPrintf(PETSC_COMM_WORLD, "STEP 8: Exiting CreateVTKFileFromMetadata (rank=%d).\n", rank);
+    }
     return 0; /* success */
-}
+  }
 
 
