@@ -1,17 +1,14 @@
 /*****************************************************************************/
-/* postprocess.c                                                              */
-/*                                                                            */
-/* This file contains routines for writing data to VTK files (XML/.vts        */
-/* format), as well as other post-processing and output-related functions.    */
-/*                                                                            */
-/* Example includes:                                                          */
-/*  - GatherParallelVecToSeq() for gathering PETSc Vecs to rank 0             */
-/*  - WriteVTKXMLHeader(), WriteVTKXMLFooter() for generating VTK XML markup  */
-/*  - WriteVTKAppendedBlock() for appended binary data in VTK                 */
-/*  - CreateVTKFileFromData() for producing a .vts file from a scalar Vec     */
-/*  - Additional placeholders for extended post-processing routines           */
-/*    (e.g., multi-field outputs, vector fields, etc.).                       */
-/*                                                                            */
+/*   postprocess.c
+
+   This file implements a simple post-processing executable that:
+    1) Initializes PETSc and MPI.
+    2) Reads command-line options for input data (time index, field name, etc.).
+    3) Reads .dat file(s) into arrays.
+    4) Decides whether to write a .vts or .vtp file based on '-out_ext'.
+    5) Constructs a VTKMetaData object and calls CreateVTKFileFromMetadata().
+    6) Finalizes PETSc.
+
 /*****************************************************************************/
 
 #include <petscpf.h>
@@ -30,17 +27,6 @@
 // #include "interpolation.h"
 // #include "ParticleSwarm.h"
 
-/* 
-   postprocess.c
-
-   This file implements a simple post-processing executable that:
-    1) Initializes PETSc and MPI.
-    2) Reads command-line options for input data (time index, field name, etc.).
-    3) Reads .dat file(s) into arrays.
-    4) Decides whether to write a .vts or .vtp file based on '-out_ext'.
-    5) Constructs a VTKMetaData object and calls CreateVTKFileFromMetadata().
-    6) Finalizes PETSc.
-*/
 
 /**
  * @brief Gathers the contents of a distributed PETSc Vec into a single array on rank 0.
@@ -132,71 +118,89 @@ PetscErrorCode VecToArrayOnRank0(Vec inVec, PetscInt *N, double **arrayOut)
     PetscFunctionReturn(0);
 }
 
+
+/**************************************************************
+ * MAIN POSTPROCESSING PROGRAM
+ *
+ * Reads two PETSc vectors:
+ *  1) position (coordinates)
+ *  2) velocity (scalar or vector)
+ *
+ * Gathers them into rank-0 arrays (coordsArray, scalarArray),
+ * then calls CreateVTKFileFromMetadata() to produce .vts or .vtp.
+ *
+ * KEY CORRECTION:
+ *  - For .vtp, we must set meta->coords to coordsArray
+ *    so that the coordinate block is actually written.
+ **************************************************************/
+
 int main(int argc, char **argv)
 {
     PetscErrorCode ierr;
     int            rank, size;
-    int            ti           = 0;             
-    char           field_name[64] = "velocity";  
-    char           out_ext[16]    = "vtp";       
-    double        *coordsArray  = NULL;  // Global pointer for coordinates
-    double        *scalarArray  = NULL;  // Global pointer for scalar field
-    PetscInt       Ncoords = 0;          // Global size of coordsArray
-    PetscInt       Nscalars = 0;         // Global size of scalarArray
+    int            ti           = 0;              /* time index */
+    char           field_name[64] = "velocity";   /* default field name */
+    char           out_ext[16]    = "vtp";        /* default => .vtp */
+    double        *coordsArray    = NULL;         /* rank-0 coords array */
+    double        *scalarArray    = NULL;         /* rank-0 field array */
+    PetscInt       Ncoords        = 0;            /* total # of coords */
+    PetscInt       Nscalars       = 0;            /* total # of scalars */
 
-    // Initialize PETSc
+    /* 1) Initialize PETSc */
     ierr = PetscInitialize(&argc, &argv, NULL, NULL);CHKERRQ(ierr);
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank);CHKERRQ(ierr);
     ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size);CHKERRQ(ierr);
 
-    UserCtx user; 
-    user._this = 0; // e.g., partition index
-
-    // Parse command line options
+    /* 2) Parse command-line options. Adjust as needed in your code. */
     PetscOptionsGetInt(NULL, NULL, "-ti", &ti, NULL);
     PetscOptionsGetString(NULL, NULL, "-field", field_name, sizeof(field_name), NULL);
     PetscOptionsGetString(NULL, NULL, "-out_ext", out_ext, sizeof(out_ext), NULL);
 
-    // STEP: Read coords
+    /* 3) Build a user context. (In your code, you might do more here.) */
+    UserCtx user;
+    user._this = 0;  /* e.g., partition index => appended to file name. */
+
+    /* 4) Read coordinate data into a PETSc Vec, then gather into coordsArray */
     {
         Vec coordsVec;
         ierr = VecCreate(PETSC_COMM_WORLD, &coordsVec);CHKERRQ(ierr);
         ierr = VecSetFromOptions(coordsVec);CHKERRQ(ierr);
 
-        // e.g. "position" data
+        /* We read from "results/position%05d_%d.dat", etc. */
         ierr = ReadFieldData(&user, "position", coordsVec, ti, "dat");
-        if (ierr) goto finalize;
+        if (ierr) {
+            /* Could handle the error or goto finalize */
+            goto finalize;
+        }
 
-        // Gather to rank 0
+        /* Gather distributed Vec -> rank-0 array */
         ierr = VecToArrayOnRank0(coordsVec, &Ncoords, &coordsArray);CHKERRQ(ierr);
-        ierr = VecDestroy(&coordsVec);CHKERRQ(ierr);
 
-        PetscPrintf(PETSC_COMM_WORLD,
-                    "   ... Successfully read %d coordinate values.\n", (int)Ncoords);
+        ierr = VecDestroy(&coordsVec);CHKERRQ(ierr);
     }
 
-    // STEP: Read scalar field
+    /* 5) Read the field data (velocity) into a PETSc Vec, gather into scalarArray. */
     {
         Vec fieldVec;
         ierr = VecCreate(PETSC_COMM_WORLD, &fieldVec);CHKERRQ(ierr);
         ierr = VecSetFromOptions(fieldVec);CHKERRQ(ierr);
 
         ierr = ReadFieldData(&user, field_name, fieldVec, ti, "dat");
-        if (ierr) goto finalize;
+        if (ierr) {
+            /* Handle error or skip. */
+            goto finalize;
+        }
 
-        // Gather to rank 0
         ierr = VecToArrayOnRank0(fieldVec, &Nscalars, &scalarArray);CHKERRQ(ierr);
-        ierr = VecDestroy(&fieldVec);CHKERRQ(ierr);
 
-        PetscPrintf(PETSC_COMM_WORLD,
-                    "   ... Successfully read %d scalar values.\n", (int)Nscalars);
+        ierr = VecDestroy(&fieldVec);CHKERRQ(ierr);
     }
 
-    // After reading coordinates and field data:
-    PetscPrintf(PETSC_COMM_WORLD, "Ncoords = %d, Nscalars = %d\n",
-		(int)Ncoords, (int)Nscalars);
+    /* 6) Prepare a VTKMetaData struct to describe how to interpret coords & field. */
+    VTKMetaData meta;
+    memset(&meta, 0, sizeof(meta)); /* zero out */
 
-    // Decide .vts or .vtp
+    /* Decide if we want .vts (structured) or .vtp (polydata) by comparing out_ext */
     PetscBool isVTP;
     {
         PetscBool match;
@@ -204,76 +208,76 @@ int main(int argc, char **argv)
         isVTP = match ? PETSC_TRUE : PETSC_FALSE;
     }
 
-    // Create VTK meta struct
-    VTKMetaData meta;
-    memset(&meta, 0, sizeof(meta));
-
-    // For .vts or .vtp...
     if (!isVTP) {
-        // structured grid...
-      // these toy numbers must be augmented to get IM,JM,KM.
+        /* => VTK_STRUCTURED => .vts */
         meta.fileType = VTK_STRUCTURED;
-        meta.mx = 4;  meta.my = 4;  meta.mz = 4;
-        meta.nnodes   = (meta.mx - 1) * (meta.my - 1) * (meta.mz - 1);
+        /* Suppose you know real domain dims: (mx, my, mz).
+           For demonstration we pick 4,4,4. Adjust as needed. */
+        meta.mx = 4; meta.my = 4; meta.mz = 4;
+        meta.nnodes = (meta.mx - 1) * (meta.my - 1) * (meta.mz - 1);
 
         if (!rank) {
-            meta.coords          = coordsArray;
-            meta.scalarField     = scalarArray;
+            meta.coords = coordsArray;           /* must not be NULL now */
+            meta.scalarField = scalarArray;
             meta.scalarFieldName = field_name;
             meta.numScalarFields = 1;
         }
     } else {
-        // polydata...
+        /* => VTK_POLYDATA => .vtp */
         meta.fileType = VTK_POLYDATA;
         if (!rank) {
+            /* We must set meta->coords here! Otherwise no coords are written. */
+            meta.coords = coordsArray; /* CRUCIAL FIX. */
+
+            /* Check coords size is multiple of 3. */
             if (Ncoords % 3 != 0) {
-	      PetscPrintf(PETSC_COMM_SELF, "Error: Coordinates array size invalid.\n");
+                PetscPrintf(PETSC_COMM_SELF, "Error: coords array length %d not multiple of 3.\n", (int)Ncoords);
                 goto finalize;
             }
+            meta.npoints = Ncoords / 3;
 
-            meta.npoints         = Ncoords / 3;
-	    // After setting metadata npoints:
-	    PetscPrintf(PETSC_COMM_WORLD, "Ncoords = %d, npoints = %d, Nscalars = %d\n",
-			(int)Ncoords, (int)meta.npoints, (int)Nscalars);
-            /* Detect if the field is a 3D vector (3 components per point) */
+            /* If field is 3*Npoints, assume vector field. Otherwise assume scalar. */
             if (Nscalars == meta.npoints * 3) {
-                meta.vectorField = scalarArray;          // Assign to vector field
+                meta.vectorField = scalarArray;
                 meta.vectorFieldName = field_name;
                 meta.numVectorFields = 1;
-                meta.numScalarFields = 0;                // Disable scalar fields
+                meta.numScalarFields = 0;
             } else {
-            meta.scalarField     = scalarArray;
-            meta.scalarFieldName = field_name;
-            meta.numScalarFields = 1;
-	    meta.numVectorFields = 0;
-	    }
-
-            // create connectivity, offsets
-            meta.connectivity = (int*)calloc(meta.npoints, sizeof(int));
-            meta.offsets      = (int*)calloc(meta.npoints, sizeof(int));
-            for (int i = 0; i < meta.npoints; i++) {
-                meta.connectivity[i] = i;
-                meta.offsets[i]      = i + 1;
+                meta.scalarField = scalarArray;
+                meta.scalarFieldName = field_name;
+                meta.numScalarFields = 1;
+                meta.numVectorFields = 0;
             }
-        } // rank
-    } // vtp or vts 
 
-    // Construct output file name
+            /* Create connectivity & offsets => 1 cell (vertex) per point. */
+            meta.connectivity = (int *)calloc(meta.npoints, sizeof(int));
+            meta.offsets      = (int *)calloc(meta.npoints, sizeof(int));
+            for (int i = 0; i < meta.npoints; i++) {
+                meta.connectivity[i] = i;      /* each cell has 1 index: i */
+                meta.offsets[i]      = i + 1;  /* cell boundary at i+1 */
+            }
+        }
+    }
+
+    /* 7) Construct output file name. E.g., "results/velocity00000.vtp" */
     char outFile[256];
-    PetscSNPrintf(outFile, sizeof(outFile),
-                  "results/%s%05d.%s", field_name, ti, out_ext);
+    PetscSNPrintf(outFile, sizeof(outFile), "results/%s%05d.%s", field_name, ti, out_ext);
 
-    // Write VTK file
-    ierr = CreateVTKFileFromMetadata(outFile, &meta, PETSC_COMM_WORLD);
-    if (ierr) { /* handle error */ goto finalize; }
-
-    if (!rank) {
-        PetscPrintf(PETSC_COMM_SELF,
-                    "[postprocess] Successfully wrote file: %s\n", outFile);
+    /* 8) Call the file writer */
+    {
+        int err = CreateVTKFileFromMetadata(outFile, &meta, PETSC_COMM_WORLD);
+        if (err) {
+            PetscPrintf(PETSC_COMM_WORLD,
+                        "[ERROR] CreateVTKFileFromMetadata returned %d.\n", err);
+            goto finalize;
+        }
+        if (!rank) {
+            PetscPrintf(PETSC_COMM_SELF, "[postprocess] Wrote file: %s\n", outFile);
+        }
     }
 
 finalize:
-    // Cleanup
+    /* 9) Clean up memory on rank 0. */
     if (!rank) {
         free(coordsArray);
         free(scalarArray);
@@ -283,7 +287,7 @@ finalize:
         }
     }
 
+    /* 10) Finalize PETSc. */
     PetscFinalize();
     return 0;
 }
-

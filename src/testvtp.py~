@@ -1,0 +1,46 @@
+import struct
+import sys
+
+def read_block(file, name):
+    """ Reads a block, prints size, and checks data integrity """
+    block_size_bytes = file.read(4)
+    if not block_size_bytes:
+        print(f"❌ ERROR: Block size missing for {name}")
+        return None
+    block_size = struct.unpack("<I", block_size_bytes)[0]
+    data = file.read(block_size)
+    if len(data) != block_size:
+        print(f"❌ ERROR: Data size mismatch for {name} (expected {block_size}, got {len(data)})")
+        return None
+    print(f"✅ {name} block: {block_size} bytes")
+    return data
+
+if len(sys.argv) != 2:
+    print("Usage: python3 vtp_reader.py <filename>")
+    sys.exit(1)
+
+filename = sys.argv[1]
+
+try:
+    with open(filename, "rb") as f:
+        # Move to start of binary section
+        data = f.read()
+        start_idx = data.find(b"<AppendedData encoding=\"raw\">") + len("<AppendedData encoding=\"raw\">\n_")
+        
+        if start_idx < len("<AppendedData encoding=\"raw\">"):
+            print("❌ ERROR: AppendedData section not found!")
+            exit(1)
+
+        f.seek(start_idx)
+
+        print(f"🔍 Checking binary blocks in {filename}...\n")
+        
+        position_data = read_block(f, "Position")
+        velocity_data = read_block(f, "Velocity")
+        connectivity_data = read_block(f, "Connectivity")
+        offsets_data = read_block(f, "Offsets")
+
+except FileNotFoundError:
+    print(f"❌ ERROR: File '{filename}' not found!")
+except Exception as e:
+    print(f"❌ ERROR: {e}")
