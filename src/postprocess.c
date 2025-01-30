@@ -27,16 +27,20 @@
 // #include "interpolation.h"
 // #include "ParticleSwarm.h"
 
-
 /**
- * @brief Gathers the contents of a distributed PETSc Vec into a single array on rank 0.
+ * @brief Gathers a PETSc vector onto rank 0 as a contiguous array of doubles.
  *
- * @param[in]  inVec       The input (possibly distributed) Vec.
- * @param[out] N           The global size of the vector.
- * @param[out] arrayOut    On rank 0, points to the newly allocated array holding all data.
- *                         On other ranks, it is set to NULL.
+ * This function retrieves the local portions of the input vector \p inVec from
+ * all MPI ranks via \c MPI_Gatherv and assembles them into a single array on rank 0.
+ * The global size of the vector is stored in \p N, and a pointer to the newly
+ * allocated array is returned in \p arrayOut (valid only on rank 0).
  *
- * @return PetscErrorCode  Return 0 on success, nonzero on failure.
+ * @param[in]  inVec      The PETSc vector to gather.
+ * @param[out] N          The global size of the vector (output).
+ * @param[out] arrayOut   On rank 0, points to the newly allocated array of size \p N.
+ *                        On other ranks, it is set to NULL.
+ *
+ * @return PetscErrorCode  Returns 0 on success, or a non-zero PETSc error code.
  */
 PetscErrorCode VecToArrayOnRank0(Vec inVec, PetscInt *N, double **arrayOut)
 {
@@ -45,7 +49,10 @@ PetscErrorCode VecToArrayOnRank0(Vec inVec, PetscInt *N, double **arrayOut)
     PetscMPIInt       rank, size;
     PetscInt          globalSize, localSize;
     const PetscScalar *localArr = NULL;
-    
+
+    // Log entry into the function
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "VecToArrayOnRank0 - Start gathering vector onto rank 0.\n");
+
     /* Get MPI comm, rank, size */
     ierr = PetscObjectGetComm((PetscObject)inVec, &comm);CHKERRQ(ierr);
     ierr = MPI_Comm_rank(comm, &rank);CHKERRQ(ierr);
@@ -58,16 +65,20 @@ PetscErrorCode VecToArrayOnRank0(Vec inVec, PetscInt *N, double **arrayOut)
     /* Get local size (portion on this rank) */
     ierr = VecGetLocalSize(inVec, &localSize);CHKERRQ(ierr);
 
+    // Log vector sizes and process info
+    LOG_ALLOW(GLOBAL, LOG_DEBUG,
+              "VecToArrayOnRank0 - rank=%d of %d, globalSize=%D, localSize=%D.\n",
+              rank, size, globalSize, localSize);
+
     /* Access the local array data */
     ierr = VecGetArrayRead(inVec, &localArr);CHKERRQ(ierr);
 
     /*
-       We'll gather the local chunks via MPI_Gatherv.
+       We'll gather the local chunks via MPI_Gatherv:
        - First, gather all local sizes into recvcounts[] on rank 0.
        - Then set up a displacement array (displs[]) to place each chunk in the correct spot.
        - Finally, gather the actual data.
     */
-
     PetscMPIInt *recvcounts = NULL;
     PetscMPIInt *displs     = NULL;
 
@@ -115,27 +126,36 @@ PetscErrorCode VecToArrayOnRank0(Vec inVec, PetscInt *N, double **arrayOut)
         free(displs);
     }
 
+    // Log successful completion
+    LOG_ALLOW(GLOBAL, LOG_INFO, "VecToArrayOnRank0 - Successfully gathered data on rank 0.\n");
+
     PetscFunctionReturn(0);
 }
 
-
-/**************************************************************
- * MAIN POSTPROCESSING PROGRAM
+/**
+ * @brief Main entry point for the PETSc-based VTK post-processing tool.
  *
- * Reads two PETSc vectors:
- *  1) position (coordinates)
- *  2) velocity (scalar or vector)
+ * This function demonstrates how to read distributed data (coordinates and field values)
+ * from PETSc Vecs, gather them to rank 0, and write them into VTK file formats (.vts or .vtp)
+ * based on the command-line options. It leverages the functions defined elsewhere for reading
+ * data (ReadFieldData), gathering vectors (VecToArrayOnRank0), and creating VTK files
+ * (CreateVTKFileFromMetadata). 
  *
- * Gathers them into rank-0 arrays (coordsArray, scalarArray),
- * then calls CreateVTKFileFromMetadata() to produce .vts or .vtp.
+ * Command-line options:
+ * - \c -ti <time_index> : Time index for naming convention.
+ * - \c -field <field_name> : Name of the field to read and write (default "velocity").
+ * - \c -out_ext <extension> : Desired VTK file extension, either "vts" or "vtp" (default "vtp").
  *
- * KEY CORRECTION:
- *  - For .vtp, we must set meta->coords to coordsArray
- *    so that the coordinate block is actually written.
- **************************************************************/
-
+ * @param[in] argc Number of command-line arguments.
+ * @param[in] argv Array of command-line argument strings.
+ *
+ * @return int Returns 0 on success, or a non-zero value on errors (e.g., file I/O failures).
+ */
 int main(int argc, char **argv)
 {
+    // Log the start of the main function
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "main - Starting PETSc-based VTK post-processing.\n");
+
     PetscErrorCode ierr;
     int            rank, size;
     int            ti           = 0;              /* time index */
@@ -150,18 +170,22 @@ int main(int argc, char **argv)
     ierr = PetscInitialize(&argc, &argv, NULL, NULL);CHKERRQ(ierr);
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank);CHKERRQ(ierr);
     ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size);CHKERRQ(ierr);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "main - PETSc initialized. rank=%d of %d.\n", rank, size);
 
     /* 2) Parse command-line options. Adjust as needed in your code. */
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "main - Parsing command-line options.\n");
     PetscOptionsGetInt(NULL, NULL, "-ti", &ti, NULL);
     PetscOptionsGetString(NULL, NULL, "-field", field_name, sizeof(field_name), NULL);
     PetscOptionsGetString(NULL, NULL, "-out_ext", out_ext, sizeof(out_ext), NULL);
 
     /* 3) Build a user context. (In your code, you might do more here.) */
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "main - Building user context.\n");
     UserCtx user;
     user._this = 0;  /* e.g., partition index => appended to file name. */
 
     /* 4) Read coordinate data into a PETSc Vec, then gather into coordsArray */
     {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "main - Reading and gathering coordinate data.\n");
         Vec coordsVec;
         ierr = VecCreate(PETSC_COMM_WORLD, &coordsVec);CHKERRQ(ierr);
         ierr = VecSetFromOptions(coordsVec);CHKERRQ(ierr);
@@ -169,7 +193,8 @@ int main(int argc, char **argv)
         /* We read from "results/position%05d_%d.dat", etc. */
         ierr = ReadFieldData(&user, "position", coordsVec, ti, "dat");
         if (ierr) {
-            /* Could handle the error or goto finalize */
+            LOG_ALLOW(GLOBAL, LOG_ERROR, 
+                      "main - Error reading position data (ti=%d). Aborting.\n", ti);
             goto finalize;
         }
 
@@ -181,13 +206,17 @@ int main(int argc, char **argv)
 
     /* 5) Read the field data (velocity) into a PETSc Vec, gather into scalarArray. */
     {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG,
+                  "main - Reading and gathering field data '%s'.\n", field_name);
         Vec fieldVec;
         ierr = VecCreate(PETSC_COMM_WORLD, &fieldVec);CHKERRQ(ierr);
         ierr = VecSetFromOptions(fieldVec);CHKERRQ(ierr);
 
         ierr = ReadFieldData(&user, field_name, fieldVec, ti, "dat");
         if (ierr) {
-            /* Handle error or skip. */
+            LOG_ALLOW(GLOBAL, LOG_ERROR, 
+                      "main - Error reading field data '%s' (ti=%d). Aborting.\n",
+                      field_name, ti);
             goto finalize;
         }
 
@@ -197,6 +226,8 @@ int main(int argc, char **argv)
     }
 
     /* 6) Prepare a VTKMetaData struct to describe how to interpret coords & field. */
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, 
+              "main - Preparing VTKMetaData (field=%s, out_ext=%s).\n", field_name, out_ext);
     VTKMetaData meta;
     memset(&meta, 0, sizeof(meta)); /* zero out */
 
@@ -211,13 +242,11 @@ int main(int argc, char **argv)
     if (!isVTP) {
         /* => VTK_STRUCTURED => .vts */
         meta.fileType = VTK_STRUCTURED;
-        /* Suppose you know real domain dims: (mx, my, mz).
-           For demonstration we pick 4,4,4. Adjust as needed. */
         meta.mx = 4; meta.my = 4; meta.mz = 4;
         meta.nnodes = (meta.mx - 1) * (meta.my - 1) * (meta.mz - 1);
 
         if (!rank) {
-            meta.coords = coordsArray;           /* must not be NULL now */
+            meta.coords = coordsArray;           
             meta.scalarField = scalarArray;
             meta.scalarFieldName = field_name;
             meta.numScalarFields = 1;
@@ -226,12 +255,14 @@ int main(int argc, char **argv)
         /* => VTK_POLYDATA => .vtp */
         meta.fileType = VTK_POLYDATA;
         if (!rank) {
-            /* We must set meta->coords here! Otherwise no coords are written. */
-            meta.coords = coordsArray; /* CRUCIAL FIX. */
+            meta.coords = coordsArray; 
 
             /* Check coords size is multiple of 3. */
             if (Ncoords % 3 != 0) {
-                PetscPrintf(PETSC_COMM_SELF, "Error: coords array length %d not multiple of 3.\n", (int)Ncoords);
+                PetscPrintf(PETSC_COMM_SELF, 
+                            "Error: coords array length %d not multiple of 3.\n", (int)Ncoords);
+                LOG_ALLOW(GLOBAL, LOG_ERROR, 
+                          "main - coords array length %D not multiple of 3, abort.\n", Ncoords);
                 goto finalize;
             }
             meta.npoints = Ncoords / 3;
@@ -253,32 +284,40 @@ int main(int argc, char **argv)
             meta.connectivity = (int *)calloc(meta.npoints, sizeof(int));
             meta.offsets      = (int *)calloc(meta.npoints, sizeof(int));
             for (int i = 0; i < meta.npoints; i++) {
-                meta.connectivity[i] = i;      /* each cell has 1 index: i */
-                meta.offsets[i]      = i + 1;  /* cell boundary at i+1 */
+                meta.connectivity[i] = i;     
+                meta.offsets[i]      = i + 1; 
             }
         }
     }
 
     /* 7) Construct output file name. E.g., "results/velocity00000.vtp" */
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "main - Constructing output file name.\n");
     char outFile[256];
     PetscSNPrintf(outFile, sizeof(outFile), "results/%s%05d.%s", field_name, ti, out_ext);
 
     /* 8) Call the file writer */
     {
+        LOG_ALLOW(GLOBAL, LOG_INFO,
+                  "main - Creating VTK file '%s'.\n", outFile);
         int err = CreateVTKFileFromMetadata(outFile, &meta, PETSC_COMM_WORLD);
         if (err) {
             PetscPrintf(PETSC_COMM_WORLD,
                         "[ERROR] CreateVTKFileFromMetadata returned %d.\n", err);
+            LOG_ALLOW(GLOBAL, LOG_ERROR, 
+                      "main - CreateVTKFileFromMetadata failed with code=%d.\n", err);
             goto finalize;
         }
         if (!rank) {
             PetscPrintf(PETSC_COMM_SELF, "[postprocess] Wrote file: %s\n", outFile);
+            LOG_ALLOW(GLOBAL, LOG_INFO, "main - Successfully wrote file: %s\n", outFile);
         }
     }
 
 finalize:
     /* 9) Clean up memory on rank 0. */
     if (!rank) {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG,
+                  "main - Cleaning up memory on rank 0.\n");
         free(coordsArray);
         free(scalarArray);
         if (meta.fileType == VTK_POLYDATA) {
@@ -288,6 +327,8 @@ finalize:
     }
 
     /* 10) Finalize PETSc. */
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "main - Finalizing PETSc.\n");
     PetscFinalize();
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "main - Program completed.\n");
     return 0;
 }

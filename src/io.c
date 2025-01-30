@@ -793,65 +793,68 @@ int ReadDataFileToArray(const char   *filename,
     return 0; /* success */
 }
 
-/* =====================================================================
-   2) VTK Writing: Private Helper Functions
-
-   We define a set of static (file-scope) functions for writing:
-   - block data (size + raw bytes)
-   - .vts headers/footers
-   - .vtp headers/footers
-   - combined wrappers (header, footer)
-
-   These are used by CreateVTKFileFromMetadata (the public function).
-===================================================================== */
-
 /**
- * @brief Writes one raw binary block in \"appended\" VTK format:
- *        1) 4-byte integer = blockSize
- *        2) 'nvals' elements each of size 'dsize'
+ * @brief Writes a data block in appended format for a VTK file, including a 4-byte size prefix.
  *
- * This function does NOT manipulate XML or the underscore `_`.
- * It only appends binary to the open file pointer.
+ * This function writes the size of the data block (in bytes) as a 4-byte integer, 
+ * followed immediately by the raw data bytes. It returns 0 on success, or 1 on error.
  *
- * @param fp       Opened FILE pointer (binary mode)
- * @param buf      Pointer to the data array
- * @param nvals    Number of elements in buf
- * @param dsize    Size (in bytes) per element (e.g., sizeof(double))
- * @return int     0 on success
- 
-static int WriteVTKAppendedBlock(FILE *fp, const void *buf, int nvals, int dsize)
-{
-    int blockSize = nvals * dsize;
-
-    // 1) Write the 4-byte block size
-    fwrite(&blockSize, sizeof(int), 1, fp);
-
-    // 2) Write the raw data
-    fwrite(buf, dsize, (size_t)nvals, fp);
-
-    return 0; // success
-    }*/
-
+ * @param fp            File pointer to write to (must be open for binary write).
+ * @param data          Pointer to the data to be written.
+ * @param num_elements  Number of elements in the data array.
+ * @param element_size  Size (in bytes) of each element.
+ *
+ * @return int  Returns 0 if successful, non-zero otherwise.
+ */
 int WriteVTKAppendedBlock(FILE *fp, const void *data, int num_elements, size_t element_size) {
+
+    // Log the function call with parameters
+    LOG_ALLOW_SYNC(LOG_INFO, "WriteVTKAppendedBlock - Called with %d elements, each of size %zu bytes.\n",
+                   num_elements, element_size);
+
     // Calculate the block size
     int block_size = num_elements * (int)element_size;
+    LOG_ALLOW_SYNC(LOG_DEBUG, "WriteVTKAppendedBlock - Calculated block size: %d bytes.\n", block_size);
 
     // Write the block size as a 4-byte integer
     if (fwrite(&block_size, sizeof(int), 1, fp) != 1) {
         fprintf(stderr, "[ERROR] Failed to write block size.\n");
+        LOG_ALLOW_SYNC(LOG_ERROR, "WriteVTKAppendedBlock - Error writing block size.\n");
         return 1;
     }
 
     // Write the actual data
     if (fwrite(data, element_size, num_elements, fp) != (size_t)num_elements) {
         fprintf(stderr, "[ERROR] Failed to write data block.\n");
+        LOG_ALLOW_SYNC(LOG_ERROR, "WriteVTKAppendedBlock - Error writing data block.\n");
         return 1;
     }
+
+    // Log success
+    LOG_ALLOW_SYNC(LOG_INFO, "WriteVTKAppendedBlock - Successfully wrote block of %d bytes.\n", block_size);
 
     return 0; // Success
 }
 
-
+/**
+ * @brief Writes the XML header portion of a .vts file, defining the structured grid extents and data arrays.
+ *
+ * This function prints XML tags for the grid, including whole and piece extents,
+ * configures the file's byte order and floating-point precision, and sets up
+ * appended data sections (for points and a single scalar field). The offsets in
+ * the appended data are updated accordingly.
+ *
+ * @param[in]  fp         File pointer (already open) for writing the .vts header.
+ * @param[in]  mx         Number of cells in the x-direction (plus ghost cells).
+ * @param[in]  my         Number of cells in the y-direction (plus ghost cells).
+ * @param[in]  mz         Number of cells in the z-direction (plus ghost cells).
+ * @param[in]  nnodes     Total number of grid nodes.
+ * @param[in]  fieldName  Name of the scalar field written to PointData.
+ * @param[in]  boffset    Current byte offset in the appended data section.
+ * @param[out] boffsetOut Updated byte offset after writing the header information.
+ *
+ * @return 0 on success, non-zero on failure (though no explicit failure cases are handled here).
+ */
 static int WriteVTSXMLHeader(FILE       *fp,
                              int         mx,
                              int         my,
@@ -861,14 +864,16 @@ static int WriteVTSXMLHeader(FILE       *fp,
                              int         boffset,
                              int        *boffsetOut)
 {
+    // Log the entry into this function and the parameters
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
               "WriteVTSXMLHeader - Writing .vts header (mx=%d, my=%d, mz=%d, nnodes=%d).\n",
               mx, my, mz, nnodes);
 
+    // Set XML configuration strings
     const char *byte_order = "LittleEndian";
     const char *precision  = "Float64";
 
-    /* XML header part */
+    // Begin XML header
     fprintf(fp, "<?xml version=\"1.0\"?>\n");
     fprintf(fp, "<VTKFile type=\"StructuredGrid\" version=\"0.1\" byte_order=\"%s\">\n",
             byte_order);
@@ -877,37 +882,54 @@ static int WriteVTSXMLHeader(FILE       *fp,
     fprintf(fp, "    <Piece Extent=\"%d %d %d %d %d %d\">\n",
             0, mx-2, 0, my-2, 0, mz-2);
 
-    /* Points => offset1 */
+    // Points section
     fprintf(fp, "      <Points>\n");
     fprintf(fp, "        <DataArray type=\"%s\" Name=\"Position\" NumberOfComponents=\"3\" "
                 "format=\"appended\" offset=\"%d\" />\n",
             precision, boffset);
     boffset += (int)sizeof(int) + 3 * nnodes * (int)sizeof(double);
+    LOG_ALLOW(GLOBAL, LOG_DEBUG,
+              "WriteVTSXMLHeader - Updated offset to %d after Points.\n", boffset);
     fprintf(fp, "      </Points>\n");
 
-    /* Single scalar field => offset2 */
+    // Single scalar field
     fprintf(fp, "      <PointData Scalars=\"%s\">\n", fieldName);
     fprintf(fp, "        <DataArray type=\"%s\" Name=\"%s\" NumberOfComponents=\"1\" "
                 "format=\"appended\" offset=\"%d\" />\n",
             precision, fieldName, boffset);
     boffset += (int)sizeof(int) + nnodes * (int)sizeof(double);
+    LOG_ALLOW(GLOBAL, LOG_DEBUG,
+              "WriteVTSXMLHeader - Updated offset to %d after PointData.\n", boffset);
     fprintf(fp, "      </PointData>\n");
 
+    // Close the piece and structured grid tags
     fprintf(fp, "    </Piece>\n");
     fprintf(fp, "  </StructuredGrid>\n");
+
+    // Open the appended data section
     fprintf(fp, "  <AppendedData encoding=\"raw\">\n");
     fprintf(fp, "_");
 
-    /* Return new offset */
+    // Return new offset
     *boffsetOut = boffset;
+
+    // Log successful completion
+    LOG_ALLOW(GLOBAL, LOG_DEBUG,
+              "WriteVTSXMLHeader - Completed writing .vts header. New boffset=%d.\n", boffset);
+
     return 0;
 }
 
-/* -- WriteVTSXMLFooter ---------------------------------------------
-   Closes the XML for .vts:
-     </AppendedData>
-     </VTKFile>
--------------------------------------------------------------------- */
+/**
+ * @brief Finalizes the .vts file by closing the appended data section and the VTKFile XML tag.
+ *
+ * This function writes the closing XML tags for the appended data section and the 
+ * overall VTK file, ensuring a well-formed .vts file structure.
+ *
+ * @param[in] fp  File pointer (already open) for writing the .vts footer.
+ *
+ * @return int  Returns 0 on success.
+ */
 static int WriteVTSXMLFooter(FILE *fp)
 {
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
@@ -916,58 +938,30 @@ static int WriteVTSXMLFooter(FILE *fp)
     fprintf(fp, "\n </AppendedData>\n");
     fprintf(fp, "</VTKFile>\n");
 
+    // Log completion
+    LOG_ALLOW(GLOBAL, LOG_DEBUG,
+              "WriteVTSXMLFooter - Successfully wrote .vts footer.\n");
+
     return 0;
 }
 
-/* -- WriteVTPXMLHeader ---------------------------------------------
-   Writes the XML tags for a .vtp (PolyData) file:
-     <VTKFile type="PolyData" ...>
-       <PolyData>
-         <Piece NumberOfPoints="npoints" NumberOfVerts="npoints">
-           <Points>
-             <DataArray ... offset="..." />
-           </Points>
-           <PointData>
-             <DataArray ... offset="..." />
-           </PointData>
-           <Verts>
-             <DataArray connectivity offset="..." />
-             <DataArray offsets offset="..." />
-           </Verts>
-         </Piece>
-       </PolyData>
-       <AppendedData encoding="raw">
-       _
-   We update boffset for coords, scalar array, connectivity, offsets.
--------------------------------------------------------------------- */
-/* -- WriteVTPXMLHeader ---------------------------------------------
-   Writes the XML tags for a .vtp (PolyData) file.
-   Now includes numComponents to handle 3D vector fields.
--------------------------------------------------------------------- */
 
 /**
- * @brief Writes a minimal .vtp (PolyData) XML header with appended data placeholders.
+ * @brief Writes the XML header portion of a .vtp file for a point-cloud representation.
  *
- * The function sets the offset attributes based on 'boffset' and then increments boffset
- * for each data block:
- *   - Points => 4 + 3*npoints*sizeof(double)
- *   - Field  => 4 + numComponents*npoints*sizeof(double)
- *   - connectivity => 4 + npoints*sizeof(int)
- *   - offsets      => 4 + npoints*sizeof(int)
+ * This function sets up the appended data sections for point coordinates, a named field
+ * (e.g., velocity) with a specified number of components, and the connectivity data for
+ * each point as a vertex. The byte offset for the appended data is updated after each
+ * section, ensuring correct placement of raw binary data in the final output file.
  *
- * After finishing, it writes:
- *    <AppendedData encoding=\"raw\">
- *    _
+ * @param[in]  fp            File pointer for writing the XML header (already open).
+ * @param[in]  npoints       Number of points in the point-cloud.
+ * @param[in]  fieldName     Name of the point data field (e.g., "velocity").
+ * @param[in]  numComponents Number of components in the fieldName array (e.g., 3 for velocity).
+ * @param[in]  boffset       Current byte offset into the appended data section.
+ * @param[out] boffsetOut    Updated byte offset after writing the header information.
  *
- * so that the caller can then write the raw binary blocks.
- *
- * @param fp             Open FILE*
- * @param npoints        Number of points
- * @param fieldName      Name of the field array
- * @param numComponents  Number of components (1 => scalar, 3 => vector, etc.)
- * @param boffset        Current byte offset in appended data (start with 0)
- * @param boffsetOut     Updated offset after setting these arrays
- * @return int           0 on success
+ * @return int  Returns 0 on success.
  */
 static int WriteVTPXMLHeader(FILE *fp,
                              int npoints,
@@ -976,6 +970,11 @@ static int WriteVTPXMLHeader(FILE *fp,
                              int boffset,
                              int *boffsetOut)
 {
+    // Log function entry with parameters
+    LOG_ALLOW(GLOBAL, LOG_DEBUG,
+              "WriteVTPXMLHeader - Called with npoints=%d, fieldName=%s, numComponents=%d, boffset=%d.\n",
+              npoints, fieldName, numComponents, boffset);
+
     // We'll assume double precision => Float64
     const char *precision = "Float64";
 
@@ -994,8 +993,9 @@ static int WriteVTPXMLHeader(FILE *fp,
     fprintf(fp, "        <DataArray type=\"%s\" Name=\"Position\" NumberOfComponents=\"3\" "
                 "format=\"appended\" offset=\"%d\"/>\n",
                 precision, boffset);
-    // +4 for the block size int, +3*npoints*sizeof(double) for the data
     boffset += sizeof(int) + 3 * npoints * sizeof(double);
+    LOG_ALLOW(GLOBAL, LOG_DEBUG,
+              "WriteVTPXMLHeader - Updated offset to %d after Points.\n", boffset);
     fprintf(fp, "      </Points>\n");
 
     // 3) PointData => e.g. "velocity" => next offset
@@ -1005,6 +1005,8 @@ static int WriteVTPXMLHeader(FILE *fp,
             "format=\"appended\" offset=\"%d\"/>\n",
             precision, fieldName, numComponents, boffset);
     boffset += sizeof(int) + numComponents * npoints * sizeof(double);
+    LOG_ALLOW(GLOBAL, LOG_DEBUG,
+              "WriteVTPXMLHeader - Updated offset to %d after PointData.\n", boffset);
     fprintf(fp, "      </PointData>\n");
 
     // 4) Verts => connectivity + offsets
@@ -1013,11 +1015,15 @@ static int WriteVTPXMLHeader(FILE *fp,
             "        <DataArray type=\"Int32\" Name=\"connectivity\" format=\"appended\" offset=\"%d\"/>\n",
             boffset);
     boffset += sizeof(int) + npoints * sizeof(int);
+    LOG_ALLOW(GLOBAL, LOG_DEBUG,
+              "WriteVTPXMLHeader - Updated offset to %d after connectivity.\n", boffset);
 
     fprintf(fp,
             "        <DataArray type=\"Int32\" Name=\"offsets\" format=\"appended\" offset=\"%d\"/>\n",
             boffset);
     boffset += sizeof(int) + npoints * sizeof(int);
+    LOG_ALLOW(GLOBAL, LOG_DEBUG,
+              "WriteVTPXMLHeader - Updated offset to %d after offsets.\n", boffset);
     fprintf(fp, "      </Verts>\n");
 
     // 5) Close out the piece + PolyData
@@ -1027,50 +1033,87 @@ static int WriteVTPXMLHeader(FILE *fp,
     // 6) <AppendedData encoding="raw"> + underscore
     //    => all binary must follow AFTER this line
     fprintf(fp, "  <AppendedData encoding=\"raw\">\n");
-    fprintf(fp, "_\n");
+    fprintf(fp, "_");
 
     *boffsetOut = boffset;
+
+    // Log function completion
+    LOG_ALLOW(GLOBAL, LOG_DEBUG,
+              "WriteVTPXMLHeader - Completed writing VTP XML header. Updated boffset=%d.\n",
+              boffset);
+
     return 0;
 }
 
 /**
- * @brief Closes the <AppendedData> and <VTKFile> tags for a .vtp file.
+ * @brief Finalizes the .vtp file by closing the appended data section and the VTKFile tag.
+ *
+ * This function writes the closing XML tags for the appended data section 
+ * and completes the overall VTK structure, ensuring a well-formed .vtp file.
+ *
+ * @param[in] fp  File pointer to the .vtp file (open for writing).
+ *
+ * @return int  Returns 0 on success.
  */
 static int WriteVTPXMLFooter(FILE *fp)
 {
+    // Log the function entry
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "WriteVTPXMLFooter - Closing VTP XML.\n");
+
     // no stray prints or data -> directly close
     fprintf(fp, "\n  </AppendedData>\n");
     fprintf(fp, "</VTKFile>\n");
+
+    // Log successful completion
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "WriteVTPXMLFooter - Completed writing VTP XML footer.\n");
+
     return 0;
 }
 
-
-/* -- WriteVTKFileHeader --------------------------------------------
-   A wrapper that picks either WriteVTSXMLHeader or WriteVTPXMLHeader
-   based on meta->fileType. 
-   We maintain a 'boffset' for appended data offset tracking.
--------------------------------------------------------------------- */
-
 /**
- * @brief Wrapper to pick the correct header function based on meta->fileType.
- *        For polydata => calls WriteVTPXMLHeader
+ * @brief Writes the initial XML header for a VTK file based on the provided metadata.
+ *
+ * This function currently handles only \c VTK_POLYDATA type. For structured grids or other types,
+ * you would add the necessary conditionals and calls. It determines whether to write a scalar or
+ * vector field (based on the metadata) and calls \c WriteVTPXMLHeader to construct the appropriate
+ * XML header.
+ *
+ * @param[in]  fp          File pointer (open for writing) to which the header will be written.
+ * @param[in]  meta        Pointer to a \c VTKMetaData structure containing fileType, npoints, 
+ *                         field names, and other necessary information.
+ * @param[in]  boffset     Current byte offset in the appended data section.
+ * @param[out] boffsetOut  Updated byte offset after writing any header-related data.
+ *
+ * @return int  Returns 0 on success, or -1 if the fileType is not handled (e.g., structured grids).
  */
 static int WriteVTKFileHeader(FILE *fp, const VTKMetaData *meta, int boffset, int *boffsetOut)
 {
+    // Log the entry into this function
+    LOG_ALLOW(GLOBAL, LOG_DEBUG,
+              "WriteVTKFileHeader - Entered with fileType=%d, npoints=%d, scalarField=%s, vectorField=%s, numVectorFields=%d.\n",
+              meta->fileType, meta->npoints, meta->scalarFieldName, meta->vectorFieldName, meta->numVectorFields);
+
     // For brevity, only handle VTK_POLYDATA here:
-    // If you have structured, you'd do: if (meta->fileType == VTK_STRUCTURED) { ... }
     if (meta->fileType == VTK_POLYDATA) {
-        // Decide field name / numComponents
+        // Decide field name / number of components
         const char *fieldName = NULL;
         int numComponents = 1;
+
         if (meta->numVectorFields > 0 && meta->vectorFieldName) {
             fieldName = meta->vectorFieldName;
             numComponents = 3; // vector
+            LOG_ALLOW(GLOBAL, LOG_DEBUG,
+                      "WriteVTKFileHeader - Using vector field '%s' with 3 components.\n", fieldName);
         } else {
             fieldName = meta->scalarFieldName;
             numComponents = 1; // scalar
+            LOG_ALLOW(GLOBAL, LOG_DEBUG,
+                      "WriteVTKFileHeader - Using scalar field '%s' with 1 component.\n", fieldName);
         }
 
+        // Call the function to write the VTP XML header
+        LOG_ALLOW(GLOBAL, LOG_DEBUG,
+                  "WriteVTKFileHeader - Calling WriteVTPXMLHeader with boffset=%d.\n", boffset);
         return WriteVTPXMLHeader(fp,
                                  meta->npoints,
                                  fieldName,
@@ -1078,116 +1121,136 @@ static int WriteVTKFileHeader(FILE *fp, const VTKMetaData *meta, int boffset, in
                                  boffset,
                                  boffsetOut);
     } else {
-      
-      // implement structured later
-      return -1;
-
+        // implement structured later
+        LOG_ALLOW(GLOBAL, LOG_WARNING,
+                  "WriteVTKFileHeader - fileType=%d not implemented yet.\n", meta->fileType);
+        return -1;
     }
 }
 
 /**
- * @brief Wrapper to close the correct file footer based on meta->fileType.
+ * @brief Writes the XML footer for a VTK file based on the provided metadata.
+ *
+ * This function currently handles only \c VTK_POLYDATA. If the file type is 
+ * \c VTK_POLYDATA, it delegates to \c WriteVTPXMLFooter. Otherwise, 
+ * it logs a warning and returns -1 (indicating that other file types are not yet implemented).
+ *
+ * @param[in] fp    File pointer (open for writing) to which the footer will be written.
+ * @param[in] meta  Pointer to a \c VTKMetaData structure containing the fileType 
+ *                  (e.g., \c VTK_POLYDATA or \c VTK_STRUCTURED).
+ *
+ * @return int  Returns 0 or the value from \c WriteVTPXMLFooter on success, 
+ *              or -1 if the file type is not handled.
  */
 static int WriteVTKFileFooter(FILE *fp, const VTKMetaData *meta)
 {
+    // Log the entry into this function
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, 
+              "WriteVTKFileFooter - Called with fileType=%d.\n", meta->fileType);
+
     if (meta->fileType == VTK_POLYDATA) {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "WriteVTKFileFooter - Writing VTP XML footer.\n");
         return WriteVTPXMLFooter(fp);
     } else {
-        // if structured...
-        // return WriteVTSXMLFooter(fp);
+        LOG_ALLOW(GLOBAL, LOG_WARNING,
+                  "WriteVTKFileFooter - fileType=%d not implemented, returning -1.\n", meta->fileType);
         fprintf(stderr, "VTK_STRUCTURED path not shown\n");
         return -1;
     }
 }
 
-
-/**************************************************************
- * CreateVTKFileFromMetadata:
- *
- *  Master function that:
- *    1) Opens the file on rank 0.
- *    2) Writes the XML header (which sets up 'offset' attributes).
- *    3) Writes appended data blocks in the correct order,
- *       updating 'boffset' each time.
- *    4) Writes the XML footer.
- *    5) Closes the file.
- *
- *  For .vts => uses WriteVTSXMLHeader / WriteVTSXMLFooter.
- *  For .vtp => uses WriteVTPXMLHeader / WriteVTPXMLFooter.
- *  For appended data => uses WriteVTKAppendedBlock in order:
- *     - coords
- *     - scalar or vector field
- *     - connectivity (if polydata)
- *     - offsets (if polydata)
- **************************************************************/
-
 /**
- * @brief Creates .vtp (or .vts) from the given VTKMetaData, writing appended data in raw format.
- *        No stray text is inserted after the underscore `_`, preventing UTF-8 parsing errors.
+ * @brief Creates and writes a VTK file (either .vts or .vtp) based on the provided metadata.
  *
- * @param filename  Output file name, e.g. "results/velocity00000.vtp"
- * @param meta      Metadata describing coords, fields, connectivity, etc.
- * @param comm      MPI communicator
- * @return int      0 on success
+ * This function gathers the necessary information from the \c VTKMetaData structure (e.g., \c coords,
+ * \c scalarField, \c vectorField, and connectivity or offsets if it is \c VTK_POLYDATA). It writes
+ * the XML header, followed by the appended binary data blocks in the correct order, and finally the
+ * XML footer. The I/O occurs only on \c rank 0 of the provided \c MPI_Comm.
+ *
+ * @param[in]  filename  The output file name (e.g., "output.vtp" or "output.vts").
+ * @param[in]  meta      Pointer to a \c VTKMetaData structure containing all necessary fields.
+ * @param[in]  comm      The MPI communicator used for parallel execution.
+ *
+ * @return int  Returns 0 on success, or 1 on file-opening failure. Always returns 0 on non-\c rank 0 processes.
+ *
+ * @note
+ * - Currently, only \c VTK_POLYDATA is demonstrated. 
+ * - For structured grids (\c VTK_STRUCTURED), further implementation is needed in the header and footer logic.
  */
 int CreateVTKFileFromMetadata(const char *filename,
                               const VTKMetaData *meta,
                               MPI_Comm comm)
 {
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Entry point. Filename: %s\n", filename);
+
     int rank, size;
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &size);
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - rank=%d, size=%d.\n", rank, size);
 
     // 1) Only rank 0 writes the file
     if (!rank) {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "CreateVTKFileFromMetadata - Rank 0 writing file '%s'.\n", filename);
+
         FILE *fp = fopen(filename, "wb");
         if (!fp) {
             PetscPrintf(comm, "[ERROR] Could not open '%s' for writing.\n", filename);
+            LOG_ALLOW(GLOBAL, LOG_ERROR, "CreateVTKFileFromMetadata - fopen failed for %s.\n", filename);
             return 1;
         }
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Successfully opened file: %s\n", filename);
 
         int boffset = 0;
         // 2) Write the XML header => sets <DataArray ... offset="...">
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing header (initial boffset=%d).\n", boffset);
         WriteVTKFileHeader(fp, meta, boffset, &boffset);
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Header written (updated boffset=%d).\n", boffset);
 
         // 3) Immediately write appended data blocks in EXACT order:
         //    (a) coords (3*npoints doubles)
         if (meta->coords) {
             int ncoords = 3 * meta->npoints;
             if (ncoords > 0) {
+                LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing coords block: %d doubles.\n", ncoords);
                 WriteVTKAppendedBlock(fp, meta->coords, ncoords, sizeof(double));
-                boffset += sizeof(int) + ncoords*sizeof(double);
+                boffset += sizeof(int) + ncoords * sizeof(double);
             }
         }
 
         //    (b) scalar or vector field
         if (meta->numScalarFields > 0 && meta->scalarField) {
             int nvals = meta->npoints; // 1 component
+            LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing scalar field block: %d doubles.\n", nvals);
             WriteVTKAppendedBlock(fp, meta->scalarField, nvals, sizeof(double));
-            boffset += sizeof(int) + nvals*sizeof(double);
+            boffset += sizeof(int) + nvals * sizeof(double);
         }
         else if (meta->numVectorFields > 0 && meta->vectorField) {
             int nvals = 3 * meta->npoints; // 3 comps
+            LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing vector field block: %d doubles.\n", nvals);
             WriteVTKAppendedBlock(fp, meta->vectorField, nvals, sizeof(double));
-            boffset += sizeof(int) + nvals*sizeof(double);
+            boffset += sizeof(int) + nvals * sizeof(double);
         }
 
         //    (c) connectivity (if polydata)
         if (meta->fileType == VTK_POLYDATA && meta->connectivity) {
+            LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing connectivity block: %d ints.\n", meta->npoints);
             WriteVTKAppendedBlock(fp, meta->connectivity, meta->npoints, sizeof(int));
-            boffset += sizeof(int) + meta->npoints*sizeof(int);
+            boffset += sizeof(int) + meta->npoints * sizeof(int);
         }
 
         //    (d) offsets (if polydata)
         if (meta->fileType == VTK_POLYDATA && meta->offsets) {
+            LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing offsets block: %d ints.\n", meta->npoints);
             WriteVTKAppendedBlock(fp, meta->offsets, meta->npoints, sizeof(int));
-            boffset += sizeof(int) + meta->npoints*sizeof(int);
+            boffset += sizeof(int) + meta->npoints * sizeof(int);
         }
 
         // 4) Write footer => </AppendedData> & </VTKFile>
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing footer.\n");
         WriteVTKFileFooter(fp, meta);
 
         fclose(fp);
+        LOG_ALLOW(GLOBAL, LOG_INFO, "CreateVTKFileFromMetadata - File '%s' closed.\n", filename);
     }
 
     return 0;
