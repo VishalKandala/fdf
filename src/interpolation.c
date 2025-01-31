@@ -280,6 +280,8 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
  */
 PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, BoundingBox *bboxlist) {
     PetscErrorCode ierr;
+    PetscInt particlesPerProcess = 0;         // Number of particles assigned to the loca  l MPI process.
+    PetscRandom randx,randy,randz;     // Random number generators[x,y,z]. (used if ParticleInitialization==1).       
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Starting particle swarm operations with %d particles.\n", np);
 
@@ -287,8 +289,16 @@ PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, Boundi
     // Here we pass in the bboxlist, which will be used by CreateParticleSwarm() and subsequently
     // by AssignInitialProperties() to position particles if ParticleInitialization == 0.
     LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Initializing particle swarm.\n");
-    ierr = CreateParticleSwarm(user, np, bboxlist); CHKERRQ(ierr);
+    ierr = CreateParticleSwarm(user, np, &particlesPerProcess,bboxlist); CHKERRQ(ierr);
     LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle swarm initialized successfully.\n");
+
+    // Assign initial properties to particles
+    // The bboxlist array is passed here so that if ParticleInitialization == 0,
+    // particles can be placed at the midpoint of the local bounding box corresponding to this rank.
+    ierr = AssignInitialPropertiesToSwarm(user, particlesPerProcess, &randx, &randy, &randz, bboxlist); CHKERRQ(ierr);
+
+    // Finalize swarm setup by destroying RNGs if ParticleInitialization == 1
+    ierr = FinalizeSwarmSetup(&randx, &randy, &randz); CHKERRQ(ierr);
 
     // Step 2: Print particle fields for debugging (optional)
  //   LOG_ALLOW(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing initial particle fields (optional).\n");

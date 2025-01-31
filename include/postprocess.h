@@ -4,6 +4,8 @@
 #include "io.h"
 #include "common.h"
 #include "logging.h" 
+#include "ParticleSwarm.h"
+#include "interpolation.h"
 /* --------------------------------------------------------------------
    postprocess.h
 
@@ -14,19 +16,59 @@
    Here, we declare a single function: PostprocessMain, 
    which could be your main entry point if you want to call it from
    another place (or you might just put main() in postprocess.c).
--------------------------------------------------------------------- */
-/**
- * @brief Gathers the contents of a distributed PETSc Vec into a single array on rank 0.
- *
- * @param[in]  inVec       The input (possibly distributed) Vec.
- * @param[out] N           The global size of the vector.
- * @param[out] arrayOut    On rank 0, points to the newly allocated array holding all data.
- *                         On other ranks, it is set to NULL.
- *
- * @return PetscErrorCode  Return 0 on success, nonzero on failure.
- */
-PetscErrorCode VecToArrayOnRank0(Vec inVec, PetscInt *N, double **arrayOut);
 
-//int PostprocessMain(int argc, char **argv);
+*/
+
+
+/**
+ * @brief Gathers a PETSc vector or a DMSwarm field, prepares VTKMetaData, and writes to a VTK file.
+ *
+ * This function dynamically handles **both Eulerian (.vts) and Lagrangian (.vtp) data**:
+ *  - **If the field exists in `DMSwarm`**, it **extracts it into a PETSc Vec**.
+ *  - **If already a Vec**, it directly processes it.
+ *  - **For `.vtp` files, it also gathers particle positions** (`DMSwarmPICField_coor`).
+ *  - **For `.vts`, only the field is gathered** (structured grid).
+ *
+ * @param[in]  user       Pointer to user context (contains swarm and Eulerian fields).
+ * @param[in]  fieldName  Name of the field (e.g., "Ucat" for vts, "Velocity" for vtp).
+ * @param[in]  timeIndex  Timestep index for filename (e.g., "Ucat_00010.vts").
+ * @param[in]  outExt     File extension ("vts" for structured, "vtp" for particles).
+ * @param[in]  comm       MPI communicator (usually PETSC_COMM_WORLD).
+ *
+ * @return PetscErrorCode  0 on success, or an error code on failure.
+ */
+PetscErrorCode GatherAndWriteField(UserCtx *user,
+                                   const char *fieldName,
+                                   PetscInt timeIndex,
+                                   const char *outExt,
+                                   MPI_Comm comm);
+
+/**
+ * @brief Writes up to four Eulerian fields (Ucat, P, Ucont, Nvert) using the
+ *        GatherAndWriteField() wrapper. Each field becomes a separate file.
+ *
+ * @param[in]  user       Pointer to the UserCtx holding PETSc vectors.
+ * @param[in]  timeIndex  Timestep index for filenames.
+ * @param[in]  outExt     File extension (e.g., "vts" or "vtp").
+ *
+ * @return PetscErrorCode  Returns 0 on success, error code on failure.
+ */
+PetscErrorCode WriteEulerianVTK(UserCtx *user, PetscInt timeIndex, const char *outExt);
+
+
+/**
+ * @brief Writes particle (Lagrangian) data fields to separate .vtp files.
+ *
+ * This function loops over key DMSwarm fields (positions, velocity, etc.) and writes 
+ * each as a separate .vtp file, ensuring modularity and flexibility.
+ *
+ * @param[in] user       Pointer to the user context (contains the particle swarm).
+ * @param[in] timeIndex  Current timestep index (used in filenames).
+ * @param[in] outExt     File extension ("vtp" for particles).
+ *
+ * @return PetscErrorCode  0 on success, nonzero on failure.
+ */
+PetscErrorCode WriteParticleVTK(UserCtx *user, PetscInt timeIndex, const char *outExt);
 
 #endif /* POSTPROCESS_H */
+

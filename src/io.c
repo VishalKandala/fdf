@@ -1255,3 +1255,302 @@ int CreateVTKFileFromMetadata(const char *filename,
 
     return 0;
 }
+
+/**
+ * @brief Gathers a PETSc vector onto rank 0 as a contiguous array of doubles.
+ *
+ * This function retrieves the local portions of the input vector \p inVec from
+ * all MPI ranks via \c MPI_Gatherv and assembles them into a single array on rank 0.
+ * The global size of the vector is stored in \p N, and a pointer to the newly
+ * allocated array is returned in \p arrayOut (valid only on rank 0).
+ *
+ * @param[in]  inVec      The PETSc vector to gather.
+ * @param[out] N          The global size of the vector (output).
+ * @param[out] arrayOut   On rank 0, points to the newly allocated array of size \p N.
+ *                        On other ranks, it is set to NULL.
+ *
+ * @return PetscErrorCode  Returns 0 on success, or a non-zero PETSc error code.
+ */
+PetscErrorCode VecToArrayOnRank0(Vec inVec, PetscInt *N, double **arrayOut)
+{
+    PetscErrorCode    ierr;
+    MPI_Comm          comm;
+    PetscMPIInt       rank, size;
+    PetscInt          globalSize, localSize;
+    const PetscScalar *localArr = NULL;
+
+    // Log entry into the function
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "VecToArrayOnRank0 - Start gathering vector onto rank 0.\n");
+
+    /* Get MPI comm, rank, size */
+    ierr = PetscObjectGetComm((PetscObject)inVec, &comm);CHKERRQ(ierr);
+    ierr = MPI_Comm_rank(comm, &rank);CHKERRQ(ierr);
+    ierr = MPI_Comm_size(comm, &size);CHKERRQ(ierr);
+
+    /* Get global size (for the entire Vec) */
+    ierr = VecGetSize(inVec, &globalSize);CHKERRQ(ierr);
+    *N = globalSize;
+
+    /* Get local size (portion on this rank) */
+    ierr = VecGetLocalSize(inVec, &localSize);CHKERRQ(ierr);
+
+    // Log vector sizes and process info
+    LOG_ALLOW(GLOBAL, LOG_DEBUG,
+              "VecToArrayOnRank0 - rank=%d of %d, globalSize=%D, localSize=%D.\n",
+              rank, size, globalSize, localSize);
+
+    /* Access the local array data */
+    ierr = VecGetArrayRead(inVec, &localArr);CHKERRQ(ierr);
+
+    /*
+       We'll gather the local chunks via MPI_Gatherv:
+       - First, gather all local sizes into recvcounts[] on rank 0.
+       - Then set up a displacement array (displs[]) to place each chunk in the correct spot.
+       - Finally, gather the actual data.
+    */
+    PetscMPIInt *recvcounts = NULL;
+    PetscMPIInt *displs     = NULL;
+
+    if (!rank) {
+        recvcounts = (PetscMPIInt *) malloc(size * sizeof(PetscMPIInt));
+        displs     = (PetscMPIInt *) malloc(size * sizeof(PetscMPIInt));
+    }
+
+    /* Convert localSize (PetscInt) to PetscMPIInt for MPI calls */
+    PetscMPIInt localSizeMPI = (PetscMPIInt)localSize;
+
+    /* Gather local sizes to rank 0 */
+    ierr = MPI_Gather(&localSizeMPI, 1, MPI_INT,
+                      recvcounts,      1, MPI_INT,
+                      0, comm);CHKERRQ(ierr);
+
+    /* On rank 0, build displacements and allocate the big array */
+    if (!rank) {
+        displs[0] = 0;
+        for (PetscMPIInt i = 1; i < size; i++) {
+            displs[i] = displs[i - 1] + recvcounts[i - 1];
+        }
+
+        /* Allocate a buffer for the entire (global) array */
+        *arrayOut = (double *) malloc(globalSize * sizeof(double));
+        if (!(*arrayOut)) SETERRQ(comm, PETSC_ERR_MEM, "Failed to allocate array on rank 0.");
+    } else {
+        /* On other ranks, we do not allocate anything */
+        *arrayOut = NULL;
+    }
+
+    /* Gather the actual data (assuming real scalars => MPI_DOUBLE) */
+    ierr = MPI_Gatherv((void *) localArr,         /* sendbuf on this rank */
+                       localSizeMPI, MPI_DOUBLE,  /* how many, and type */
+                       (rank == 0 ? *arrayOut : NULL),  /* recvbuf on rank 0 */
+                       (rank == 0 ? recvcounts : NULL),
+                       (rank == 0 ? displs    : NULL),
+                       MPI_DOUBLE, 0, comm);CHKERRQ(ierr);
+
+    /* Restore local array (cleanup) */
+    ierr = VecRestoreArrayRead(inVec, &localArr);CHKERRQ(ierr);
+
+    if (!rank) {
+        free(recvcounts);
+        free(displs);
+    }
+
+    // Log successful completion
+    LOG_ALLOW(GLOBAL, LOG_INFO, "VecToArrayOnRank0 - Successfully gathered data on rank 0.\n");
+
+    PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Reads data from a file into a specified field of a PETSc DMSwarm.
+ *
+ * This function is the counterpart to WriteSwarmField(). It creates a global PETSc vector 
+ * that references the specified DMSwarm field, uses ReadFieldData() to read the data from 
+ * a file, and then destroys the global vector reference.
+ *
+ * @param[in]  user       Pointer to the UserCtx structure (containing `user->swarm`).
+ * @param[in]  field_name Name of the DMSwarm field to read into (must be previously declared/allocated).
+ * @param[in]  ti         Time index used to construct the input file name.
+ * @param[in]  ext        File extension (e.g., "dat" or "bin").
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ *
+ * @note Compatible with PETSc 3.14.x.
+ */
+PetscErrorCode ReadSwarmField(UserCtx *user, const char *field_name, PetscInt ti, const char *ext)
+{
+  PetscErrorCode ierr;
+  DM             swarm;
+  Vec            fieldVec;
+
+  PetscFunctionBegin;
+
+  /* 1) Validate inputs and retrieve the DMSwarm. */
+  PetscValidPointer(user, 1);
+  PetscValidCharPointer(field_name, 2);
+  PetscValidCharPointer(ext, 4);
+  swarm = user->swarm;
+  PetscCheckPointer(swarm, 1);
+
+  /* 2) Create a global vector that references the specified Swarm field. */
+  ierr = DMSwarmCreateGlobalVectorFromField(swarm, field_name, &fieldVec);CHKERRQ(ierr);
+
+  /* 3) Use the provided ReadFieldData() function to read data into fieldVec. */
+  ierr = ReadFieldData(user, field_name, fieldVec, ti, ext);CHKERRQ(ierr);
+
+  /* 4) Destroy the global vector reference. */
+  ierr = DMSwarmDestroyGlobalVectorFromField(swarm, field_name, &fieldVec);CHKERRQ(ierr);
+
+  PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Reads multiple fields (positions, velocity, CellID, and weight) into a DMSwarm.
+ *
+ * This function is analogous to ReadSimulationFields() but targets a DMSwarm. 
+ * Each Swarm field is read from a separate file using ReadSwarmField().
+ * 
+ * @param[in,out] user Pointer to the UserCtx structure containing the DMSwarm (user->swarm).
+ * @param[in]     ti   Time index for constructing the file name.
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ */
+PetscErrorCode ReadAllSwarmFields(UserCtx *user, PetscInt ti)
+{
+  PetscErrorCode ierr;
+
+  PetscFunctionBegin;
+
+  LOG_ALLOW(GLOBAL, LOG_INFO, "ReadAllSwarmFields - Starting to read DMSwarm fields.\n");
+
+  
+  // 1) Read positions (the built-in DMSwarm coordinate field).
+  ierr = ReadSwarmField(user, "position", ti, "dat");CHKERRQ(ierr);
+
+  /*
+   * 2) Read velocity field from file into DMSwarm. 
+   *    Make sure "velocity" is an existing field in your swarm registration.
+   */
+  ierr = ReadSwarmField(user, "velocity", ti, "dat");CHKERRQ(ierr);
+
+  /*
+   * 3) Read CellID (built-in or custom). The built-in PETSc field name for cell IDs 
+   *    is typically DMSwarmField_cellid. Change if you used a different name at registration.
+   */
+  //  ierr = ReadSwarmField(user, "DMSwarm_CellID", ti, "dat");CHKERRQ(ierr);
+
+  /*
+   * 4) Read weight field from file into DMSwarm.
+   *    Ensure "weight" is declared in your swarm.
+   */
+  //  ierr = ReadSwarmField(user, "weight", ti, "dat");CHKERRQ(ierr);
+
+  /*
+   * (Optional) Insert additional fields here if needed, e.g.:
+   *
+   * if (user->someFlag) {
+   *   ierr = ReadSwarmField(user, "someExtraField", ti, "dat");CHKERRQ(ierr);
+   * }
+   */
+
+  LOG_ALLOW(GLOBAL, LOG_INFO, "ReadAllSwarmFields - Finished reading DMSwarm fields.\n");
+
+  PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Reads coordinate data (for particles)  from file into a PETSc Vec, then gathers it to rank 0.
+ *
+ * This function uses \c ReadFieldData to fill a PETSc Vec with coordinate data,
+ * then leverages \c VecToArrayOnRank0 to gather that data into a contiguous array
+ * (valid on rank 0 only).
+ *
+ * @param[in]  timeIndex    The time index used to construct file names.
+ * @param[in]  user         Pointer to the user context.
+ * @param[out] coordsArray  On rank 0, will point to a newly allocated array holding the coordinates.
+ * @param[out] Ncoords      On rank 0, the length of \p coordsArray. On other ranks, 0.
+ *
+ * @return PetscErrorCode  Returns 0 on success, or non-zero on failures.
+ */
+PetscErrorCode ReadPositionsFromFile(PetscInt timeIndex,
+                                      UserCtx *user,
+                                      double **coordsArray,
+                                      PetscInt *Ncoords)
+{
+  PetscFunctionBeginUser;
+
+  PetscErrorCode ierr;
+  Vec            coordsVec;
+
+  LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadPositionsFromFile - Creating coords Vec.\n");
+  ierr = VecCreate(PETSC_COMM_WORLD, &coordsVec);CHKERRQ(ierr);
+  ierr = VecSetFromOptions(coordsVec);CHKERRQ(ierr);
+
+  // For example: "position" is the name of the coordinate data
+  ierr = ReadFieldData(user, "position", coordsVec, timeIndex, "dat");
+  if (ierr) {
+    LOG_ALLOW(GLOBAL, LOG_ERROR,
+              "ReadPositionsFromFile - Error reading position data (ti=%d).\n",
+              timeIndex);
+    PetscFunctionReturn(ierr);
+  }
+
+  LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadPositions - Gathering coords Vec to rank 0.\n");
+  ierr = VecToArrayOnRank0(coordsVec, Ncoords, coordsArray);CHKERRQ(ierr);
+
+  ierr = VecDestroy(&coordsVec);CHKERRQ(ierr);
+
+  LOG_ALLOW(GLOBAL, LOG_DEBUG,
+            "ReadPositionsFromFile - Successfully gathered coordinates. Ncoords=%D.\n", *Ncoords);
+  PetscFunctionReturn(0);
+}
+
+
+/**
+ * @brief Reads a named field from file into a PETSc Vec, then gathers it to rank 0.
+ *
+ * This function wraps \c ReadFieldData and \c VecToArrayOnRank0 into a single step.
+ * The gathered data is stored in \p scalarArray on rank 0, with its length in \p Nscalars.
+ *
+ * @param[in]  timeIndex     The time index used to construct file names.
+ * @param[in]  fieldName     Name of the field to be read (e.g., "velocity").
+ * @param[in]  user          Pointer to the user context.
+ * @param[out] scalarArray   On rank 0, a newly allocated array holding the field data.
+ * @param[out] Nscalars      On rank 0, length of \p scalarArray. On other ranks, 0.
+ *
+ * @return PetscErrorCode  Returns 0 on success, or non-zero on failures.
+ */
+PetscErrorCode ReadFieldDataToRank0(PetscInt timeIndex,
+                                           const char *fieldName,
+                                           UserCtx *user,
+                                           double **scalarArray,
+                                           PetscInt *Nscalars)
+{
+  PetscFunctionBeginUser;
+
+  PetscErrorCode ierr;
+  Vec            fieldVec;
+
+  LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadFieldDataWrapper - Creating field Vec.\n");
+  ierr = VecCreate(PETSC_COMM_WORLD, &fieldVec);CHKERRQ(ierr);
+  ierr = VecSetFromOptions(fieldVec);CHKERRQ(ierr);
+
+  ierr = ReadFieldData(user, fieldName, fieldVec, timeIndex, "dat");
+  if (ierr) {
+    LOG_ALLOW(GLOBAL, LOG_ERROR,
+              "ReadFieldDataWrapper - Error reading field '%s' (ti=%d).\n",
+              fieldName, timeIndex);
+    PetscFunctionReturn(ierr);
+  }
+
+  LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadFieldDataWrapper - Gathering field Vec to rank 0.\n");
+  ierr = VecToArrayOnRank0(fieldVec, Nscalars, scalarArray);CHKERRQ(ierr);
+
+  ierr = VecDestroy(&fieldVec);CHKERRQ(ierr);
+
+  LOG_ALLOW(GLOBAL, LOG_DEBUG,
+            "ReadFieldDataWrapper - Successfully gathered field '%s'. Nscalars=%D.\n",
+            fieldName, *Nscalars);
+  PetscFunctionReturn(0);
+}
+

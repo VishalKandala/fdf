@@ -266,4 +266,89 @@ int CreateVTKFileFromMetadata(const char       *filename,
                               const VTKMetaData *meta,
                               MPI_Comm          comm);
 
+/**
+ * @brief Gathers the contents of a distributed PETSc Vec into a single array on rank 0.
+ *
+ * @param[in]  inVec       The input (possibly distributed) Vec.
+ * @param[out] N           The global size of the vector.
+ * @param[out] arrayOut    On rank 0, points to the newly allocated array holding all data.
+ *                         On other ranks, it is set to NULL.
+ *
+ * @return PetscErrorCode  Return 0 on success, nonzero on failure.
+ */
+PetscErrorCode VecToArrayOnRank0(Vec inVec, PetscInt *N, double **arrayOut);
+
+/**
+ * @brief Reads data from a file into a specified field of a PETSc DMSwarm.
+ *
+ * This function is the counterpart to WriteSwarmField(). It creates a global PETSc vector 
+ * that references the specified DMSwarm field, uses ReadFieldData() to read the data from 
+ * a file, and then destroys the global vector reference.
+ *
+ * @param[in]  user       Pointer to the UserCtx structure (containing `user->swarm`).
+ * @param[in]  field_name Name of the DMSwarm field to read into (must be previously declared/allocated).
+ * @param[in]  ti         Time index used to construct the input file name.
+ * @param[in]  ext        File extension (e.g., "dat" or "bin").
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ *
+ * @note Compatible with PETSc 3.14.x.
+ */
+PetscErrorCode ReadSwarmField(UserCtx *user, const char *field_name, PetscInt ti, const char *ext);
+
+
+/**
+ * @brief Reads multiple fields (positions, velocity, CellID, and weight) into a DMSwarm.
+ *
+ * This function is analogous to ReadSimulationFields() but targets a DMSwarm. 
+ * Each Swarm field is read from a separate file using ReadSwarmField().
+ * 
+ * @param[in,out] user Pointer to the UserCtx structure containing the DMSwarm (user->swarm).
+ * @param[in]     ti   Time index for constructing the file name.
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ */
+PetscErrorCode ReadAllSwarmFields(UserCtx *user, PetscInt ti);
+
+/**
+ * @brief Reads coordinate data (for particles)  from file into a PETSc Vec, then gathers it to rank 0.
+ *
+ * This function uses \c ReadFieldData to fill a PETSc Vec with coordinate data,
+ * then leverages \c VecToArrayOnRank0 to gather that data into a contiguous array
+ * (valid on rank 0 only).
+ *
+ * @param[in]  timeIndex    The time index used to construct file names.
+ * @param[in]  user         Pointer to the user context.
+ * @param[out] coordsArray  On rank 0, will point to a newly allocated array holding the coordinates.
+ * @param[out] Ncoords      On rank 0, the length of \p coordsArray. On other ranks, 0.
+ *
+ * @return PetscErrorCode  Returns 0 on success, or non-zero on failures.
+ */
+PetscErrorCode ReadPositionsFromFile(PetscInt timeIndex,
+                                      UserCtx *user,
+                                      double **coordsArray,
+				     PetscInt *Ncoords);
+
+
+/**
+ * @brief Reads a named field from file into a PETSc Vec, then gathers it to rank 0.
+ *
+ * This function wraps \c ReadFieldData and \c VecToArrayOnRank0 into a single step.
+ * The gathered data is stored in \p scalarArray on rank 0, with its length in \p Nscalars.
+ *
+ * @param[in]  timeIndex     The time index used to construct file names.
+ * @param[in]  fieldName     Name of the field to be read (e.g., "velocity").
+ * @param[in]  user          Pointer to the user context.
+ * @param[out] scalarArray   On rank 0, a newly allocated array holding the field data.
+ * @param[out] Nscalars      On rank 0, length of \p scalarArray. On other ranks, 0.
+ *
+ * @return PetscErrorCode  Returns 0 on success, or non-zero on failures.
+ */
+PetscErrorCode ReadFieldDataToRank0(PetscInt timeIndex,
+                                           const char *fieldName,
+                                           UserCtx *user,
+                                           double **scalarArray,
+				    PetscInt *Nscalars);
+
+
 #endif // IO_H

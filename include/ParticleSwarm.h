@@ -43,7 +43,7 @@
  * - The `control.dat` file should contain necessary PETSc options.
  * - The `bboxlist` array should be properly populated before calling this function.
  */
-PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles, BoundingBox *bboxlist);
+PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles, PetscInt *particlesPerProcess, BoundingBox *bboxlist);
 
 /**
  * @brief Initializes the DMSwarm object within the UserCtx structure.
@@ -96,7 +96,7 @@ PetscErrorCode InitializeRandomGenerators(UserCtx *user, PetscRandom *randx, Pet
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode AssignInitialProperties(UserCtx* user, PetscInt particlesPerProcess, PetscRandom *randx, PetscRandom *randy, PetscRandom *randz, BoundingBox *bboxlist);
+PetscErrorCode AssignInitialPropertiesToSwarm(UserCtx* user, PetscInt particlesPerProcess, PetscRandom *randx, PetscRandom *randy, PetscRandom *randz, BoundingBox *bboxlist);
 
 /**
  * @brief Distributes particles evenly across MPI processes, handling any remainders.

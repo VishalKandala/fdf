@@ -117,7 +117,7 @@ PetscErrorCode InitializeRandomGenerators(UserCtx* user, PetscRandom *randx, Pet
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode AssignInitialProperties(UserCtx* user, PetscInt particlesPerProcess, PetscRandom *randx, PetscRandom *randy, PetscRandom *randz, BoundingBox *bboxlist) {
+PetscErrorCode AssignInitialPropertiesToSwarm(UserCtx* user, PetscInt particlesPerProcess, PetscRandom *randx, PetscRandom *randy, PetscRandom *randz, BoundingBox *bboxlist) {
     PetscErrorCode ierr;                   // Error code for PETSc functions
     DM swarm = user->swarm;                // DMSwarm object managing particles
     PetscReal *positions, *velocities, *weights; // Pointers to particle data fields
@@ -277,15 +277,13 @@ PetscErrorCode FinalizeSwarmSetup(PetscRandom *randx, PetscRandom *randy, PetscR
  * the number of particles is evenly divided among the available MPI ranks. If the total
  * number of particles isn't divisible by the number of processes, the remainder is distributed
  * to the first few ranks.
- *
- * Additionally, it now takes a 'bboxlist' array as an input parameter and passes it on to
- * AssignInitialProperties(), enabling particle initialization at the midpoint of each rank's
- * bounding box if ParticleInitialization is set to 0.
+ *.
  *
  * @param[in,out] user          Pointer to the UserCtx structure containing the simulation context.
  * @param[in]     numParticles  Total number of particles to create across all MPI processes.
  * @param[in]     bboxlist      Pointer to an array of BoundingBox structures, one per rank.
  *
+ * @param[in]     particlesPerProcess   
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  *
  * @note
@@ -293,13 +291,11 @@ PetscErrorCode FinalizeSwarmSetup(PetscRandom *randx, PetscRandom *randy, PetscR
  * - The `control.dat` file should contain necessary PETSc options.
  * - The `bboxlist` array should be properly populated before calling this function.
  */
-PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles, BoundingBox *bboxlist) {
+PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles, PetscInt *particlesPerProcess, BoundingBox *bboxlist) {
     PetscErrorCode ierr;                      // PETSc error handling variable
     PetscMPIInt rank, size;                   // Variables to store MPI rank and size
-    PetscInt particlesPerProcess = 0;         // Number of particles assigned to the local MPI process
     PetscInt remainder = 0;                   // Remainder of particles after division
     PetscReal domainLengthY, domainLengthZ;   // Domain dimensions in y and z directions
-    PetscRandom randx, randy, randz;          // Random Number Generators if assigning particles randomly
     
     // Validate input parameters
     if (numParticles <= 0) {
@@ -324,7 +320,7 @@ PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles, Boundin
     LOG_ALLOW_SYNC(LOG_INFO, "CreateParticleSwarm - Rank %d out of %d processes.\n", rank, size);
 
     // Distribute particles among MPI processes
-    ierr = DistributeParticles(numParticles, rank, size, &particlesPerProcess, &remainder); CHKERRQ(ierr);
+    ierr = DistributeParticles(numParticles, rank, size, particlesPerProcess, &remainder); CHKERRQ(ierr);
 
     // Initialize the DMSwarm - creates the swarm, sets the type and dimension
     ierr = InitializeSwarm(user); CHKERRQ(ierr);
@@ -333,7 +329,7 @@ PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles, Boundin
     ierr = RegisterParticleFields(user->swarm); CHKERRQ(ierr);
 
     // Set the local number of particles for this rank and additional buffer for particle migration
-    ierr = DMSwarmSetLocalSizes(user->swarm, particlesPerProcess, 4); CHKERRQ(ierr);
+    ierr = DMSwarmSetLocalSizes(user->swarm, *particlesPerProcess, 4); CHKERRQ(ierr);
     LOG_ALLOW_SYNC(LOG_INFO, "CreateParticleSwarm - Set local swarm size: %d particles.\n", particlesPerProcess);
 
     // Optionally, LOG_ALLOW detailed DM info in debug mode
@@ -341,14 +337,6 @@ PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles, Boundin
         LOG_ALLOW_SYNC(LOG_INFO, "CreateParticleSwarm - Viewing DMSwarm:\n");
         ierr = DMView(user->swarm, PETSC_VIEWER_STDOUT_WORLD); CHKERRQ(ierr);
     }
-
-    // Assign initial properties to particles
-    // The bboxlist array is passed here so that if ParticleInitialization == 0,
-    // particles can be placed at the midpoint of the local bounding box corresponding to this rank.
-    ierr = AssignInitialProperties(user, particlesPerProcess, &randx, &randy, &randz, bboxlist); CHKERRQ(ierr);
-
-    // Finalize swarm setup by destroying RNGs if ParticleInitialization == 1
-    ierr = FinalizeSwarmSetup(&randx, &randy, &randz); CHKERRQ(ierr);
 
     LOG_ALLOW_SYNC(LOG_INFO, "CreateParticleSwarm - Particle swarm creation and initialization complete.\n");
 

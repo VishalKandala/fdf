@@ -145,61 +145,101 @@ typedef struct {
      VTKFileType fileType = VTK_STRUCTURED; // for structured data
      VTKFileType fileType = VTK_POLYDATA;   // for particle data
 -------------------------------------------------------------------- */
+typedef struct {
+    PetscInt  startTime;       /* start of time loop */
+    PetscInt  endTime;         /* end of time loop */
+    PetscInt  timeStep;        /* increment of time loop */
+
+    char      eulerianExt[8];  /* "vts", "vtk", etc. for grid data */
+    char      particleExt[8];  /* "vtp", "vtk", etc. for particle data */
+
+    PetscBool outputParticles; /* whether to write particle data or not */
+} PostProcessParams;
+
 typedef enum {
     VTK_STRUCTURED,
     VTK_POLYDATA
 } VTKFileType;
 
-/* --------------------------------------------------------------------
-   VTKMetaData
+/* You can define a max # of fields, or make this dynamic. */
+#define MAX_POINT_DATA_FIELDS 10
 
-   This structure collects all the data necessary to create either a
-   .vts or .vtp file. The file type is chosen by "fileType".
-
-   FIELDS (common to both .vts and .vtp):
-   - fileType          : (enum) which type of VTK file to write
-   - coords            : pointer to array of coordinates
-   - scalarField       : pointer to array of scalar data
-   - scalarFieldName   : name of the scalar field, used in the VTK XML
-   - numScalarFields   : how many scalar fields we have (simple example = 1)
-
-   FIELDS (structured .vts only):
-   - mx, my, mz        : global dimensions of the domain (e.g., from DMDA)
-   - nnodes            : total # of "interior" or relevant nodes 
-                         (often (mx-1)*(my-1)*(mz-1))
-
-   FIELDS (particle .vtp only):
-   - npoints           : total # of particle points
-   - connectivity, offsets : arrays defining each particle as a single-vertex cell
--------------------------------------------------------------------- */
+/**
+ * @brief Metadata structure for VTK output (.vts or .vtp files).
+ *
+ * This struct is used for both Eulerian grid data and Lagrangian (particle) data.
+ * It stores coordinate arrays, scalar/vector fields, and connectivity details
+ * required to write valid VTK files.
+ */
 typedef struct _n_VTKMetaData {
-    /* 1) File type: VTK_STRUCTURED or VTK_POLYDATA */
+    /* 1) File type: VTK_STRUCTURED (Eulerian grid) or VTK_POLYDATA (Particle data) */
     VTKFileType  fileType;
-
+ 
     /* 2) For VTK_STRUCTURED => .vts */
-    int          mx, my, mz;   /* domain dimensions */
-    int          nnodes;       /* number of mesh nodes to output */
+    int          mx, my, mz;   /* Grid dimensions */
+    int          nnodes;       /* Total number of structured grid nodes */
 
     /* 3) For VTK_POLYDATA => .vtp */
-    int          npoints;      /* number of particle points */
+    int          npoints;      /* Number of particle points */
 
-    /* 4) Shared coordinate & field data */
-    double      *coords;       /* Coordinates (3 components per point/node) */
+    /* 4) Coordinate and field data (shared) */
+    double      *coords;       /* Coordinates array (3 components per point/node) */
 
     /* Scalar field metadata */
     double      *scalarField;
     const char  *scalarFieldName;
     int          numScalarFields;
 
-    /* Vector field metadata (new fields for 3D vectors) */
-    double      *vectorField;       /* Vector data (interleaved x,y,z components) */
-    const char  *vectorFieldName;   /* Name of the vector field (e.g., "velocity") */
+    /* Vector field metadata */
+    double      *vectorField;       /* Interleaved x,y,z vector field */
+    const char  *vectorFieldName;   /* Name of the vector field (e.g., "Velocity") */
     int          numVectorFields;   /* Number of vector fields (0 or 1) */
 
     /* 5) For polydata connectivity */
     int         *connectivity; 
     int         *offsets;
 } VTKMetaData;
+
+
+// -------- MultiField Particle vtp file implementation ------------
+
+/*
+// A small struct to hold one field's metadata 
+typedef struct {
+    char    name[64];       // e.g. "velocity", "pressure", "temp", etc.
+    int     numComponents;  // e.g. 1 = scalar, 3 = vector, etc. 
+    double *data;           // pointer to the actual data array 
+} PointDataField;
+
+// --------------------------------------------------------------------
+//   VTKMetaData
+
+//   Works for both .vts (structured) and .vtp (polydata).
+//   Now uses an array of 'pointDataFields' for all fields in <PointData>.
+//-------------------------------------------------------------------- 
+typedef struct _n_VTKMetaData {
+    // 1) File type: VTK_STRUCTURED or VTK_POLYDATA 
+    VTKFileType  fileType;
+ 
+    // 2) For VTK_STRUCTURED => .vts 
+    int          mx, my, mz;   // domain dimensions 
+    int          nnodes;       // e.g., (mx-1)*(my-1)*(mz-1) or actual node count 
+
+    // 3) For VTK_POLYDATA => .vtp 
+    int          npoints;     //  number of point "particles" 
+
+ // 4) Shared coordinate array 
+    double      *coords;       // (3 * npoints) or (3 * nnodes) if you store them explicitly 
+
+    // 5) Array-based approach for multiple fields //
+    int           numFields;   // how many fields in <PointData>? 
+    PointDataField pointDataFields[MAX_POINT_DATA_FIELDS];
+
+    // 6) For polydata connectivity (only used if fileType == VTK_POLYDATA) 
+    int         *connectivity; 
+    int         *offsets;
+} VTKMetaData;
+*/
 
 // Add other shared types (e.g., IBMNodes, IBMInfo) if needed
 
