@@ -152,7 +152,8 @@ typedef struct {
 
     char      eulerianExt[8];  /* "vts", "vtk", etc. for grid data */
     char      particleExt[8];  /* "vtp", "vtk", etc. for particle data */
-
+    char      eulerianPrefix[20]; /* directory to save euler fields in */
+    char      particlePrefix[20]; /* directory to save particle fields in */
     PetscBool outputParticles; /* whether to write particle data or not */
 } PostProcessParams;
 

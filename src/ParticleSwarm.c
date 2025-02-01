@@ -299,7 +299,7 @@ PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles, PetscIn
     
     // Validate input parameters
     if (numParticles <= 0) {
-        LOG_ALLOW_SYNC(LOG_ERROR, "CreateParticleSwarm - Number of particles must be positive. Given: %d\n", numParticles);
+      LOG_ALLOW(GLOBAL,LOG_DEBUG, "CreateParticleSwarm - Number of particles must be positive. Given: %d\n", numParticles);
         return PETSC_ERR_ARG_OUTOFRANGE;
     }
 
@@ -317,7 +317,7 @@ PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles, PetscIn
     // Retrieve MPI rank and size
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
     ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC(LOG_INFO, "CreateParticleSwarm - Rank %d out of %d processes.\n", rank, size);
+    LOG_ALLOW(GLOBAL,LOG_INFO, "CreateParticleSwarm - Rank %d out of %d processes.\n", rank, size);
 
     // Distribute particles among MPI processes
     ierr = DistributeParticles(numParticles, rank, size, particlesPerProcess, &remainder); CHKERRQ(ierr);
@@ -330,11 +330,11 @@ PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles, PetscIn
 
     // Set the local number of particles for this rank and additional buffer for particle migration
     ierr = DMSwarmSetLocalSizes(user->swarm, *particlesPerProcess, 4); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC(LOG_INFO, "CreateParticleSwarm - Set local swarm size: %d particles.\n", particlesPerProcess);
+    LOG_ALLOW(GLOBAL,LOG_INFO, "CreateParticleSwarm - Set local swarm size: %d particles.\n", particlesPerProcess);
 
     // Optionally, LOG_ALLOW detailed DM info in debug mode
     if (get_log_level() == LOG_DEBUG) {
-        LOG_ALLOW_SYNC(LOG_INFO, "CreateParticleSwarm - Viewing DMSwarm:\n");
+        LOG_ALLOW_SYNC(LOG_DEBUG, "CreateParticleSwarm - Viewing DMSwarm:\n");
         ierr = DMView(user->swarm, PETSC_VIEWER_STDOUT_WORLD); CHKERRQ(ierr);
     }
 

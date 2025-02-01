@@ -243,7 +243,7 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
            SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "DMs not initialized \n");
      }
 
-        PetscPrintf(PETSC_COMM_WORLD, "SetupGridAndVectors - Creating vectors for block %d: fda=%p, da=%p\n", bi, (void*)user[bi].fda, (void*)user[bi].da);
+        LOG_ALLOW(GLOBAL,LOG_DEBUG,"Creating vectors for block %d: fda=%p, da=%p\n", bi, (void*)user[bi].fda, (void*)user[bi].da);
 
         // Create global vectors (Destroyed in FinalizeSimulation)
 	ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Ucat); CHKERRQ(ierr);

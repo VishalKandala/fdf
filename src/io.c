@@ -850,6 +850,7 @@ int WriteVTKAppendedBlock(FILE *fp, const void *data, int num_elements, size_t e
  * @param[in]  mz         Number of cells in the z-direction (plus ghost cells).
  * @param[in]  nnodes     Total number of grid nodes.
  * @param[in]  fieldName  Name of the scalar field written to PointData.
+ * @param[in]  numComponents Number of components in the fieldName array (e.g., 3 for velocity).
  * @param[in]  boffset    Current byte offset in the appended data section.
  * @param[out] boffsetOut Updated byte offset after writing the header information.
  *
@@ -861,12 +862,13 @@ static int WriteVTSXMLHeader(FILE       *fp,
                              int         mz,
                              int         nnodes,
                              const char *fieldName,
+                             int         numComponents,
                              int         boffset,
                              int        *boffsetOut)
 {
     // Log the entry into this function and the parameters
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "WriteVTSXMLHeader - Writing .vts header (mx=%d, my=%d, mz=%d, nnodes=%d).\n",
+              "WriteVTSXMLHeader - Writing .vts header (fieldName=%s, numComponents=%d,boffset=%d,mx=%d, my=%d, mz=%d, nnodes=%d).\n",fieldName,numComponents,boffset,
               mx, my, mz, nnodes);
 
     // Set XML configuration strings
@@ -892,11 +894,11 @@ static int WriteVTSXMLHeader(FILE       *fp,
               "WriteVTSXMLHeader - Updated offset to %d after Points.\n", boffset);
     fprintf(fp, "      </Points>\n");
 
-    // Single scalar field
+    // PointData => "ufield,vfield,p
     fprintf(fp, "      <PointData Scalars=\"%s\">\n", fieldName);
-    fprintf(fp, "        <DataArray type=\"%s\" Name=\"%s\" NumberOfComponents=\"1\" "
+    fprintf(fp, "        <DataArray type=\"%s\" Name=\"%s\" NumberOfComponents=\"%d\" "
                 "format=\"appended\" offset=\"%d\" />\n",
-            precision, fieldName, boffset);
+            precision, fieldName, numComponents,boffset);
     boffset += (int)sizeof(int) + nnodes * (int)sizeof(double);
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
               "WriteVTSXMLHeader - Updated offset to %d after PointData.\n", boffset);
@@ -1073,45 +1075,63 @@ static int WriteVTPXMLFooter(FILE *fp)
 /**
  * @brief Writes the initial XML header for a VTK file based on the provided metadata.
  *
- * This function currently handles only \c VTK_POLYDATA type. For structured grids or other types,
- * you would add the necessary conditionals and calls. It determines whether to write a scalar or
- * vector field (based on the metadata) and calls \c WriteVTPXMLHeader to construct the appropriate
- * XML header.
+ * This function writes the XML header for VTK output. It now supports both polydata
+ * (VTK_POLYDATA) and structured grid (VTK_STRUCTURED) file types. For each type, the
+ * function determines whether to write a scalar or vector field header by inspecting
+ * the metadata. For polydata, it calls \c WriteVTPXMLHeader and for structured grids,
+ * it calls \c WriteVTSXMLHeader.
  *
  * @param[in]  fp          File pointer (open for writing) to which the header will be written.
- * @param[in]  meta        Pointer to a \c VTKMetaData structure containing fileType, npoints, 
- *                         field names, and other necessary information.
+ * @param[in]  meta        Pointer to a \c VTKMetaData structure containing fileType, number of points,
+ *                         grid dimensions, field names, and other necessary information.
  * @param[in]  boffset     Current byte offset in the appended data section.
  * @param[out] boffsetOut  Updated byte offset after writing any header-related data.
  *
- * @return int  Returns 0 on success, or -1 if the fileType is not handled (e.g., structured grids).
+ * @return int Returns 0 on success, or -1 if the fileType is not handled.
+ *
+ * @note The function uses PETSc-style logging (LOG_ALLOW) to trace its execution.
+ *       For structured grid output, it assumes that grid dimensions (mx, my, mz) and
+ *       the number of nodes (nnodes) have been set in the metadata.
  */
 static int WriteVTKFileHeader(FILE *fp, const VTKMetaData *meta, int boffset, int *boffsetOut)
 {
-    // Log the entry into this function
+    const char *fieldName = NULL;
+    int numComponents = 1;
+
+    /*-----------------------------------------------------------------------
+     * Log the entry into this function with the key metadata parameters.
+     *-----------------------------------------------------------------------*/
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "WriteVTKFileHeader - Entered with fileType=%d, npoints=%d, scalarField=%s, vectorField=%s, numVectorFields=%d.\n",
-              meta->fileType, meta->npoints, meta->scalarFieldName, meta->vectorFieldName, meta->numVectorFields);
+              "WriteVTKFileHeader - Entered: fileType=%d, npoints=%d, scalarField=%s, vectorField=%s, "
+              "numVectorFields=%d, mx=%d, my=%d, mz=%d, nnodes=%d.\n",
+              meta->fileType, meta->npoints, meta->scalarFieldName, meta->vectorFieldName,
+              meta->numVectorFields, meta->mx, meta->my, meta->mz, meta->nnodes);
 
-    // For brevity, only handle VTK_POLYDATA here:
     if (meta->fileType == VTK_POLYDATA) {
-        // Decide field name / number of components
-        const char *fieldName = NULL;
-        int numComponents = 1;
+        /*===================================================================
+         * Polydata Branch: VTK_POLYDATA
+         *===================================================================*/
+        LOG_ALLOW(GLOBAL, LOG_INFO, "WriteVTKFileHeader - Processing VTK_POLYDATA output.\n");
 
+        /* Determine the field type for polydata:
+         * If a vector field is available, use it (with 3 components);
+         * otherwise, use the scalar field (with 1 component).
+         */
         if (meta->numVectorFields > 0 && meta->vectorFieldName) {
             fieldName = meta->vectorFieldName;
-            numComponents = 3; // vector
-            LOG_ALLOW(GLOBAL, LOG_DEBUG,
-                      "WriteVTKFileHeader - Using vector field '%s' with 3 components.\n", fieldName);
+            numComponents = 3;
+            LOG_ALLOW(GLOBAL, LOG_INFO,
+                      "WriteVTKFileHeader - Using vector field '%s' with 3 components for polydata.\n",
+                      fieldName);
         } else {
             fieldName = meta->scalarFieldName;
-            numComponents = 1; // scalar
-            LOG_ALLOW(GLOBAL, LOG_DEBUG,
-                      "WriteVTKFileHeader - Using scalar field '%s' with 1 component.\n", fieldName);
+            numComponents = 1;
+            LOG_ALLOW(GLOBAL, LOG_INFO,
+                      "WriteVTKFileHeader - Using scalar field '%s' with 1 component for polydata.\n",
+                      fieldName);
         }
 
-        // Call the function to write the VTP XML header
+        /* Log the call to the polydata header-writing function */
         LOG_ALLOW(GLOBAL, LOG_DEBUG,
                   "WriteVTKFileHeader - Calling WriteVTPXMLHeader with boffset=%d.\n", boffset);
         return WriteVTPXMLHeader(fp,
@@ -1120,13 +1140,54 @@ static int WriteVTKFileHeader(FILE *fp, const VTKMetaData *meta, int boffset, in
                                  numComponents,
                                  boffset,
                                  boffsetOut);
+    } else if (meta->fileType == VTK_STRUCTURED) {
+        /*===================================================================
+         * Structured Grid Branch: VTK_STRUCTURED
+         *===================================================================*/
+        LOG_ALLOW(GLOBAL, LOG_INFO, "WriteVTKFileHeader - Processing VTK_STRUCTURED output.\n");
+
+        /* Determine the field type for structured grid:
+         * If a vector field is available, use it (with 3 components);
+         * otherwise, use the scalar field (with 1 component).
+         */
+        if (meta->numVectorFields > 0 && meta->vectorFieldName) {
+            fieldName = meta->vectorFieldName;
+            numComponents = 3;
+            LOG_ALLOW(GLOBAL, LOG_INFO,
+                      "WriteVTKFileHeader - Using vector field '%s' with 3 components for structured grid.\n",
+                      fieldName);
+        } else {
+            fieldName = meta->scalarFieldName;
+            numComponents = 1;
+            LOG_ALLOW(GLOBAL, LOG_INFO,
+                      "WriteVTKFileHeader - Using scalar field '%s' with 1 component for structured grid.\n",
+                      fieldName);
+        }
+
+        /* Log the grid dimensions and number of nodes, then call the structured grid header-writing function */
+        LOG_ALLOW(GLOBAL, LOG_DEBUG,
+                  "WriteVTKFileHeader - Calling WriteVTSXMLHeader with boffset=%d, grid dimensions (%d, %d, %d) and nnodes=%d.\n",
+                  boffset, meta->mx, meta->my, meta->mz, meta->nnodes);
+        return WriteVTSXMLHeader(fp,
+                                 meta->mx,
+                                 meta->my,
+                                 meta->mz,
+                                 meta->nnodes,
+                                 fieldName,
+                                 numComponents,
+                                 boffset,
+                                 boffsetOut);
     } else {
-        // implement structured later
+        /*-------------------------------------------------------------------
+         * Unsupported File Type: Log a warning and return an error.
+         *-------------------------------------------------------------------*/
         LOG_ALLOW(GLOBAL, LOG_WARNING,
-                  "WriteVTKFileHeader - fileType=%d not implemented yet.\n", meta->fileType);
+                  "WriteVTKFileHeader - Unsupported file type %d encountered.\n", meta->fileType);
         return -1;
     }
 }
+
+
 
 /**
  * @brief Writes the XML footer for a VTK file based on the provided metadata.
@@ -1152,10 +1213,8 @@ static int WriteVTKFileFooter(FILE *fp, const VTKMetaData *meta)
         LOG_ALLOW(GLOBAL, LOG_DEBUG, "WriteVTKFileFooter - Writing VTP XML footer.\n");
         return WriteVTPXMLFooter(fp);
     } else {
-        LOG_ALLOW(GLOBAL, LOG_WARNING,
-                  "WriteVTKFileFooter - fileType=%d not implemented, returning -1.\n", meta->fileType);
-        fprintf(stderr, "VTK_STRUCTURED path not shown\n");
-        return -1;
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "WriteVTKFileFooter - Writing VTS XML footer.\n");
+	return WriteVTSXMLFooter(fp);
     }
 }
 
@@ -1172,10 +1231,6 @@ static int WriteVTKFileFooter(FILE *fp, const VTKMetaData *meta)
  * @param[in]  comm      The MPI communicator used for parallel execution.
  *
  * @return int  Returns 0 on success, or 1 on file-opening failure. Always returns 0 on non-\c rank 0 processes.
- *
- * @note
- * - Currently, only \c VTK_POLYDATA is demonstrated. 
- * - For structured grids (\c VTK_STRUCTURED), further implementation is needed in the header and footer logic.
  */
 int CreateVTKFileFromMetadata(const char *filename,
                               const VTKMetaData *meta,
@@ -1385,15 +1440,14 @@ PetscErrorCode ReadSwarmField(UserCtx *user, const char *field_name, PetscInt ti
 
   PetscFunctionBegin;
 
-  /* 1) Validate inputs and retrieve the DMSwarm. */
-  PetscValidPointer(user, 1);
-  PetscValidCharPointer(field_name, 2);
-  PetscValidCharPointer(ext, 4);
   swarm = user->swarm;
-  PetscCheckPointer(swarm, 1);
 
+  LOG_ALLOW(GLOBAL,LOG_DEBUG," ReadSwarmField Begins \n");
+ 
   /* 2) Create a global vector that references the specified Swarm field. */
   ierr = DMSwarmCreateGlobalVectorFromField(swarm, field_name, &fieldVec);CHKERRQ(ierr);
+
+  LOG_ALLOW(GLOBAL,LOG_DEBUG," Vector created from Field \n");
 
   /* 3) Use the provided ReadFieldData() function to read data into fieldVec. */
   ierr = ReadFieldData(user, field_name, fieldVec, ti, ext);CHKERRQ(ierr);

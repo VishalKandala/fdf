@@ -33,6 +33,7 @@
  * @param[in]  fieldName  Name of the field (e.g., "Ucat" for vts, "Velocity" for vtp).
  * @param[in]  timeIndex  Timestep index for filename (e.g., "Ucat_00010.vts").
  * @param[in]  outExt     File extension ("vts" for structured, "vtp" for particles).
+ * @param[in]  prefix     File prefix(directory to store file in).
  * @param[in]  comm       MPI communicator (usually PETSC_COMM_WORLD).
  *
  * @return PetscErrorCode  0 on success, or an error code on failure.
@@ -41,6 +42,7 @@ PetscErrorCode GatherAndWriteField(UserCtx *user,
                                    const char *fieldName,
                                    PetscInt timeIndex,
                                    const char *outExt,
+				   const char *prefix,
                                    MPI_Comm comm);
 
 /**
@@ -50,10 +52,11 @@ PetscErrorCode GatherAndWriteField(UserCtx *user,
  * @param[in]  user       Pointer to the UserCtx holding PETSc vectors.
  * @param[in]  timeIndex  Timestep index for filenames.
  * @param[in]  outExt     File extension (e.g., "vts" or "vtp").
+ * @param[in]  prefix     File prefix(directory to store file in).
  *
  * @return PetscErrorCode  Returns 0 on success, error code on failure.
  */
-PetscErrorCode WriteEulerianVTK(UserCtx *user, PetscInt timeIndex, const char *outExt);
+PetscErrorCode WriteEulerianVTK(UserCtx *user, PetscInt timeIndex, const char *outExt,const char *prefix);
 
 
 /**
@@ -65,10 +68,11 @@ PetscErrorCode WriteEulerianVTK(UserCtx *user, PetscInt timeIndex, const char *o
  * @param[in] user       Pointer to the user context (contains the particle swarm).
  * @param[in] timeIndex  Current timestep index (used in filenames).
  * @param[in] outExt     File extension ("vtp" for particles).
+ * @param[in]  prefix     File prefix(directory to store file in).
  *
  * @return PetscErrorCode  0 on success, nonzero on failure.
  */
-PetscErrorCode WriteParticleVTK(UserCtx *user, PetscInt timeIndex, const char *outExt);
+PetscErrorCode WriteParticleVTK(UserCtx *user, PetscInt timeIndex, const char *outExt,const char *prefix);
 
 #endif /* POSTPROCESS_H */
 
