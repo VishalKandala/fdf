@@ -20,8 +20,7 @@
 #include <petscdmcomposite.h>
 
 #include "postprocess.h"
-#include "logging.h"
-#include "common.h"
+
 // #include "io.h"
 // #include "grid.h"
 // #include "interpolation.h"
@@ -119,7 +118,7 @@ static PetscErrorCode PrepareVTKMetaData(const double *coordsArray,
     meta->mz = mz + 1;
     /* Compute the number of  cells (nodes) for the structured grid.*/
     
-    meta->nnodes = (mx) * (my) * (mz);
+    meta->nnodes = (mx+1) * (my+1) * (mz+1);
     LOG_ALLOW(GLOBAL, LOG_INFO, "Computed number of nodes (cells): %d.\n", meta->nnodes);
 
     /*---------------------------------------------------------------------
@@ -282,8 +281,8 @@ static PetscErrorCode ParsePostProcessingParams(PostProcessParams *pps)
     pps->outputParticles = PETSC_TRUE;     // Flag to Output(or not) Particle Fields.
     strcpy(pps->eulerianExt, "vts");  // Eulerian File extension
     strcpy(pps->particleExt, "vtp");  // Lagrangian File extension
-    strcpy(pps->eulerianPrefix,"results"); // Prefix(directory to save eulerian fields in.
-    strcpy(pps->particlePrefix,"results"); // Prefix(directory to save eulerian fields in.                         
+    strcpy(pps->eulerianPrefix,"viz"); // Prefix(directory to save eulerian fields in.
+    strcpy(pps->particlePrefix,"viz"); // Prefix(directory to save eulerian fields in.                         
 
     // 5) Log parsed values
     LOG_ALLOW(GLOBAL,LOG_INFO, "Parsed PostProcessingParams: startTime=%d, endTime=%d, timeStep=%d\n",
@@ -296,16 +295,16 @@ static PetscErrorCode ParsePostProcessingParams(PostProcessParams *pps)
  * @brief Gathers a PETSc vector or a DMSwarm field, prepares VTKMetaData, and writes to a VTK file.
  *
  * This function dynamically handles **both Eulerian (.vts) and Lagrangian (.vtp) data**:
- *  - **If the field exists in `DMSwarm`**, it **extracts it into a PETSc Vec**.
+ *  - **If the field exists in DMSwarm**, it **extracts it into a PETSc Vec**.
  *  - **If already a Vec**, it directly processes it.
- *  - **For `.vtp` files, it also gathers particle positions** (`DMSwarmPICField_coor`).
- *  - **For `.vts`, only the field is gathered** (structured grid).
+ *  - **For `.vtp` files, it also gathers particle positions** (from the swarm field "position").
+ *  - **For `.vts` files, the coordinate vector ("coor") is gathered** and passed to the metadata.
  *
  * @param[in]  user       Pointer to user context (contains swarm and Eulerian fields).
  * @param[in]  fieldName  Name of the field (e.g., "Ucat" for vts, "Velocity" for vtp).
  * @param[in]  timeIndex  Timestep index for filename (e.g., "Ucat_00010.vts").
  * @param[in]  outExt     File extension ("vts" for structured, "vtp" for particles).
- * @param[in]  prefix     File prefix(directory to store file in).
+ * @param[in]  prefix     File prefix (directory to store file in).
  * @param[in]  comm       MPI communicator (usually PETSC_COMM_WORLD).
  *
  * @return PetscErrorCode  0 on success, or an error code on failure.
@@ -321,65 +320,92 @@ PetscErrorCode GatherAndWriteField(UserCtx *user,
     PetscErrorCode ierr;
     PetscMPIInt    rank;
     ierr = MPI_Comm_rank(comm, &rank);CHKERRQ(ierr);
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Rank %d processing field '%s' at time index %d with extension '%s'.\n",
+              rank, fieldName, (int)timeIndex, outExt);
 
     Vec fieldVec = NULL;
     PetscBool isSwarmField = PETSC_FALSE;
 
     /* 1) Detect if the field exists in DMSwarm (for ".vtp" cases) */
     if (strcmp(outExt, "vtp") == 0) {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Attempting to create global vector from swarm field '%s'.\n", fieldName);
         ierr = DMSwarmCreateGlobalVectorFromField(user->swarm, fieldName, &fieldVec);
         if (ierr) {
             /* An error occurred so assume the field does not exist in the swarm.
                Clear the error code and mark isSwarmField as false. */
+            LOG_ALLOW(GLOBAL, LOG_WARNING, "GatherAndWriteField - Field '%s' not found in swarm, treating as Eulerian field.\n", fieldName);
             isSwarmField = PETSC_FALSE;
             ierr = 0;  /* Reset the error code so that we can continue */
         } else {
             isSwarmField = PETSC_TRUE;
+            LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Successfully created swarm vector for field '%s'.\n", fieldName);
         }
     }
 
     /* 2) If not a swarm field, assume it's a normal Eulerian field */
     if (!isSwarmField) {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Using Eulerian field for '%s'.\n", fieldName);
         if (strcmp(fieldName, "Ucat") == 0) fieldVec = user->Ucat;
         else if (strcmp(fieldName, "P") == 0) fieldVec = user->P;
         else if (strcmp(fieldName, "Ucont") == 0) fieldVec = user->Ucont;
         else if (strcmp(fieldName, "Nvert") == 0) fieldVec = user->Nvert;
-	else SETERRQ(comm, PETSC_ERR_ARG_WRONG, "Unknown field requested.");
+        else SETERRQ(comm, PETSC_ERR_ARG_WRONG, "Unknown field requested.");
     }
 
     /* 3) Gather the field data (Eulerian OR swarm field) */
     PetscInt  Nfield = 0;
     double   *fieldArray = NULL;
     if (fieldVec) {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Gathering field data for '%s'.\n", fieldName);
         ierr = VecToArrayOnRank0(fieldVec, &Nfield, &fieldArray);CHKERRQ(ierr);
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Field data gathered: Nfield=%D.\n", Nfield);
     }
 
-    /* 4) If ".vtp", also gather particle positions from the swarm */
+    /* 4) Gather coordinate data based on file type.
+     * For ".vtp", gather particle positions from the swarm ("position" field).
+     * For ".vts", gather the Eulerian coordinate field ("coor") from the user context.
+     */
     PetscInt  Ncoords = 0;
     double   *coordsArray = NULL;
+    Vec coordsVec;
     if (strcmp(outExt, "vtp") == 0) {
-        Vec coordsVec;
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Gathering particle positions from swarm for .vtp output.\n");
         ierr = DMSwarmCreateGlobalVectorFromField(user->swarm, "position", &coordsVec);CHKERRQ(ierr);
         ierr = VecToArrayOnRank0(coordsVec, &Ncoords, &coordsArray);CHKERRQ(ierr);
         ierr = DMSwarmDestroyGlobalVectorFromField(user->swarm, "position", &coordsVec);CHKERRQ(ierr);
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Particle positions gathered: Ncoords=%D.\n", Ncoords);
+    } else if (strcmp(outExt, "vts") == 0) {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Gathering Eulerian coordinates for .vts output.\n");
+         /* For structured grid, get the coordinates vector from DMDA */
+         ierr = DMGetCoordinatesLocal(user->da, &coordsVec);CHKERRQ(ierr);
+         ierr = VecToArrayOnRank0(coordsVec, &Ncoords, &coordsArray);CHKERRQ(ierr);
+         LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Eulerian coordinates gathered: Ncoords=%D.\n", Ncoords);
     }
 
-    /* 5) Prepare VTK metadata */
+    /* 5) Prepare VTK metadata.
+     * For ".vts" files, coordsArray now contains the Eulerian grid coordinates.
+     */
     VTKMetaData meta;
-    ierr = PrepareVTKMetaData(coordsArray, Ncoords,  /* If "vts", coordsArray will be NULL */
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Preparing VTK metadata.\n");
+    ierr = PrepareVTKMetaData(coordsArray, Ncoords,  /* coordsArray will be non-NULL for "vts" */
                               fieldArray, Nfield,
                               fieldName, outExt,
                               &meta, rank);CHKERRQ(ierr);
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - VTK metadata prepared.\n");
 
     /* 6) Construct the filename (e.g., "Ucat_00010.vts" OR "particleVelocity_00010.vtp") */
     char outFile[256];
-    sprintf(outFile, "%s/%s_%05d.%s",prefix,fieldName, (int)timeIndex, outExt);
+    sprintf(outFile, "%s/%s_%05d.%s", prefix, fieldName, (int)timeIndex, outExt);
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Constructed output filename: %s\n", outFile);
 
     /* 7) Write the VTK file */
+    LOG_ALLOW(GLOBAL, LOG_INFO, "GatherAndWriteField - Writing VTK file '%s'.\n", outFile);
     ierr = CreateAndWriteVTKFile(outFile, &meta, comm);CHKERRQ(ierr);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "GatherAndWriteField - Successfully wrote VTK file '%s'.\n", outFile);
 
     /* 8) Cleanup on rank 0 */
     if (rank == 0) {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Cleaning up rank 0 memory.\n");
         if (meta.fileType == VTK_POLYDATA) {
             free(meta.connectivity);
             free(meta.offsets);
@@ -390,6 +416,7 @@ PetscErrorCode GatherAndWriteField(UserCtx *user,
 
     /* 9) Cleanup DMSwarm Vec reference (if created) */
     if (isSwarmField) {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Cleaning up swarm field vector for '%s'.\n", fieldName);
         ierr = DMSwarmDestroyGlobalVectorFromField(user->swarm, fieldName, &fieldVec);CHKERRQ(ierr);
     }
 
@@ -425,17 +452,17 @@ PetscErrorCode WriteEulerianVTK(UserCtx *user, PetscInt timeIndex, const char *o
 
     // Field #2: P
     if (user->P) {
-      ierr = GatherAndWriteField(user,    "P",    timeIndex, outExt, prefix,PETSC_COMM_WORLD);CHKERRQ(ierr);
+      //    ierr = GatherAndWriteField(user,    "P",    timeIndex, outExt, prefix,PETSC_COMM_WORLD);CHKERRQ(ierr);
     }
 
     // Field #3: Ucont
     if (user->Ucont) {
-      ierr = GatherAndWriteField(user, "Ucont", timeIndex, outExt, prefix,PETSC_COMM_WORLD);CHKERRQ(ierr);
+      //  ierr = GatherAndWriteField(user, "Ucont", timeIndex, outExt, prefix,PETSC_COMM_WORLD);CHKERRQ(ierr);
     }
 
     // Field #4: Nvert
     if (user->Nvert) {
-      ierr = GatherAndWriteField(user, "Nvert", timeIndex, outExt, prefix,PETSC_COMM_WORLD);CHKERRQ(ierr);
+      //  ierr = GatherAndWriteField(user, "Nvert", timeIndex, outExt, prefix,PETSC_COMM_WORLD);CHKERRQ(ierr);
     }
 
     PetscFunctionReturn(0);
@@ -497,22 +524,25 @@ int main(int argc, char **argv)
     // Only these function names will produce LOG_ALLOW (or LOG_ALLOW_SYNC) output.
     // You can add more as needed (e.g., "InitializeSimulation", "PerformParticleSwarmOperations", etc.).
     const char *allowedFuncs[] = {
-      "WriteEulerianVTK",
+      // "SetupGridAndVectors",
+      // "DefineGridCoordinates",
+      // "AssignGridCoordinates"
+      // "WriteEulerianVTK",
       "GatherAndWriteField",
+      "VecToArrayOnRank0",
       "PrepareVTKMetaData",
-      "CreateAndWriteVTKFile",
-      "CreateVTKFromMetadata"
+     "CreateAndWriteVTKFile",
+     "CreateVTKFileFromMetadata"
       // "InitializeSimulation",
       // "ReadSwarmField",
       // "ReadFieldData",
       // "ReadAllSwarmFields",
-      //"InitializeSwarm"
-      //  "main",                 
-      //  "SetupGridAndVectors",
-      //  "InitializeSimulation",
-      //  "CreateParticleSwarm", 
-      //  "ParsePostProcessingParams",
-      //  "ReadSimulationFields"
+      // "InitializeSwarm"
+      // "main",                 
+      // "InitializeSimulation",
+      // "CreateParticleSwarm" 
+      // "ParsePostProcessingParams",
+      // "ReadSimulationFields",
     };
     set_allowed_functions(allowedFuncs, 5);
 

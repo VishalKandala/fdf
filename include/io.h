@@ -11,6 +11,9 @@
 
 #include <petsc.h> // System dependency, required.
 #include "common.h" // For shared definitions like UserCtx.
+#include "logging.h"        // For logging macros.
+#include "grid.h"           // Only if grid-related functions are directly used
+
 
 // ------------------------ Function Declarations ------------------------
 

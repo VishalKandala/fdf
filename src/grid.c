@@ -2,9 +2,6 @@
 // grid.c 
 
 #include "grid.h"
-#include "logging.h"
-#include <petsc.h>
-#include <stdlib.h>
 
 //extern PetscInt block_number;
 
@@ -55,7 +52,7 @@ PetscErrorCode InitializeGridDM(UserCtx *user, PetscReal L_x, PetscReal L_y, Pet
     // Set up the DMDA
     ierr = DMSetUp(user->da); CHKERRQ(ierr);
     LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - DMDA setup completed.\n");
-
+ 
     // Assign coordinates based on domain size (L_x, L_y, L_z)
     PetscReal x_min = 0.0, x_max = L_x;
     PetscReal y_min = 0.0, y_max = L_y;

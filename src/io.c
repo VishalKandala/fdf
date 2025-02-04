@@ -6,10 +6,8 @@
  * including optional handling for statistical, LES, and RANS data.
  */
 
-#include <petsc.h>          // System dependency.
-#include "common.h"         // For UserCtx and shared definitions.
-#include "logging.h"        // For logging macros.
-#include "grid.h"           // Only if grid-related functions are directly used.
+//#include <petsc.h>          // System dependency.
+//#include "common.h"         // For UserCtx and shared definitions.
 #include "io.h"             
 
 // ------------------------ Function Definitions ------------------------
@@ -880,9 +878,9 @@ static int WriteVTSXMLHeader(FILE       *fp,
     fprintf(fp, "<VTKFile type=\"StructuredGrid\" version=\"0.1\" byte_order=\"%s\">\n",
             byte_order);
     fprintf(fp, "  <StructuredGrid WholeExtent=\"%d %d %d %d %d %d\">\n",
-            0, mx-2, 0, my-2, 0, mz-2);
+            0, mx-1, 0, my-1, 0, mz-1);
     fprintf(fp, "    <Piece Extent=\"%d %d %d %d %d %d\">\n",
-            0, mx-2, 0, my-2, 0, mz-2);
+            0, mx-1, 0, my-1, 0, mz-1);
 
     // Points section
     fprintf(fp, "      <Points>\n");
@@ -899,7 +897,7 @@ static int WriteVTSXMLHeader(FILE       *fp,
     fprintf(fp, "        <DataArray type=\"%s\" Name=\"%s\" NumberOfComponents=\"%d\" "
                 "format=\"appended\" offset=\"%d\" />\n",
             precision, fieldName, numComponents,boffset);
-    boffset += (int)sizeof(int) + nnodes * (int)sizeof(double);
+    boffset += (int)sizeof(int) + nnodes * numComponents * (int)sizeof(double);
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
               "WriteVTSXMLHeader - Updated offset to %d after PointData.\n", boffset);
     fprintf(fp, "      </PointData>\n");
@@ -1264,7 +1262,7 @@ int CreateVTKFileFromMetadata(const char *filename,
         // 3) Immediately write appended data blocks in EXACT order:
         //    (a) coords (3*npoints doubles)
         if (meta->coords) {
-            int ncoords = 3 * meta->npoints;
+	  int ncoords = 3 * (meta->fileType == VTK_STRUCTURED ? meta->nnodes : meta->npoints);
             if (ncoords > 0) {
                 LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing coords block: %d doubles.\n", ncoords);
                 WriteVTKAppendedBlock(fp, meta->coords, ncoords, sizeof(double));
@@ -1274,13 +1272,13 @@ int CreateVTKFileFromMetadata(const char *filename,
 
         //    (b) scalar or vector field
         if (meta->numScalarFields > 0 && meta->scalarField) {
-            int nvals = meta->npoints; // 1 component
+	  int nvals = (meta->fileType == VTK_STRUCTURED ? meta->nnodes : meta->npoints);
             LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing scalar field block: %d doubles.\n", nvals);
             WriteVTKAppendedBlock(fp, meta->scalarField, nvals, sizeof(double));
             boffset += sizeof(int) + nvals * sizeof(double);
         }
         else if (meta->numVectorFields > 0 && meta->vectorField) {
-            int nvals = 3 * meta->npoints; // 3 comps
+	  int nvals = 3 * (meta->fileType == VTK_STRUCTURED ? meta->nnodes : meta->npoints); // 3 components
             LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing vector field block: %d doubles.\n", nvals);
             WriteVTKAppendedBlock(fp, meta->vectorField, nvals, sizeof(double));
             boffset += sizeof(int) + nvals * sizeof(double);
@@ -1310,6 +1308,7 @@ int CreateVTKFileFromMetadata(const char *filename,
 
     return 0;
 }
+
 
 /**
  * @brief Gathers a PETSc vector onto rank 0 as a contiguous array of doubles.

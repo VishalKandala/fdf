@@ -14,12 +14,12 @@
 #include <petscdmcomposite.h>
 
 // Include the updated headers
-#include "common.h"         // Shared type definitions
-#include "ParticleSwarm.h"  // Particle swarm functions
-#include "walkingsearch.h"  // Particle location functions
-#include "grid.h"           // Grid functions
-#include "logging.h"        // Logging macros
-#include "io.h"             // Data Input and Output functions
+//#include "common.h"         // Shared type definitions
+//#include "ParticleSwarm.h"  // Particle swarm functions
+//#include "walkingsearch.h"  // Particle location functions
+//#include "grid.h"           // Grid functions
+//#include "logging.h"        // Logging macros
+//#include "io.h"             // Data Input and Output functions
 #include "interpolation.h"
 
 

@@ -6,6 +6,7 @@
 #include "logging.h" 
 #include "ParticleSwarm.h"
 #include "interpolation.h"
+#include "grid.h"
 /* --------------------------------------------------------------------
    postprocess.h
 
