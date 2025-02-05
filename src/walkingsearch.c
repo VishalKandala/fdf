@@ -40,16 +40,16 @@ void ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts
 {
     // Validate output pointer
     if (d == NULL) {
-      LOG(GLOBAL,LOG_ERROR, "ComputeSignedDistanceToPlane - Output pointer 'd' is NULL.\n");
+      LOG_ALLOW(GLOBAL,LOG_ERROR, "ComputeSignedDistanceToPlane - Output pointer 'd' is NULL.\n");
         return;
     }
 
     // Debug: Print points defining the plane and the point p
-    LOG(GLOBAL,LOG_DEBUG, "ComputeSignedDistanceToPlane - Computing distance for point (%.3f, %.3f, %.3f) to plane defined by:\n", p.x, p.y, p.z);
-    LOG(GLOBAL,LOG_DEBUG, "  p1: (%.3f, %.3f, %.3f)\n", p1.x, p1.y, p1.z);
-    LOG(GLOBAL,LOG_DEBUG, "  p2: (%.3f, %.3f, %.3f)\n", p2.x, p2.y, p2.z);
-    LOG(GLOBAL,LOG_DEBUG, "  p3: (%.3f, %.3f, %.3f)\n", p3.x, p3.y, p3.z);
-    LOG(GLOBAL,LOG_DEBUG, "  p4: (%.3f, %.3f, %.3f)\n", p4.x, p4.y, p4.z);
+    LOG_ALLOW(GLOBAL,LOG_DEBUG, "ComputeSignedDistanceToPlane - Computing distance for point (%.3f, %.3f, %.3f) to plane defined by:\n", p.x, p.y, p.z);
+    LOG_ALLOW(GLOBAL,LOG_DEBUG, "  p1: (%.3f, %.3f, %.3f)\n", p1.x, p1.y, p1.z);
+    LOG_ALLOW(GLOBAL,LOG_DEBUG, "  p2: (%.3f, %.3f, %.3f)\n", p2.x, p2.y, p2.z);
+    LOG_ALLOW(GLOBAL,LOG_DEBUG, "  p3: (%.3f, %.3f, %.3f)\n", p3.x, p3.y, p3.z);
+    LOG_ALLOW(GLOBAL,LOG_DEBUG, "  p4: (%.3f, %.3f, %.3f)\n", p4.x, p4.y, p4.z);
     
     // Calculate vectors in the plane
     PetscReal vector1_x = p3.x - p1.x;
@@ -70,7 +70,7 @@ void ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts
 
     // Check for degenerate plane
     if (normal_magnitude == 0.0) {
-      LOG(GLOBAL,LOG_ERROR, "ComputeSignedDistanceToPlane - Degenerate plane detected (zero normal vector).\n");
+      LOG_ALLOW(GLOBAL,LOG_ERROR, "ComputeSignedDistanceToPlane - Degenerate plane detected (zero normal vector).\n");
         *d = 0.0;
         return;
     }
@@ -94,7 +94,7 @@ void ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts
     }
 
     // Debug: Print the computed distance
-    LOG(LOCAL,LOG_DEBUG, "ComputeSignedDistanceToPlane - Signed distance: %.6f\n", *d);
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "ComputeSignedDistanceToPlane - Signed distance: %.6f\n", *d);
 }
 
 /**
@@ -142,13 +142,13 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
 {
     // Validate that the 'cell' pointer is not NULL to prevent dereferencing a null pointer.
     if (cell == NULL) {
-      LOG(LOCAL,LOG_ERROR, "CalculateDistancesToCellFaces - 'cell' is NULL.\n");
+      LOG_ALLOW(LOCAL,LOG_ERROR, "CalculateDistancesToCellFaces - 'cell' is NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "CalculateDistancesToCellFaces - 'cell' is NULL.");
     }
 
     // Validate that the 'd' pointer is not NULL to ensure there is memory allocated for distance storage.
     if (d == NULL) {
-      LOG(LOCAL,LOG_ERROR, "CalculateDistancesToCellFaces - 'd' is NULL.\n");
+      LOG_ALLOW(LOCAL,LOG_ERROR, "CalculateDistancesToCellFaces - 'd' is NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "CalculateDistancesToCellFaces - 'd' is NULL.");
     }
 
@@ -255,11 +255,11 @@ PetscErrorCode DeterminePointPosition(const Cmpnts p, const Cell *cell, int *res
 
     // Validate input pointers
     if (cell == NULL) {
-      LOG(LOCAL,LOG_ERROR, "DeterminePointPosition - 'cell' is NULL.\n");
+      LOG_ALLOW(LOCAL,LOG_ERROR, "DeterminePointPosition - 'cell' is NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "DeterminePointPosition - Input parameter 'cell' is NULL.");
     }
     if (result == NULL) {
-      LOG(LOCAL,LOG_ERROR, "DeterminePointPosition - 'result' is NULL.\n");
+      LOG_ALLOW(LOCAL,LOG_ERROR, "DeterminePointPosition - 'result' is NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "DeterminePointPosition - Output parameter 'result' is NULL.");
     }
 
@@ -283,15 +283,15 @@ PetscErrorCode DeterminePointPosition(const Cmpnts p, const Cell *cell, int *res
     // Set the result based on flags
     if(isInside) {
         *result = 0; // Inside the cell
-        LOG(LOCAL,LOG_DEBUG, "DeterminePointPosition - Particle is inside the cell.\n");
+        LOG_ALLOW(LOCAL,LOG_DEBUG, "DeterminePointPosition - Particle is inside the cell.\n");
     }
     else if(isOnBoundary) {
         *result = 1; // On the boundary of the cell
-        LOG(LOCAL,LOG_DEBUG, "DeterminePointPosition - Particle is on the boundary of the cell.\n");
+        LOG_ALLOW(LOCAL,LOG_DEBUG, "DeterminePointPosition - Particle is on the boundary of the cell.\n");
     }
     else {
         *result = -1; // Outside the cell
-        LOG(LOCAL,LOG_DEBUG, "DeterminePointPosition - Particle is outside the cell.\n");
+        LOG_ALLOW(LOCAL,LOG_DEBUG, "DeterminePointPosition - Particle is outside the cell.\n");
     }
 
     return 0; // Indicate successful execution
@@ -321,15 +321,15 @@ PetscErrorCode PrintCellVertices(const Cell *cell, PetscInt rank, PetscInt ctr, 
 
     // Validate input pointers
     if (cell == NULL) {
-      LOG(GLOBAL,LOG_ERROR, "PrintCellVertices - 'cell' is NULL.\n");
+      LOG_ALLOW(GLOBAL,LOG_ERROR, "PrintCellVertices - 'cell' is NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "PrintCellVertices - Input parameter 'cell' is NULL.");
     }
 
     // Conditional printing based on 'visflg' and 'ctr'
     if (visflg == ctr) {
-      LOG(LOCAL,LOG_DEBUG, "PrintCellVertices - Rank %d, Cell Vertices:\n", rank);
+      LOG_ALLOW(LOCAL,LOG_DEBUG, "PrintCellVertices - Rank %d, Cell Vertices:\n", rank);
         for(int i = 0; i < 8; i++){ 
-	  LOG(LOCAL,LOG_DEBUG, "  Vertex[%d]: (%.2f, %.2f, %.2f)\n", 
+	  LOG_ALLOW(LOCAL,LOG_DEBUG, "  Vertex[%d]: (%.2f, %.2f, %.2f)\n", 
                        i, cell->vertices[i].x, cell->vertices[i].y, cell->vertices[i].z);
         }
     }
@@ -367,19 +367,19 @@ PetscErrorCode PrintFaceDistances(PetscReal* d, PetscInt ctr, PetscInt visflg)
 
     // Validate input array
     if (d == NULL) {
-      LOG(LOCAL,LOG_ERROR, "PrintFaceDistances - 'd' is NULL.\n");
+      LOG_ALLOW(LOCAL,LOG_ERROR, "PrintFaceDistances - 'd' is NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "PrintFaceDistances - Input array 'd' is NULL.");
     }
 
     // Conditional printing based on 'visflg' and 'ctr'
     if (visflg == ctr) {
-      LOG(LOCAL,LOG_DEBUG, "PrintFaceDistances - Face Distances:\n");
-      LOG(LOCAL,LOG_DEBUG, "  LEFT(%d):   %.15f\n", LEFT, d[LEFT]);
-      LOG(LOCAL,LOG_DEBUG, "  RIGHT(%d):  %.15f\n", RIGHT, d[RIGHT]);
-      LOG(LOCAL,LOG_DEBUG, "  BOTTOM(%d): %.15f\n", BOTTOM, d[BOTTOM]);
-      LOG(LOCAL,LOG_DEBUG, "  TOP(%d):    %.15f\n", TOP, d[TOP]);
-      LOG(LOCAL,LOG_DEBUG, "  FRONT(%d):  %.15f\n", FRONT, d[FRONT]);
-      LOG(LOCAL,LOG_DEBUG, "  BACK(%d):   %.15f\n", BACK, d[BACK]);
+      LOG_ALLOW(LOCAL,LOG_DEBUG, "PrintFaceDistances - Face Distances:\n");
+      LOG_ALLOW(LOCAL,LOG_DEBUG, "  LEFT(%d):   %.15f\n", LEFT, d[LEFT]);
+      LOG_ALLOW(LOCAL,LOG_DEBUG, "  RIGHT(%d):  %.15f\n", RIGHT, d[RIGHT]);
+      LOG_ALLOW(LOCAL,LOG_DEBUG, "  BOTTOM(%d): %.15f\n", BOTTOM, d[BOTTOM]);
+      LOG_ALLOW(LOCAL,LOG_DEBUG, "  TOP(%d):    %.15f\n", TOP, d[TOP]);
+      LOG_ALLOW(LOCAL,LOG_DEBUG, "  FRONT(%d):  %.15f\n", FRONT, d[FRONT]);
+      LOG_ALLOW(LOCAL,LOG_DEBUG, "  BACK(%d):   %.15f\n", BACK, d[BACK]);
     }
 
     return 0; // Indicate successful execution
@@ -448,11 +448,11 @@ PetscErrorCode GetCellVerticesFromGrid(Cmpnts ***coor, PetscInt idx, PetscInt id
 
     // Validate input pointers
     if (coor == NULL) {
-      LOG(LOCAL,LOG_ERROR, "GetCellVerticesFromGrid - 'coor' is NULL.\n");
+      LOG_ALLOW(LOCAL,LOG_ERROR, "GetCellVerticesFromGrid - 'coor' is NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "GetCellVerticesFromGrid - Input array 'coor' is NULL.");
     }
     if (cell == NULL) {
-      LOG(LOCAL,LOG_ERROR, "GetCellVerticesFromGrid - 'cell' is NULL.\n");
+      LOG_ALLOW(LOCAL,LOG_ERROR, "GetCellVerticesFromGrid - 'cell' is NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "GetCellVerticesFromGrid - Output parameter 'cell' is NULL.");
     }
 
@@ -467,7 +467,7 @@ PetscErrorCode GetCellVerticesFromGrid(Cmpnts ***coor, PetscInt idx, PetscInt id
     cell->vertices[6] = coor[idz+1][idy][idx+1];     // Vertex 6: (i+1, j,   k+1)
     cell->vertices[7] = coor[idz+1][idy][idx];       // Vertex 7: (i,   j,   k+1)
 
-    LOG(LOCAL,LOG_DEBUG, "GetCellVerticesFromGrid - Retrieved vertices for cell (%d, %d, %d).\n", idx, idy, idz);
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "GetCellVerticesFromGrid - Retrieved vertices for cell (%d, %d, %d).\n", idx, idy, idz);
 
     return 0; // Indicate successful execution
 }
@@ -494,7 +494,7 @@ PetscErrorCode InitializeTraversalParameters(UserCtx *user, Particle *particle, 
 
     // Validate input pointers
     if (user == NULL || particle == NULL || idx == NULL || idy == NULL || idz == NULL || traversal_steps == NULL) {
-      LOG(GLOBAL,LOG_ERROR, "InitializeTraversalParameters - One or more input pointers are NULL.\n");
+      LOG_ALLOW(GLOBAL,LOG_ERROR, "InitializeTraversalParameters - One or more input pointers are NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "InitializeTraversalParameters - One or more input pointers are NULL.");
     }
 
@@ -517,7 +517,7 @@ PetscErrorCode InitializeTraversalParameters(UserCtx *user, Particle *particle, 
     // Initialize traversal step counter
     *traversal_steps = 0;
 
-    LOG(LOCAL,LOG_INFO, "InitializeTraversalParameters - Starting traversal at cell (%d, %d, %d).\n", *idx, *idy, *idz);
+    LOG_ALLOW(LOCAL,LOG_INFO, "InitializeTraversalParameters - Starting traversal at cell (%d, %d, %d).\n", *idx, *idy, *idz);
 
     return 0;
 }
@@ -540,7 +540,7 @@ PetscErrorCode CheckCellWithinLocalGrid(UserCtx *user, PetscInt idx, PetscInt id
 
     // Validate input pointers
     if (user == NULL || is_within == NULL) {
-      LOG(GLOBAL,LOG_ERROR, "CheckCellWithinLocalGrid - One or more input pointers are NULL.\n");
+      LOG_ALLOW(GLOBAL,LOG_ERROR, "CheckCellWithinLocalGrid - One or more input pointers are NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "CheckCellWithinLocalGrid - One or more input pointers are NULL.");
     }
 
@@ -557,7 +557,7 @@ PetscErrorCode CheckCellWithinLocalGrid(UserCtx *user, PetscInt idx, PetscInt id
         *is_within = PETSC_FALSE;
     }
 
-    LOG(LOCAL,LOG_DEBUG, "CheckCellWithinLocalGrid - Cell (%d, %d, %d) is %s the local grid.\n",
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "CheckCellWithinLocalGrid - Cell (%d, %d, %d) is %s the local grid.\n",
         idx, idy, idz, (*is_within) ? "within" : "outside");
 
     return 0;
@@ -583,7 +583,7 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
 
     // Validate input pointers
     if (user == NULL || cell == NULL) {
-      LOG(GLOBAL,LOG_ERROR, "RetrieveCurrentCell - One or more input pointers are NULL.\n");
+      LOG_ALLOW(GLOBAL,LOG_ERROR, "RetrieveCurrentCell - One or more input pointers are NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "RetrieveCurrentCell - One or more input pointers are NULL.");
     }
 
@@ -601,7 +601,7 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
 
     // Debug: Print cell vertices
-    LOG(LOCAL,LOG_DEBUG, "RetrieveCurrentCell - Cell (%d, %d, %d) vertices \n", idx, idy, idz);
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "RetrieveCurrentCell - Cell (%d, %d, %d) vertices \n", idx, idy, idz);
     ierr = PrintCellVertices(cell, rank, 1, 1); // change ctr and visflg hardcoding later. CHKERRQ(ierr);
 
     return 0;
@@ -658,7 +658,7 @@ PetscErrorCode EvaluateParticlePosition(const Cell *cell, PetscReal *d, const Cm
 
     // Validate input pointers to ensure they are not NULL, preventing potential segmentation faults.
     if (cell == NULL || position == NULL) {
-      LOG(GLOBAL,LOG_ERROR, "EvaluateParticlePosition - One or more input pointers are NULL.\n");
+      LOG_ALLOW(GLOBAL,LOG_ERROR, "EvaluateParticlePosition - One or more input pointers are NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "EvaluateParticlePosition - One or more input pointers are NULL.");
     }
 
@@ -668,7 +668,7 @@ PetscErrorCode EvaluateParticlePosition(const Cell *cell, PetscReal *d, const Cm
     CHKERRQ(ierr); // Check for errors in distance calculation.
 
     // Debugging output: Print the computed distances to each face for verification purposes.
-    LOG(LOCAL,LOG_DEBUG, "EvaluateParticlePosition - Face Distances:\n");
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "EvaluateParticlePosition - Face Distances:\n");
     ierr = PrintFaceDistances(d, 1, 1); 
     CHKERRQ(ierr); // Check for errors in printing distances.
 
@@ -705,49 +705,49 @@ PetscErrorCode UpdateCellIndicesBasedOnDistances( PetscReal d[NUM_FACES], PetscI
 {
     // Validate input pointers
     if (d == NULL) {
-      LOG(GLOBAL,LOG_ERROR, "UpdateCellIndicesBasedOnDistances - 'd' is NULL.\n");
+      LOG_ALLOW(GLOBAL,LOG_ERROR, "UpdateCellIndicesBasedOnDistances - 'd' is NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UpdateCellIndicesBasedOnDistances - Input array 'd' is NULL.");
     }
     if (idx == NULL || idy == NULL || idz == NULL) {
-      LOG(GLOBAL,LOG_ERROR, "UpdateCellIndicesBasedOnDistances - One or more index pointers are NULL.\n");
+      LOG_ALLOW(GLOBAL,LOG_ERROR, "UpdateCellIndicesBasedOnDistances - One or more index pointers are NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UpdateCellIndicesBasedOnDistances - One or more index pointers are NULL.");
     }
 
     // Debug: Print current face distances
-    LOG(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Current Face Distances:\n");
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Current Face Distances:\n");
     PrintFaceDistances(d, 1, 1);
 
     // Update k-direction based on FRONT and BACK distances
     if (d[FRONT] < 0.0) {
-      LOG(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[FRONT] < 0.0, incrementing idz.\n");
+      LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[FRONT] < 0.0, incrementing idz.\n");
         (*idz) += 1;
     }
     else if(d[BACK] < 0.0){
-      LOG(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[BACK] < 0.0, decrementing idz.\n");
+      LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[BACK] < 0.0, decrementing idz.\n");
         (*idz) -= 1;
     }
 
     // Update i-direction based on LEFT and RIGHT distances
     if (d[LEFT] < 0.0) {
-      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[LEFT] < 0.0, decrementing idx.\n");
+      LOG_ALLOW(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[LEFT] < 0.0, decrementing idx.\n");
         (*idx) -= 1;
     }
     else if (d[RIGHT] < 0.0) {
-      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[RIGHT] < 0.0, incrementing idx.\n");
+      LOG_ALLOW(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[RIGHT] < 0.0, incrementing idx.\n");
         (*idx) += 1;
     }
 
     // Update j-direction based on BOTTOM and TOP distances
     if (d[BOTTOM] < 0.0) {
-      LOG(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[BOTTOM] < 0.0, decrementing idy.\n");
+      LOG_ALLOW(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[BOTTOM] < 0.0, decrementing idy.\n");
         (*idy) -= 1;
     }
     else if (d[TOP] < 0.0) {
-      LOG(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[TOP] < 0.0, incrementing idy.\n");
+      LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[TOP] < 0.0, incrementing idy.\n");
         (*idy) += 1;
     }
 
-    LOG(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Updated Indices - idx, idy, idz: %d, %d, %d\n", *idx, *idy, *idz);
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Updated Indices - idx, idy, idz: %d, %d, %d\n", *idx, *idy, *idz);
 
     return 0; // Indicate successful execution
 }
@@ -772,16 +772,16 @@ PetscErrorCode FinalizeTraversal(UserCtx *user, Particle *particle, PetscInt tra
 {
     // Validate input pointers
     if (user == NULL || particle == NULL) {
-      LOG(GLOBAL,LOG_ERROR, "FinalizeTraversal - One or more input pointers are NULL.\n");
+      LOG_ALLOW(GLOBAL,LOG_ERROR, "FinalizeTraversal - One or more input pointers are NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "FinalizeTraversal - One or more input pointers are NULL.");
     }
 
     if (cell_found) {
-      LOG(LOCAL,LOG_INFO, "FinalizeTraversal - Particle located in cell (%d, %d, %d) after %d traversal steps.\n",
+      LOG_ALLOW(LOCAL,LOG_INFO, "FinalizeTraversal - Particle located in cell (%d, %d, %d) after %d traversal steps.\n",
             idx, idy, idz, traversal_steps);
     }
     else {
-      LOG(LOCAL,LOG_WARNING, "FinalizeTraversal - Particle could not be located within the grid after %d traversal steps.\n", (PetscInt)traversal_steps);
+      LOG_ALLOW(LOCAL,LOG_WARNING, "FinalizeTraversal - Particle could not be located within the grid after %d traversal steps.\n", (PetscInt)traversal_steps);
         particle->cell[0] = -1;
         particle->cell[1] = -1;
         particle->cell[2] = -1;
@@ -829,7 +829,7 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
         PetscBool is_within;
         ierr = CheckCellWithinLocalGrid(user, idx, idy, idz, &is_within); CHKERRQ(ierr);
         if (!is_within) {
-	  LOG(LOCAL,LOG_WARNING, "LocateParticleInGrid - Particle is outside the local grid boundaries at cell (%d, %d, %d).\n", idx, idy, idz);
+	  LOG_ALLOW(LOCAL,LOG_WARNING, "LocateParticleInGrid - Particle is outside the local grid boundaries at cell (%d, %d, %d).\n", idx, idy, idz);
             break;
         }
 
@@ -845,7 +845,7 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
             particle->cell[0] = idx;
             particle->cell[1] = idy;
             particle->cell[2] = idz;
-            LOG(LOCAL,LOG_INFO, "LocateParticleInGrid - Particle found in cell (%d, %d, %d).\n", idx, idy, idz);
+            LOG_ALLOW(LOCAL,LOG_INFO, "LocateParticleInGrid - Particle found in cell (%d, %d, %d).\n", idx, idy, idz);
             break;
         }
         //else if (position == 1) { // On boundary
@@ -855,7 +855,7 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
         //   particle->cell[0] = idx;
         //    particle->cell[1] = idy;
         //    particle->cell[2] = idz;
-        //    LOG(LOCAL,LOG_INFO, "LocateParticleInGrid - Particle is on the boundary of cell (%d, %d, %d).\n", idx, idy, idz);
+        //    LOG_ALLOW(LOCAL,LOG_INFO, "LocateParticleInGrid - Particle is on the boundary of cell (%d, %d, %d).\n", idx, idy, idz);
         //    break;
         //}
         else { // Outside the cell

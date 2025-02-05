@@ -452,12 +452,12 @@ PetscErrorCode WriteEulerianVTK(UserCtx *user, PetscInt timeIndex, const char *o
 
     // Field #2: P
     if (user->P) {
-      //    ierr = GatherAndWriteField(user,    "P",    timeIndex, outExt, prefix,PETSC_COMM_WORLD);CHKERRQ(ierr);
+      ierr = GatherAndWriteField(user,    "P",    timeIndex, outExt, prefix,PETSC_COMM_WORLD);CHKERRQ(ierr);
     }
 
     // Field #3: Ucont
     if (user->Ucont) {
-      //  ierr = GatherAndWriteField(user, "Ucont", timeIndex, outExt, prefix,PETSC_COMM_WORLD);CHKERRQ(ierr);
+      ierr = GatherAndWriteField(user, "Ucont", timeIndex, outExt, prefix,PETSC_COMM_WORLD);CHKERRQ(ierr);
     }
 
     // Field #4: Nvert

@@ -79,6 +79,7 @@ PetscErrorCode InterpolateFieldFromCornerToCenter(Cmpnts ***field, Cmpnts ***cen
     lys = ys; lye = ye;
     lzs = zs; lze = ze;
   
+    
     if (xs==0) lxs = xs+1;
     if (ys==0) lys = ys+1;
     if (zs==0) lzs = zs+1;
@@ -86,6 +87,7 @@ PetscErrorCode InterpolateFieldFromCornerToCenter(Cmpnts ***field, Cmpnts ***cen
     if (xe==mx) lxe = xe-1;
     if (ye==my) lye = ye-1;
     if (ze==mz) lze = ze-1;
+    
 
     LOG_ALLOW(LOCAL, LOG_INFO, "InterpolateFieldFromCornerToCenter: Starting interpolation with local ranges xs=%d, xe=%d, ys=%d, ye=%d, zs=%d, ze=%d. \n", xs, xe, ys, ye, zs, ze);
 
@@ -242,6 +244,7 @@ PetscErrorCode UpdateCartesianVelocity(UserCtx *user) {
     lys = ys; lye = ye;
     lzs = zs; lze = ze; 
   
+    /*
     if (xs==0) lxs = xs+1;
     if (ys==0) lys = ys+1;
     if (zs==0) lzs = zs+1;
@@ -249,6 +252,7 @@ PetscErrorCode UpdateCartesianVelocity(UserCtx *user) {
     if (xe==mx) lxe = xe-1;
     if (ye==my) lye = ye-1;
     if (ze==mz) lze = ze-1;
+    */
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Local subdomain ranges - lxs: %d, lxe: %d, lys: %d, lye: %d, lzs: %d, lze: %d.\n", lxs, lxe, lys, lye, lzs,lze);
 
@@ -344,8 +348,10 @@ int main(int argc, char **argv) {
         "InitializeSimulation", // Example: also allow logs from InitializeSimulation
         // "BroadcastAllBoundingBoxes",    // Uncomment to allow logs from that function, etc.
         // "PerformParticleSwarmOperations"
+	"UpdateCartesianVelocity"
+	// "InterpolateFieldFromCornerToCenter"
     };
-    set_allowed_functions(allowedFuncs, 2);
+    set_allowed_functions(allowedFuncs, 4);
 
     // -------------------- 3. Demonstrate LOG_ALLOW in main -----------
     // This message will only be printed if "main" is in the allow-list

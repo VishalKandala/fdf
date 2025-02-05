@@ -1,0 +1,359 @@
+/**
+ *  @file bcs.c
+ *  @brief   This module provides a flexible, modular framework for applying boundary
+             conditions (BCs) to distributed fields.
+  ==============================================================================
+  General Boundary Condition (BC) Module
+  ------------------------------------------------------------------------------
+   It is designed to work in PETSc-based applications—be they analytical solutions or time-stepping simulations. The routines use PETSc DMDA objects so that they are fully parallelizable.
+  
+  Key features:
+    - A top-level wrapper that takes only the user context.
+    - Lower-level routines take a const char* field name to determine which
+      field (Vec) in the user context is to be updated.
+    - Verification that the specified field exists in the user context.
+    - Ghost cell updates after applying BCs.
+    - A dynamic BC registry that allows one or more BC objects to be registered.
+  ==============================================================================
+*/
+
+#include <petscsys.h>
+#include <petscdm.h>
+#include <petscdmda.h>
+#include <petscerror.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+
+#include "bcs.h"
+
+
+/*----------------------------------------
+  Data Structures and Enumerations
+----------------------------------------*/
+/* Function pointer type for evaluating a BC value.
+   The evaluation function is given local indices (i,j,k) and must fill
+   in the provided Cmpnts structure with the computed BC value.
+   The context pointer (ctx) holds any parameters needed.
+*/
+typedef PetscErrorCode (*BCValueFunc)(PetscInt i, PetscInt j, PetscInt k,
+                                        Cmpnts *value, void *ctx);
+
+/* The abstract BC object: it encapsulates the information needed to
+   specify and evaluate a boundary condition.
+*/
+typedef struct BCObject {
+    BCFace       face;   /* Global face on which the BC is applied */
+    BCType       type;   /* Type of BC (e.g., Dirichlet, Neumann) */
+    BCValueFunc  eval;   /* Function that computes the BC value */
+    void        *ctx;    /* Opaque pointer to evaluation parameters */
+    struct BCObject *next; /* Next BC in the linked list */
+} BCObject;
+
+/* A registry for BC objects. This linked list allows dynamic registration. */
+typedef struct {
+    BCObject *head;
+} BCRegistry;
+
+/*----------------------------------------
+  Field Lookup Helper
+----------------------------------------*/
+
+/*
+  GetFieldVec() retrieves the PETSc Vec and associated DM that correspond
+  to the given field name from the UserCtx.
+
+  For this example, we assume that a field named "field" exists in UserCtx.
+  Extend this function as needed to support multiple fields.
+*/
+PetscErrorCode GetFieldVec(UserCtx *user, const char *field_name, Vec *vec, DM *dm)
+{
+    PetscFunctionBegin;
+    if (strcmp(field_name, "field") == 0) {
+        if (!user->field) {
+            SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG, "Field 'field' not found in UserCtx.");
+        }
+        *vec = user->field;
+        *dm = user->fda;
+    } else {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG, "Field '%s' not found in UserCtx.", field_name);
+    }
+    PetscFunctionReturn(0);
+}
+
+/*----------------------------------------
+  BC Registry Utility Functions
+----------------------------------------*/
+
+/* Create a BC registry. */
+PetscErrorCode BCRegistryCreate(BCRegistry **registry)
+{
+    PetscFunctionBegin;
+    *registry = (BCRegistry*) malloc(sizeof(BCRegistry));
+    if (!*registry) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_MEM, "Unable to allocate BCRegistry");
+    (*registry)->head = NULL;
+    PetscFunctionReturn(0);
+}
+
+/* Add a new BC object to the registry. */
+PetscErrorCode BCRegistryAdd(BCRegistry *registry, BCFace face, BCType type,
+                             BCValueFunc eval, void *ctx)
+{
+    PetscFunctionBegin;
+    BCObject *bc = (BCObject*) malloc(sizeof(BCObject));
+    if (!bc) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_MEM, "Unable to allocate BCObject");
+    bc->face = face;
+    bc->type = type;
+    bc->eval = eval;
+    bc->ctx  = ctx;
+    bc->next = registry->head;  /* Insert at the beginning */
+    registry->head = bc;
+    PetscFunctionReturn(0);
+}
+
+/* Destroy the BC registry and free memory. */
+PetscErrorCode BCRegistryDestroy(BCRegistry *registry)
+{
+    BCObject *current = registry->head;
+    while (current) {
+        BCObject *temp = current;
+        current = current->next;
+        free(temp);
+    }
+    free(registry);
+    return 0;
+}
+
+/*----------------------------------------
+  PETSc-Aware BC Application Functions
+----------------------------------------*/
+
+/*
+  Apply a BC object on one specific global boundary.
+  This function takes as input the user context, the BCObject, and the field name
+  (which is used to look up the corresponding Vec and DM in the user context).
+  It checks if the local subdomain touches the global boundary; if so, it obtains
+  the local array, loops over the boundary nodes, applies the evaluation function,
+  and then restores the array. Finally, it updates ghost cells for consistency.
+*/
+PetscErrorCode ApplyBCForFace(UserCtx *user, BCObject *bcObj, const char *field_name)
+{
+    PetscErrorCode ierr;
+    DMDALocalInfo info = user->info;
+    PetscInt i, j, k;
+    Vec fieldVec = NULL;
+    DM  fieldDM = NULL;
+    Cmpnts ***fieldArray = NULL;
+    PetscBool applyBC = PETSC_FALSE;
+
+    PetscFunctionBegin;
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ApplyBCForFace: Processing BC for face %d on field '%s'.\n", bcObj->face, field_name);
+
+    /* Determine if the local subdomain touches the global boundary for this face */
+    switch (bcObj->face) {
+        case BC_FACE_NEG_X:
+            if (info.xs == 0) applyBC = PETSC_TRUE;
+            break;
+        case BC_FACE_POS_X:
+            if (info.xs + info.xm == info.mx) applyBC = PETSC_TRUE;
+            break;
+        case BC_FACE_NEG_Y:
+            if (info.ys == 0) applyBC = PETSC_TRUE;
+            break;
+        case BC_FACE_POS_Y:
+            if (info.ys + info.ym == info.my) applyBC = PETSC_TRUE;
+            break;
+        case BC_FACE_NEG_Z:
+            if (info.zs == 0) applyBC = PETSC_TRUE;
+            break;
+        case BC_FACE_POS_Z:
+            if (info.zs + info.zm == info.mz) applyBC = PETSC_TRUE;
+            break;
+        default:
+            SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_OUTOFRANGE, "ApplyBCForFace: Unknown face %d", bcObj->face);
+    }
+
+    if (!applyBC) {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "ApplyBCForFace: Local subdomain does not touch global boundary for face %d.\n", bcObj->face);
+        PetscFunctionReturn(0);
+    }
+
+    /* Look up the field Vec and associated DM from the user context */
+    ierr = GetFieldVec(user, field_name, &fieldVec, &fieldDM); CHKERRQ(ierr);
+
+    /* Get the local array for the field */
+    ierr = DMDAVecGetArray(fieldDM, fieldVec, &fieldArray); CHKERRQ(ierr);
+
+    /* Loop over the local subdomain indices on the fixed boundary.
+       For each face, one index is fixed.
+    */
+    switch (bcObj->face) {
+        case BC_FACE_NEG_X:
+            i = info.xs;
+            for (k = info.zs; k < info.zs + info.zm; k++) {
+                for (j = info.ys; j < info.ys + info.ym; j++) {
+                    Cmpnts bcValue;
+                    ierr = bcObj->eval(i, j, k, &bcValue, bcObj->ctx); CHKERRQ(ierr);
+                    fieldArray[k][j][i] = bcValue;
+                }
+            }
+            break;
+        case BC_FACE_POS_X:
+            i = info.xs + info.xm - 1;
+            for (k = info.zs; k < info.zs + info.zm; k++) {
+                for (j = info.ys; j < info.ys + info.ym; j++) {
+                    Cmpnts bcValue;
+                    ierr = bcObj->eval(i, j, k, &bcValue, bcObj->ctx); CHKERRQ(ierr);
+                    fieldArray[k][j][i] = bcValue;
+                }
+            }
+            break;
+        case BC_FACE_NEG_Y:
+            j = info.ys;
+            for (k = info.zs; k < info.zs + info.zm; k++) {
+                for (i = info.xs; i < info.xs + info.xm; i++) {
+                    Cmpnts bcValue;
+                    ierr = bcObj->eval(i, j, k, &bcValue, bcObj->ctx); CHKERRQ(ierr);
+                    fieldArray[k][j][i] = bcValue;
+                }
+            }
+            break;
+        case BC_FACE_POS_Y:
+            j = info.ys + info.ym - 1;
+            for (k = info.zs; k < info.zs + info.zm; k++) {
+                for (i = info.xs; i < info.xs + info.xm; i++) {
+                    Cmpnts bcValue;
+                    ierr = bcObj->eval(i, j, k, &bcValue, bcObj->ctx); CHKERRQ(ierr);
+                    fieldArray[k][j][i] = bcValue;
+                }
+            }
+            break;
+        case BC_FACE_NEG_Z:
+            k = info.zs;
+            for (j = info.ys; j < info.ys + info.ym; j++) {
+                for (i = info.xs; i < info.xs + info.xm; i++) {
+                    Cmpnts bcValue;
+                    ierr = bcObj->eval(i, j, k, &bcValue, bcObj->ctx); CHKERRQ(ierr);
+                    fieldArray[k][j][i] = bcValue;
+                }
+            }
+            break;
+        case BC_FACE_POS_Z:
+            k = info.zs + info.zm - 1;
+            for (j = info.ys; j < info.ys + info.ym; j++) {
+                for (i = info.xs; i < info.xs + info.xm; i++) {
+                    Cmpnts bcValue;
+                    ierr = bcObj->eval(i, j, k, &bcValue, bcObj->ctx); CHKERRQ(ierr);
+                    fieldArray[k][j][i] = bcValue;
+                }
+            }
+            break;
+        default:
+            SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_OUTOFRANGE, "ApplyBCForFace: Unknown face %d", bcObj->face);
+    }
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ApplyBCForFace: Completed applying BC for face %d on field '%s'.\n", bcObj->face, field_name);
+    ierr = DMDAVecRestoreArray(fieldDM, fieldVec, &fieldArray); CHKERRQ(ierr);
+
+    /* Update ghost cells to ensure consistency across processes */
+    ierr = DMGlobalToLocalBegin(fieldDM, fieldVec, INSERT_VALUES, fieldVec); CHKERRQ(ierr);
+    ierr = DMGlobalToLocalEnd(fieldDM, fieldVec, INSERT_VALUES, fieldVec); CHKERRQ(ierr);
+
+    PetscFunctionReturn(0);
+}
+
+/*
+  Apply all BC objects registered in the registry to a field specified by its name.
+  This function iterates over the linked list of BCObjects and calls ApplyBCForFace()
+  for each one.
+*/
+PetscErrorCode ApplyAllRegisteredBCs(UserCtx *user, BCRegistry *registry, const char *field_name)
+{
+    PetscErrorCode ierr;
+    BCObject *current;
+    PetscFunctionBegin;
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ApplyAllRegisteredBCs: Starting BC application on field '%s'.\n", field_name);
+    current = registry->head;
+    while (current) {
+        ierr = ApplyBCForFace(user, current, field_name); CHKERRQ(ierr);
+        current = current->next;
+    }
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ApplyAllRegisteredBCs: Finished BC application on field '%s'.\n", field_name);
+    PetscFunctionReturn(0);
+}
+
+/*----------------------------------------
+  Example BC Evaluation Function: Dirichlet
+----------------------------------------*/
+
+/*
+  This evaluation function computes a Dirichlet BC value.
+  The ctx pointer is expected to point to an array of three PetscReal values that
+  define the fixed values for the BC.
+*/
+PetscErrorCode EvaluateDirichletBC(PetscInt i, PetscInt j, PetscInt k,
+                                   Cmpnts *value, void *ctx)
+{
+    PetscFunctionBeginUser;
+    PetscReal *fixedVals = (PetscReal*) ctx;
+    LOG_ALLOW(LOCAL, LOG_DEBUG,
+              "EvaluateDirichletBC: At (%d, %d, %d), setting BC value (%f, %f, %f).\n",
+              i, j, k, fixedVals[0], fixedVals[1], fixedVals[2]);
+    value->x = fixedVals[0];
+    value->y = fixedVals[1];
+    value->z = fixedVals[2];
+    PetscFunctionReturn(0);
+}
+
+/*----------------------------------------
+  General Top-Level Function to Set BCs
+----------------------------------------*/
+
+/*
+  SetBoundaryConditions() is the top-level routine you call whenever you need
+  to enforce boundary conditions. It does not require a field name input; it assumes
+  that you have a standard field (named "field") in your UserCtx. Internally, it
+  calls the lower-level routines with the field name.
+  
+  This routine can be invoked after computing an analytical solution or after each
+  timestep in a simulation.
+*/
+PetscErrorCode SetBoundaryConditions(UserCtx *user)
+{
+    PetscErrorCode ierr;
+    BCRegistry *registry;
+    PetscFunctionBegin;
+    LOG_ALLOW(GLOBAL, LOG_INFO, "SetBoundaryConditions: Initializing BC registry.\n");
+
+    /* Create the registry */
+    ierr = BCRegistryCreate(&registry); CHKERRQ(ierr);
+
+    /* Example: fixed Dirichlet BC values for demonstration.
+       Here we register BCs on the left/right (±x) and bottom/top (±y) boundaries.
+       Extend this list as needed (e.g., for ±z or different types).
+    */
+    PetscReal bcValX[3] = {1.0, 0.0, 0.0}; /* For left/right boundaries */
+    PetscReal bcValY[3] = {0.0, 1.0, 0.0}; /* For bottom/top boundaries */
+
+    ierr = BCRegistryAdd(registry, BC_FACE_NEG_X, BC_TYPE_DIRICHLET, EvaluateDirichletBC, bcValX); CHKERRQ(ierr);
+    ierr = BCRegistryAdd(registry, BC_FACE_POS_X, BC_TYPE_DIRICHLET, EvaluateDirichletBC, bcValX); CHKERRQ(ierr);
+    ierr = BCRegistryAdd(registry, BC_FACE_NEG_Y, BC_TYPE_DIRICHLET, EvaluateDirichletBC, bcValY); CHKERRQ(ierr);
+    ierr = BCRegistryAdd(registry, BC_FACE_POS_Y, BC_TYPE_DIRICHLET, EvaluateDirichletBC, bcValY); CHKERRQ(ierr);
+
+    /* Additional BC registrations (for ±z, different BC types, etc.) can be added here */
+
+    /* Apply all registered BCs to the field named "field" */
+    ierr = ApplyAllRegisteredBCs(user, registry, "field"); CHKERRQ(ierr);
+
+    /* Clean up the registry */
+    ierr = BCRegistryDestroy(registry); CHKERRQ(ierr);
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "SetBoundaryConditions: Completed BC update on field 'field'.\n");
+    PetscFunctionReturn(0);
+}
+
+/*
+  ==============================================================================
+  End of General Boundary Condition Module
+  ==============================================================================
+*/

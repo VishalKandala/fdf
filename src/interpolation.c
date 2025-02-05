@@ -322,7 +322,7 @@ PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, Boundi
 
     // Print particle fields again after velocity interpolation (optional)
    LOG_ALLOW(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing particle fields after velocity interpolation.\n");
-   ierr = PrintParticleFields(user); CHKERRQ(ierr);
+   //  ierr = PrintParticleFields(user); CHKERRQ(ierr);
 
    // Write the particle positions to file.
    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the particle positions to file.\n");

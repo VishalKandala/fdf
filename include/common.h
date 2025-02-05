@@ -242,6 +242,24 @@ typedef struct _n_VTKMetaData {
 } VTKMetaData;
 */
 
+
+/* Domain face identifiers */
+typedef enum {
+    BC_FACE_POS_X,
+    BC_FACE_NEG_X,
+    BC_FACE_POS_Y,
+    BC_FACE_NEG_Y,
+    BC_FACE_POS_Z,
+    BC_FACE_NEG_Z
+} BCFace;
+
+/* BC type identifiers */
+typedef enum {
+    BC_TYPE_DIRICHLET,
+    BC_TYPE_NEUMANN
+    /* Extend as needed (e.g., Robin conditions) */
+} BCType;
+
 // Add other shared types (e.g., IBMNodes, IBMInfo) if needed
 
 #endif // COMMON_H
