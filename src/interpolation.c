@@ -65,6 +65,82 @@ static inline void ComputeTrilinearWeights(PetscReal a1, PetscReal a2, PetscReal
 }
 
 /**
+ * @brief Computes the trilinear interpolated velocity at a given point.
+ *
+ * @param[in]  ucat   3D array of velocity field from a DMDA (indexed as [k][j][i]), each cell of type Cmpnts.
+ * @param[in]  i,j,k  Integral cell indices (the "lower" corner in each dimension).
+ * @param[in]  a1,a2,a3  Normalized coordinates within the cell ([0,1] range).
+ * @param[out] vel    Pointer to a Cmpnts struct that will hold the interpolated velocity (x, y, z).
+ *
+ * The function uses the 8-corner trilinear formula with `ComputeTrilinearWeights()`.
+ * If a different scheme is desired, implement a new function with the same interface.
+ */
+static inline PetscErrorCode InterpolateTrilinearVelocity(
+    Cmpnts ***ucat,
+    PetscInt i, PetscInt j, PetscInt k,
+    PetscReal a1, PetscReal a2, PetscReal a3,
+    Cmpnts *vel)
+{
+    PetscFunctionBegin; // PETSc macro for error/stack tracing
+
+    // Compute the 8 corner weights
+    PetscReal wcorner[8];
+    ComputeTrilinearWeights(a1, a2, a3, wcorner);
+
+    // Offsets for cell corners
+    PetscInt i1 = i + 1;
+    PetscInt j1 = j + 1;
+    PetscInt k1 = k + 1;
+
+    // Initialize velocity
+    vel->x = 0.0;
+    vel->y = 0.0;
+    vel->z = 0.0;
+
+    // Corner 0 => (i, j, k)
+    vel->x += wcorner[0] * ucat[k ][j ][i ].x;
+    vel->y += wcorner[0] * ucat[k ][j ][i ].y;
+    vel->z += wcorner[0] * ucat[k ][j ][i ].z;
+
+    // Corner 1 => (i+1, j, k)
+    vel->x += wcorner[1] * ucat[k ][j ][i1].x;
+    vel->y += wcorner[1] * ucat[k ][j ][i1].y;
+    vel->z += wcorner[1] * ucat[k ][j ][i1].z;
+
+    // Corner 2 => (i, j+1, k)
+    vel->x += wcorner[2] * ucat[k ][j1][i ].x;
+    vel->y += wcorner[2] * ucat[k ][j1][i ].y;
+    vel->z += wcorner[2] * ucat[k ][j1][i ].z;
+
+    // Corner 3 => (i+1, j+1, k)
+    vel->x += wcorner[3] * ucat[k ][j1][i1].x;
+    vel->y += wcorner[3] * ucat[k ][j1][i1].y;
+    vel->z += wcorner[3] * ucat[k ][j1][i1].z;
+
+    // Corner 4 => (i, j, k+1)
+    vel->x += wcorner[4] * ucat[k1][j ][i ].x;
+    vel->y += wcorner[4] * ucat[k1][j ][i ].y;
+    vel->z += wcorner[4] * ucat[k1][j ][i ].z;
+
+    // Corner 5 => (i+1, j, k+1)
+    vel->x += wcorner[5] * ucat[k1][j ][i1].x;
+    vel->y += wcorner[5] * ucat[k1][j ][i1].y;
+    vel->z += wcorner[5] * ucat[k1][j ][i1].z;
+
+    // Corner 6 => (i, j+1, k+1)
+    vel->x += wcorner[6] * ucat[k1][j1][i ].x;
+    vel->y += wcorner[6] * ucat[k1][j1][i ].y;
+    vel->z += wcorner[6] * ucat[k1][j1][i ].z;
+
+    // Corner 7 => (i+1, j+1, k+1)
+    vel->x += wcorner[7] * ucat[k1][j1][i1].x;
+    vel->y += wcorner[7] * ucat[k1][j1][i1].y;
+    vel->z += wcorner[7] * ucat[k1][j1][i1].z;
+
+    PetscFunctionReturn(0);
+}
+
+/**
  * @brief Performs trilinear interpolation of velocities from grid to particles using interpolation coefficients.
  *
  * This function interpolates velocities for particles based on the velocity field defined on the computational grid.
@@ -94,7 +170,9 @@ PetscErrorCode InterpolateParticleVelocities(UserCtx *user) {
     PetscReal *velocities = NULL; // Array to store particle velocities
     PetscReal *weights = NULL;    // Array to store interpolation weights
     Cmpnts ***ucat;               // 3D array to map local grid velocities
+    Cmpnts uinterp;               // Temporary variable to store interpolated velocities.
     PetscInt i,j,k;
+    PetscReal a1,a2,a3;           // The weights of a particles are stored here for trilinear coefficient calculation.
     DM fda = user->fda;           // Field DA 
     DM swarm = user->swarm;       // DMSwarm for the particles
 
@@ -133,6 +211,11 @@ PetscErrorCode InterpolateParticleVelocities(UserCtx *user) {
 
         LOG_ALLOW(GLOBAL, LOG_DEBUG, "Particle %d: Host Cell = (%d, %d, %d)\n", p, i, j, k);
 
+	// Clamp i, j, k to [0..mx-2], [0..my-2], [0..mz-2]
+	if (i >= user->info.mx - 1) i = user->info.mx - 2;
+	if (j >= user->info.my - 1) j = user->info.my - 2;
+	if (k >= user->info.mz - 1) k = user->info.mz - 2;
+
         // Validate cell indices (boundary check)
         if (i < 0 || j < 0 || k < 0 || i >= user->info.mx || j >= user->info.my || k >= user->info.mz) {
             LOG_ALLOW(GLOBAL, LOG_WARNING, "Particle %d has invalid cell indices (%d, %d, %d)\n. Skipping interpolation.\n", p, i, j, k);
@@ -142,11 +225,24 @@ PetscErrorCode InterpolateParticleVelocities(UserCtx *user) {
             continue;
         }
 
+        // Retrieve a1, a2, a3 from the 'weights' field (if that's where you're storing them)
+        a1 = weights[3*p + 0];
+        a2 = weights[3*p + 1];
+        a3 = weights[3*p + 2];
+
+        
+	// Apply interpolation method to obtain velocity at the particle location
+	//  ierr = InterpolateTrilinearVelocity(ucat,i,j,k,a1,a2,a3,&uinterp);
+	
         // Assign interpolated velocity to the particle
 
-        velocities[3 * p]     = ucat[k][j][i].x; // u-component
-        velocities[3 * p + 1] = ucat[k][j][i].y; // v-component
-        velocities[3 * p + 2] = ucat[k][j][i].z; // w-component
+        // zeroth order Interpolation
+        
+        velocities[3 * p]     = ucat[k+1][j+1][i+1].x; // u-component
+        velocities[3 * p + 1] = ucat[k+1][j+1][i+1].y; // v-component
+        velocities[3 * p + 2] = ucat[k+1][j+1][i+1].z; // w-component
+       
+	
 
         LOG_ALLOW(GLOBAL, LOG_DEBUG, "Particle %d: Interpolated velocity from (x=%f, y=%f, z=%f) to (x=%f, y=%f, z=%f).\n",
             p, ucat[k][j][i].x, ucat[k][j][i].y, ucat[k][j][i].z,velocities[3 * p], velocities[3 * p + 1], velocities[3 * p + 2]);
@@ -322,7 +418,7 @@ PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, Boundi
 
     // Print particle fields again after velocity interpolation (optional)
    LOG_ALLOW(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing particle fields after velocity interpolation.\n");
-   //  ierr = PrintParticleFields(user); CHKERRQ(ierr);
+   ierr = PrintParticleFields(user); CHKERRQ(ierr);
 
    // Write the particle positions to file.
    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the particle positions to file.\n");

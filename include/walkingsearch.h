@@ -215,7 +215,6 @@ PetscErrorCode PrintFaceDistances(PetscReal* d, PetscInt ctr, PetscInt visflg);
  */
 PetscErrorCode PrintCellVertices(const Cell *cell, PetscInt rank, PetscInt ctr, PetscInt visflg);
 
-
 /**
  * @brief Updates the cell indices based on the signed distances to each face.
  *
@@ -233,10 +232,50 @@ PetscErrorCode PrintCellVertices(const Cell *cell, PetscInt rank, PetscInt ctr, 
  * @param[out] idx  Pointer to the i-index of the cell to be updated.
  * @param[out] idy  Pointer to the j-index of the cell to be updated.
  * @param[out] idz  Pointer to the k-index of the cell to be updated.
+ * @param[in]  info DMDALocalInfo structure that holds local & global domain bounds.
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode UpdateCellIndicesBasedOnDistances( PetscReal d[NUM_FACES], PetscInt *idx, PetscInt *idy, PetscInt *idz);
+PetscErrorCode UpdateCellIndicesBasedOnDistances( PetscReal d[NUM_FACES], PetscInt *idx, PetscInt *idy, PetscInt *idz, DMDALocalInfo *info);
 
+
+/**
+ * @brief Finalizes the traversal by reporting the results.
+ *
+ * This function prints the outcome of the traversal, indicating whether the particle
+ * was found within a cell or not, and updates the particle's cell indices accordingly.
+ *
+ * @param[in]  user           Pointer to the user-defined context containing grid information.
+ * @param[out] particle       Pointer to the Particle structure to update with cell indices.
+ * @param[in]  traversal_steps The number of traversal steps taken.
+ * @param[in]  cell_found      Flag indicating whether the particle was found within a cell.
+ * @param[in]  idx             The i-index of the found cell.
+ * @param[in]  idy             The j-index of the found cell.
+ * @param[in]  idz             The k-index of the found cell.
+ *
+ * @return PetscErrorCode     Returns 0 on success, non-zero on failure.
+ */
+PetscErrorCode FinalizeTraversal(UserCtx *user, Particle *particle, PetscInt traversal_steps, PetscBool cell_found, PetscInt idx, PetscInt idy, PetscInt idz);
+
+
+/**
+ * @brief Locates the cell within the grid that contains the given particle.
+ *
+ * This function navigates through cells in a 3D grid to find the cell that contains the specified particle.
+ * It uses the signed distances from the particle to the cell faces to determine the direction to move.
+ *
+ * @param[in]  user     Pointer to the user-defined context containing grid information (DMDA, etc.).
+ * @param[in]  particle Pointer to the Particle structure containing its location and identifiers.
+ * @param[in]  d         A pointer to an array of six `PetscReal` values that store the
+ *                       signed distances from the particle to each face of the cell.
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ *
+ * @note
+ * - Ensure that the `user` and `particle` pointers are not `NULL` before calling this function.
+ * - The function assumes that the grid is properly partitioned and that each process has access to its local grid.
+ * - The `Particle` structure should have its `loc` field accurately set before calling this function.
+ */
+PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal *d);
 
 #endif // WALKINGSEARCH_H

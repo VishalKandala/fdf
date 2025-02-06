@@ -50,79 +50,55 @@ static inline PetscErrorCode SetLocalCartesianVelocity(Cmpnts *ucat, Cmpnts *coo
 }
 
 /**
- * @brief Interpolates a vector field from cell corners to cell centers using averaging.
+ * @brief Interpolates a vector field from cell corners to cell centers using simple averaging.
  *
- * This function computes the field value at the center of each cell by averaging the field 
- * values at the eight surrounding corners of the cell. This is often used to obtain smoother
- * data for computations requiring cell-centered quantities.
+ * This version loops only up to `xe-1, ye-1, ze-1`, ensuring `i+1, j+1, k+1` are in range.
+ * The result is stored in `centfield[k][j][i]` at the same (k,j,i) offsets
+ * (assuming the caller knows to shift or match indexing carefully).
  *
- * @param[in]  field       A 3D array of `Cmpnts` structures representing the field vectors at cell corners.
- * @param[out] centfield   A 3D array of `Cmpnts` structures where interpolated field vectors at cell centers will be stored.
- * @param[in]  info        Pointer to a `DMDALocalInfo` structure containing grid information.
+ * @param[in]  field     A 3D array of `Cmpnts` at cell corners (size at least [info->ze][info->ye][info->xe]).
+ * @param[out] centfield A 3D array of `Cmpnts` into which cell-center data is written.
+ *                       Must be allocated by the caller with same local extents or an offset approach.
+ * @param[in]  info      DMDALocalInfo with local domain indices [xs..xe), etc.
  *
- * @return PetscErrorCode Returns 0 on successful execution, non-zero on failure.
+ * @return PetscErrorCode
  */
-PetscErrorCode InterpolateFieldFromCornerToCenter(Cmpnts ***field, Cmpnts ***centfield, DMDALocalInfo *info) {
-    
 
-
-    PetscInt i, j, k, ic, jc, kc;
-    PetscInt lxs,lys,lzs,lxe,lye,lze;
-
-    PetscInt mx = info->mx, my = info->my, mz = info->mz;
-
+PetscErrorCode InterpolateFieldFromCornerToCenter(Cmpnts ***field,
+                                                  Cmpnts ***centfield,
+                                                  DMDALocalInfo *info)
+{
+    PetscInt i, j, k;
     PetscInt xs = info->xs, xe = info->xs + info->xm;
     PetscInt ys = info->ys, ye = info->ys + info->ym;
     PetscInt zs = info->zs, ze = info->zs + info->zm;
 
-    lxs = xs; lxe = xe;
-    lys = ys; lye = ye;
-    lzs = zs; lze = ze;
-  
-    
-    if (xs==0) lxs = xs+1;
-    if (ys==0) lys = ys+1;
-    if (zs==0) lzs = zs+1;
-  
-    if (xe==mx) lxe = xe-1;
-    if (ye==my) lye = ye-1;
-    if (ze==mz) lze = ze-1;
-    
+    /* we must stop at xe-1 so i+1 is valid local indexing */
+    PetscInt iend = xe - 1, jend = ye - 1, kend = ze - 1;
 
-    LOG_ALLOW(LOCAL, LOG_INFO, "InterpolateFieldFromCornerToCenter: Starting interpolation with local ranges xs=%d, xe=%d, ys=%d, ye=%d, zs=%d, ze=%d. \n", xs, xe, ys, ye, zs, ze);
+    for (k = zs; k < kend; k++) {
+        for (j = ys; j < jend; j++) {
+            for (i = xs; i < iend; i++) {
+                centfield[k][j][i].x =
+                   ( field[k][j][i].x + field[k][j][i+1].x +
+                     field[k][j+1][i].x + field[k][j+1][i+1].x +
+                     field[k+1][j][i].x + field[k+1][j][i+1].x +
+                     field[k+1][j+1][i].x + field[k+1][j+1][i+1].x ) / 8.0;
 
-    // Loop over all cell centers in the local grid
-    for (k = lzs; k < lze; k++) {
-        for (j = lys; j < lye; j++) {
-            for (i = lxs; i < lxe; i++) {
-                // Compute local center indices
-                ic = i - lxs;
-                jc = j - lys;
-                kc = k - lzs;
+                centfield[k][j][i].y =
+                   ( field[k][j][i].y + field[k][j][i+1].y +
+                     field[k][j+1][i].y + field[k][j+1][i+1].y +
+                     field[k+1][j][i].y + field[k+1][j][i+1].y +
+                     field[k+1][j+1][i].y + field[k+1][j+1][i+1].y ) / 8.0;
 
-                // Average the surrounding corner values to compute the center value
-                centfield[kc][jc][ic].x = (field[k][j][i].x + field[k][j][i+1].x +
-                                           field[k][j+1][i].x + field[k][j+1][i+1].x +
-                                           field[k+1][j][i].x + field[k+1][j][i+1].x +
-                                           field[k+1][j+1][i].x + field[k+1][j+1][i+1].x) / 8.0;
-
-                centfield[kc][jc][ic].y = (field[k][j][i].y + field[k][j][i+1].y +
-                                           field[k][j+1][i].y + field[k][j+1][i+1].y +
-                                           field[k+1][j][i].y + field[k+1][j][i+1].y +
-                                           field[k+1][j+1][i].y + field[k+1][j+1][i+1].y) / 8.0;
-
-                centfield[kc][jc][ic].z = (field[k][j][i].z + field[k][j][i+1].z +
-                                           field[k][j+1][i].z + field[k][j+1][i+1].z +
-                                           field[k+1][j][i].z + field[k+1][j][i+1].z +
-                                           field[k+1][j+1][i].z + field[k+1][j+1][i+1].z) / 8.0;
-
-                LOG_ALLOW(LOCAL, LOG_DEBUG, "InterpolateFieldFromCornerToCenter: Center (%d, %d, %d) - x: %f, y: %f, z: %f \n",
-                    ic, jc, kc, centfield[kc][jc][ic].x, centfield[kc][jc][ic].y, centfield[kc][jc][ic].z);
+                centfield[k][j][i].z =
+                   ( field[k][j][i].z + field[k][j][i+1].z +
+                     field[k][j+1][i].z + field[k][j+1][i+1].z +
+                     field[k+1][j][i].z + field[k+1][j][i+1].z +
+                     field[k+1][j+1][i].z + field[k+1][j+1][i+1].z ) / 8.0;
             }
         }
     }
-
-    LOG_ALLOW(LOCAL, LOG_INFO, "InterpolateFieldFromCornerToCenter: Completed interpolation.\n");
     return 0;
 }
 
@@ -192,7 +168,6 @@ PetscErrorCode Deallocate3DArray(Cmpnts ***array, PetscInt nz, PetscInt ny) {
     return 0;
 }
 
-
 /**
  * @brief Updates the local Cartesian velocity field based on interpolated coordinates.
  *
@@ -220,81 +195,72 @@ PetscErrorCode Deallocate3DArray(Cmpnts ***array, PetscInt nz, PetscInt ny) {
  * - Assumes that the coordinate vector (`user->Coor`) has been properly initialized and populated before this function is called.
  * - The function is grid-aware and handles memory allocation and interpolation for local subdomains only.
  */
-PetscErrorCode UpdateCartesianVelocity(UserCtx *user) {
+
+PetscErrorCode UpdateCartesianVelocity(UserCtx *user)
+{
     PetscErrorCode ierr;
-
-    // Declare required variables
-    Vec Coor;
-    Cmpnts ***ucat = NULL, ***coor = NULL, ***centcoor = NULL;
-    PetscInt i, j, k;
-    PetscInt lxs,lys,lzs,lxe,lye,lze;
-
-    LOG_ALLOW(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Starting velocity update process.\n");
-
-    // Retrieve local DMDA grid information
     DMDALocalInfo info = user->info;
-
-    PetscInt mx = info.mx, my = info.my, mz = info.mz;
+    Vec Coor;
+    Cmpnts ***coor = NULL, ***centcoor = NULL, ***ucat = NULL;
 
     PetscInt xs = info.xs, xe = info.xs + info.xm;
     PetscInt ys = info.ys, ye = info.ys + info.ym;
     PetscInt zs = info.zs, ze = info.zs + info.zm;
 
-    lxs = xs; lxe = xe;
-    lys = ys; lye = ye;
-    lzs = zs; lze = ze; 
-  
-    /*
-    if (xs==0) lxs = xs+1;
-    if (ys==0) lys = ys+1;
-    if (zs==0) lzs = zs+1;
-  
-    if (xe==mx) lxe = xe-1;
-    if (ye==my) lye = ye-1;
-    if (ze==mz) lze = ze-1;
-    */
+    LOG_ALLOW(GLOBAL, LOG_INFO, "UpdateCartesianVelocity: Starting.\n");
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Local subdomain ranges - lxs: %d, lxe: %d, lys: %d, lye: %d, lzs: %d, lze: %d.\n", lxs, lxe, lys, lye, lzs,lze);
-
-    // Access the DMDA coordinate vector
+    /* 1) Access local coords (Coor) & velocity array (Ucat) */
     ierr = DMGetCoordinatesLocal(user->da, &Coor); CHKERRQ(ierr);
     ierr = DMDAVecGetArrayRead(user->fda, Coor, &coor); CHKERRQ(ierr);
 
-    // Allocate memory for the temporary 3D array to store interpolated coordinates
-    ierr = Allocate3DArray(&centcoor, lze-lzs, lye-lys,lxe-lxs); CHKERRQ(ierr);
-
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "UpdateCartesianVelocity - Allocated centcoor for interpolated coordinates.\n");
-
-    // Access the Cartesian velocity vector
     ierr = DMDAVecGetArray(user->fda, user->Ucat, &ucat); CHKERRQ(ierr);
 
-    // Interpolate coordinate values from cell corners to cell centers
-    LOG_ALLOW(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Interpolating coordinates from corners to centers.\n");
+    /* 2) Allocate scratch array 'centcoor' the same local size as [zs..ze, ys..ye, xs..xe]. */
+    ierr = Allocate3DArray(&centcoor, ze, ye, xe); CHKERRQ(ierr);
+
+    /* 3) Interpolate corner->center coords into centcoor */
     ierr = InterpolateFieldFromCornerToCenter(coor, centcoor, &info); CHKERRQ(ierr);
 
-    // Update the Cartesian velocity at each cell center
-    LOG_ALLOW(GLOBAL, LOG_INFO, "UpdateCartesianVelocity - Updating velocity values at cell centers.\n");
-    for (k = lzs; k < lze; k++) {
-        for (j = lys; j < lye; j++) {
-            for (i = lxs; i < lxe; i++) {
-                ierr = SetLocalCartesianVelocity(&ucat[k][j][i], &centcoor[k-lzs][j-lys][i-lxs]); CHKERRQ(ierr);
-                LOG_ALLOW(GLOBAL, LOG_DEBUG, "UpdateCartesianVelocity - Updated velocity at (%d, %d, %d): x=%f, y=%f, z=%f \n",
-                    k, j, i, ucat[k][j][i].x, ucat[k][j][i].y, ucat[k][j][i].z);
-            }
+    /* 4) Fill interior cell velocity using 'SetLocalCartesianVelocity' with the center coords. 
+       (Stop at xe-1, ye-1, ze-1 so i+1 doesn't go out-of-range) */
+    for (PetscInt k = zs; k < ze - 1; k++) {
+      for (PetscInt j = ys; j < ye - 1; j++) {
+        for (PetscInt i = xs; i < xe - 1; i++) {
+          ierr = SetLocalCartesianVelocity(&ucat[k][j][i], &centcoor[k][j][i]); CHKERRQ(ierr);
         }
+      }
     }
 
-    // Deallocate memory for the temporary interpolated array
-    ierr = Deallocate3DArray(centcoor,lze-lzs,lye-lys); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "UpdateCartesianVelocity: Deallocated centcoor.\n");
+    /* 5) Set boundary nodes to sine-of-corner-coords 
+       i.e. if i==xe-1 or i==xs or similarly for j,k. 
+       That ensures no boundary node is left zero. */
+    for (PetscInt k = zs; k < ze; k++) {
+      for (PetscInt j = ys; j < ye; j++) {
+        for (PetscInt i = xs; i < xe; i++) {
+          PetscBool isBoundary = PETSC_FALSE;
+          if ((i == xe - 1) || (i == xs) ||
+              (j == ye - 1) || (j == ys)  ||
+              (k == ze - 1) || (k == zs)) {
+            isBoundary = PETSC_TRUE;
+          }
+          if (isBoundary) {
+            ierr = SetLocalCartesianVelocity(&ucat[k][j][i], &coor[k][j][i]); CHKERRQ(ierr);
+          }
+        }
+      }
+    }
 
-    // Restore coordinate and velocity arrays
+    /* 6) Clean up */
+    ierr = Deallocate3DArray(centcoor, ze, ye); CHKERRQ(ierr);
+
     ierr = DMDAVecRestoreArray(user->fda, user->Ucat, &ucat); CHKERRQ(ierr);
     ierr = DMDAVecRestoreArrayRead(user->fda, Coor, &coor); CHKERRQ(ierr);
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "UpdateCartesianVelocity: Completed velocity update process.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "UpdateCartesianVelocity: Completed.\n");
     return 0;
 }
+
+
 
 #undef _FUNCT_
 #define __FUNCT__ "main"
@@ -343,15 +309,17 @@ int main(int argc, char **argv) {
     // Only these function names will produce LOG_ALLOW (or LOG_ALLOW_SYNC) output.
     // You can add more as needed (e.g., "InitializeSimulation", "PerformParticleSwarmOperations", etc.).
     const char *allowedFuncs[] = {
-        "main",                 // We'll allow logging from this main function
-        "SetupGridAndVectors",
-        "InitializeSimulation", // Example: also allow logs from InitializeSimulation
+      "InterpolateParticleVelocities",
+      "ComputeTrilinearWeights",
+      // "main",                 // We'll allow logging from this main function
+	//  "SetupGridAndVectors",
+	// "InitializeSimulation", // Example: also allow logs from InitializeSimulation
         // "BroadcastAllBoundingBoxes",    // Uncomment to allow logs from that function, etc.
-        // "PerformParticleSwarmOperations"
-	"UpdateCartesianVelocity"
+         "PerformParticleSwarmOperations"
+	//  "UpdateCartesianVelocity"
 	// "InterpolateFieldFromCornerToCenter"
     };
-    set_allowed_functions(allowedFuncs, 4);
+    set_allowed_functions(allowedFuncs, 3);
 
     // -------------------- 3. Demonstrate LOG_ALLOW in main -----------
     // This message will only be printed if "main" is in the allow-list

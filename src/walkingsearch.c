@@ -698,11 +698,20 @@ PetscErrorCode EvaluateParticlePosition(const Cell *cell, PetscReal *d, const Cm
  * @param[out] idx  Pointer to the i-index of the cell to be updated.
  * @param[out] idy  Pointer to the j-index of the cell to be updated.
  * @param[out] idz  Pointer to the k-index of the cell to be updated.
+ * @param[in]  info DMDALocalInfo structure that holds local & global domain bounds.
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode UpdateCellIndicesBasedOnDistances( PetscReal d[NUM_FACES], PetscInt *idx, PetscInt *idy, PetscInt *idz)
+PetscErrorCode UpdateCellIndicesBasedOnDistances( PetscReal d[NUM_FACES], PetscInt *idx, PetscInt *idy, PetscInt *idz, DMDALocalInfo *info)
 {
+    PetscInt cxm,cxs;  // maximum & minimum cell ID in x
+    PetscInt cym,cys;  // maximum & minimum cell ID in y
+    PetscInt czm,czs;  // maximum & minimum cell ID in z
+
+    cxs = info->xs; cxm = cxs + info->xm - 2;
+    cys = info->ys; cym = cys + info->ym - 2;
+    czs = info->zs; czm = czs + info->zm - 2; 
+    
     // Validate input pointers
     if (d == NULL) {
       LOG_ALLOW(GLOBAL,LOG_ERROR, "UpdateCellIndicesBasedOnDistances - 'd' is NULL.\n");
@@ -747,7 +756,13 @@ PetscErrorCode UpdateCellIndicesBasedOnDistances( PetscReal d[NUM_FACES], PetscI
         (*idy) += 1;
     }
 
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Updated Indices - idx, idy, idz: %d, %d, %d\n", *idx, *idy, *idz);
+    // The 'cell' corners you can reference go from [xs .. xs+xm-1], but
+    // to form a valid cell in x, you need (idx+1) in range, so max is (xs+xm-2).
+    *idx = PetscMax(cxs,               PetscMin(*idx, cxm));
+    *idy = PetscMax(cys,               PetscMin(*idy, cym));
+    *idz = PetscMax(czs,               PetscMin(*idz, czm));
+
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Updated Indices after clamping (inside domain bounds)  - idx, idy, idz: %d, %d, %d\n", *idx, *idy, *idz);
 
     return 0; // Indicate successful execution
 }
@@ -817,7 +832,11 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
     Cmpnts p = particle->loc;
     Cell current_cell;
     const PetscReal threshold = 1e-14 ;
-
+    DMDALocalInfo info;
+    
+    // Retrieve local DMDA info (which holds xs, xm, ys, ym, zs, zm)
+    ierr = DMDAGetLocalInfo(user->da,&info);
+    
     // Initialize traversal parameters
     ierr = InitializeTraversalParameters(user, particle, &idx, &idy, &idz, &traversal_steps); CHKERRQ(ierr);
 
@@ -860,7 +879,7 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
         //}
         else { // Outside the cell
             // Update cell indices based on positive distances
-            ierr = UpdateCellIndicesBasedOnDistances(d, &idx, &idy, &idz); CHKERRQ(ierr);
+	  ierr = UpdateCellIndicesBasedOnDistances(d, &idx, &idy, &idz,&info); CHKERRQ(ierr);
         }
     } // !cell_found 
 
