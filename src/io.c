@@ -807,29 +807,29 @@ int ReadDataFileToArray(const char   *filename,
 int WriteVTKAppendedBlock(FILE *fp, const void *data, int num_elements, size_t element_size) {
 
     // Log the function call with parameters
-    LOG_ALLOW_SYNC(LOG_INFO, "WriteVTKAppendedBlock - Called with %d elements, each of size %zu bytes.\n",
+    LOG_ALLOW_SYNC(LOG_INFO,LOCAL, "WriteVTKAppendedBlock - Called with %d elements, each of size %zu bytes.\n",
                    num_elements, element_size);
 
     // Calculate the block size
     int block_size = num_elements * (int)element_size;
-    LOG_ALLOW_SYNC(LOG_DEBUG, "WriteVTKAppendedBlock - Calculated block size: %d bytes.\n", block_size);
+    LOG_ALLOW_SYNC(LOG_DEBUG,LOCAL, "WriteVTKAppendedBlock - Calculated block size: %d bytes.\n", block_size);
 
     // Write the block size as a 4-byte integer
     if (fwrite(&block_size, sizeof(int), 1, fp) != 1) {
         fprintf(stderr, "[ERROR] Failed to write block size.\n");
-        LOG_ALLOW_SYNC(LOG_ERROR, "WriteVTKAppendedBlock - Error writing block size.\n");
+        LOG_ALLOW_SYNC(LOG_ERROR,LOCAL, "WriteVTKAppendedBlock - Error writing block size.\n");
         return 1;
     }
 
     // Write the actual data
     if (fwrite(data, element_size, num_elements, fp) != (size_t)num_elements) {
         fprintf(stderr, "[ERROR] Failed to write data block.\n");
-        LOG_ALLOW_SYNC(LOG_ERROR, "WriteVTKAppendedBlock - Error writing data block.\n");
+        LOG_ALLOW_SYNC(LOG_ERROR,LOCAL, "WriteVTKAppendedBlock - Error writing data block.\n");
         return 1;
     }
 
     // Log success
-    LOG_ALLOW_SYNC(LOG_INFO, "WriteVTKAppendedBlock - Successfully wrote block of %d bytes.\n", block_size);
+    LOG_ALLOW_SYNC(LOG_INFO,LOCAL, "WriteVTKAppendedBlock - Successfully wrote block of %d bytes.\n", block_size);
 
     return 0; // Success
 }

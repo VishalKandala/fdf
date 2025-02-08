@@ -48,9 +48,11 @@ LogLevel get_log_level() {
         else if (strcmp(env, "WARNING") == 0) {
             current_log_level = LOG_WARNING;
         }
+        else if (strcmp(env, "PROFILE") == 0) {  // <-- New profile level
+            current_log_level = LOG_PROFILE;
+        }
         else {
-            // Unrecognized log level; default to ERROR
-            current_log_level = LOG_ERROR;
+            current_log_level = LOG_ERROR; // Default if unrecognized
         }
     }
     return current_log_level;
@@ -111,3 +113,8 @@ PetscBool is_function_allowed(const char* functionName)
     }
     return PETSC_FALSE;
 }
+
+// Logging Events definition !
+
+PetscLogEvent EVENT_Individualwalkingsearch = 0 ; //Individual walking search in (walkingsearch.c/LocateParticleInGrid()
+PetscLogEvent EVENT_walkingsearch = 0 ; // Total walking search in (ParticleSwarm.c/LocateAllParticlesInGrid()

@@ -2,7 +2,7 @@
 # Vishal Indivar Kandala
 ################################################################################################
 ##################### NLIST AND ELIST CREATION #################################################
-############### Read case .in file from ICEM and create nlist and elist files ##################
+###############Read case .in file from ICEM and create nlist and elist files ###################
 
 import sys
 

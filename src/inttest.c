@@ -23,6 +23,16 @@
 
 #include "interpolation.h"
 
+PetscErrorCode registerEvents(void) {
+    PetscErrorCode ierr;
+    // Register the event with a descriptive name
+    ierr = PetscLogEventRegister("walkingsearch", PETSC_OBJECT_CLASSID, &EVENT_walkingsearch);
+    ierr = PetscLogEventRegister("Individualwalkingsearch", PETSC_OBJECT_CLASSID, &EVENT_Individualwalkingsearch);
+    CHKERRQ(ierr);
+    return 0;
+}
+
+
 /**
  * @brief Sets the local Cartesian velocity components based on coordinates.
  *
@@ -309,17 +319,21 @@ int main(int argc, char **argv) {
     // Only these function names will produce LOG_ALLOW (or LOG_ALLOW_SYNC) output.
     // You can add more as needed (e.g., "InitializeSimulation", "PerformParticleSwarmOperations", etc.).
     const char *allowedFuncs[] = {
-      "InterpolateParticleVelocities",
-      "ComputeTrilinearWeights",
+      "LocateAllParticlesInGrid",
+      // "InterpolateParticleVelocities",
+      //   "ComputeTrilinearWeights",
       // "main",                 // We'll allow logging from this main function
 	//  "SetupGridAndVectors",
 	// "InitializeSimulation", // Example: also allow logs from InitializeSimulation
         // "BroadcastAllBoundingBoxes",    // Uncomment to allow logs from that function, etc.
-         "PerformParticleSwarmOperations"
+        // "PerformParticleSwarmOperations"
 	//  "UpdateCartesianVelocity"
 	// "InterpolateFieldFromCornerToCenter"
     };
-    set_allowed_functions(allowedFuncs, 3);
+    set_allowed_functions(allowedFuncs, 1);
+
+
+    registerEvents();   
 
     // -------------------- 3. Demonstrate LOG_ALLOW in main -----------
     // This message will only be printed if "main" is in the allow-list

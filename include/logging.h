@@ -21,12 +21,15 @@
  *
  * Defines various severity levels for logging messages.
  */
+
 typedef enum {
     LOG_ERROR = 0,   /**< Critical errors that may halt the program */
     LOG_WARNING,     /**< Non-critical issues that warrant attention */
+    LOG_PROFILE,      /**< Exclusive log level for performance timing and profiling */
     LOG_INFO,        /**< Informational messages about program execution */
-    LOG_DEBUG        /**< Detailed debugging information */
+    LOG_DEBUG,       /**< Detailed debugging information */
 } LogLevel;
+
 
 // -------------------- Logging Scope Definitions ------------------
 
@@ -213,39 +216,187 @@ PetscBool is_function_allowed(const char* functionName);
 
 
 /**
- * @brief Logging macro that checks both the log level and whether the calling function
- *        is in the allowed-function list, using synchronized output across ranks.
+ * @brief Synchronized logging macro that checks both the log level 
+ *        and whether the calling function is in the allow-list.
  *
- * This macro uses `PetscSynchronizedPrintf` and `PetscSynchronizedFlush` to ensure
- * messages from different ranks are printed in a rank-ordered fashion. It also filters
- * out messages from functions not present in the allow-list (set via `set_allowed_functions()`).
+ * This macro uses `PetscSynchronizedPrintf` and `PetscSynchronizedFlush` to
+ * ensure messages from different ranks are printed in a rank-ordered fashion
+ * (i.e., to avoid interleaving). It also filters out messages if the current
+ * function is not in the allow-list (`is_function_allowed(__func__)`) or the
+ * requested log level is higher than `get_log_level()`.
  *
- * @param scope Specifies the logging scope:
- *              - LOCAL:  Logs on the current process using MPI_COMM_SELF.
- *              - GLOBAL: Logs on all processes using MPI_COMM_WORLD.
- * @param level The severity level of the message (e.g., LOG_INFO, LOG_ERROR).
- * @param fmt   The format string for the message (similar to printf).
- * @param ...   Additional arguments for the format string (optional).
+ * @param scope  Either LOCAL (MPI_COMM_SELF) or GLOBAL (MPI_COMM_WORLD).
+ * @param level  One of LOG_ERROR, LOG_WARNING, LOG_INFO, LOG_DEBUG.
+ * @param fmt    A `printf`-style format string (e.g., "Message: %d\n").
+ * @param ...    Variadic arguments to fill in `fmt`.
  *
  * Example usage:
- *     LOG_ALLOW_SYNC(LOCAL,  LOG_DEBUG, "Debug info: rank = %d\n", rank);
- *     LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,  "Synchronized info in %s\n", __func__);
  *
- * Notes:
- * - A function only produces output if it appears in the allow-list (`is_function_allowed(__func__)`).
- * - The log level is filtered based on the value returned by `get_log_level()`.
- * - If the function is allowed, printing is rank-synchronized (i.e., each rank’s output appears in order).
+ * \code{.c}
+ * LOG_ALLOW_SYNC(LOCAL, LOG_DEBUG, "Debug info: rank = %d\n", rank);
+ * LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,  "Synchronized info in %s\n", __func__);
+ * \endcode
  */
-#define LOG_ALLOW_SYNC(level, fmt, ...) \
-    do { \
-        /* Check both the logging level and the function allow-list */ \
-        if ((int)(level) <= (int)get_log_level() && is_function_allowed(__func__)) { \
-            /* Synchronized print (collective) on the specified communicator */ \
-            PetscSynchronizedPrintf(MPI_COMM_WORLD, "[%s] " fmt, __func__, ##__VA_ARGS__); \
-            /* Flush to ensure messages appear in rank order (0,1,2,...) */ \
-            PetscSynchronizedFlush(MPI_COMM_WORLD, PETSC_STDOUT); \
-        } \
+#define LOG_ALLOW_SYNC(level,scope, fmt, ...)                                 \
+    do {                                                                       \
+        if ((scope != LOCAL && scope != GLOBAL)) {                             \
+            fprintf(stderr, "LOG_ALLOW_SYNC ERROR: Invalid scope at %s:%d\n",  \
+                    __FILE__, __LINE__);                                       \
+        } else if (is_function_allowed(__func__) &&                            \
+                  (int)(level) <= (int)get_log_level()) {                      \
+            MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
+            PetscSynchronizedPrintf(comm, "[%s] " fmt, __func__, ##__VA_ARGS__); \
+            PetscSynchronizedFlush(comm, PETSC_STDOUT);                        \
+        }                                                                      \
     } while (0)
 
+/**
+ * @brief Logs a message inside a loop, but only every `interval` iterations.
+ *
+ * @param scope     LOCAL or GLOBAL.
+ * @param level     LOG_* level.
+ * @param iterVar   The loop variable (e.g., i).
+ * @param interval  Only log when (iterVar % interval == 0).
+ * @param fmt       printf-style format string.
+ * @param ...       Variadic arguments to include in the formatted message.
+ *
+ * Example:
+ *    for (int i = 0; i < 100; i++) {
+ *        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "Value of i=%d\n", i);
+ *    }
+ */
+#define LOG_LOOP_ALLOW(scope, level, iterVar, interval, fmt, ...)              \
+    do {                                                                       \
+        if (is_function_allowed(__func__) && (int)(level) <= (int)get_log_level()) { \
+            if ((iterVar) % (interval) == 0) {                                 \
+                MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
+                PetscPrintf(comm, "[%s] [Iter=%d] " fmt,                       \
+                            __func__, (iterVar), ##__VA_ARGS__);               \
+            }                                                                  \
+        }                                                                      \
+    } while (0)
+
+/**
+ * @brief Logs a single element of an array, given an index.
+ *
+ * @param scope   Either LOCAL or GLOBAL.
+ * @param level   LOG_ERROR, LOG_WARNING, LOG_INFO, or LOG_DEBUG.
+ * @param arr     Pointer to the array to log from.
+ * @param length  The length of the array (to prevent out-of-bounds).
+ * @param idx     The index of the element to print.
+ * @param fmt     The printf-style format specifier (e.g. "%g", "%f", etc.).
+ *
+ * This macro only logs if:
+ *  1) The current function is in the allow-list (`is_function_allowed(__func__)`).
+ *  2) The requested logging `level` <= the current global `get_log_level()`.
+ *  3) The index `idx` is valid (0 <= idx < length).
+ */
+#define LOG_ARRAY_ELEMENT_ALLOW(scope, level, arr, length, idx, fmt)          \
+    do {                                                                      \
+        if (is_function_allowed(__func__) && (int)(level) <= (int)get_log_level()) { \
+            if ((idx) >= 0 && (idx) < (length)) {                             \
+                MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
+                PetscPrintf(comm, "[%s] arr[%d] = " fmt "\n",                 \
+                            __func__, (idx), (arr)[idx]);                     \
+            }                                                                 \
+        }                                                                     \
+    } while (0)
+
+/**
+ * @brief Logs a consecutive subrange of an array.
+ *
+ * @param scope   Either LOCAL or GLOBAL.
+ * @param level   LOG_ERROR, LOG_WARNING, LOG_INFO, or LOG_DEBUG.
+ * @param arr     Pointer to the array to log from.
+ * @param length  Total length of the array.
+ * @param start   Starting index of the subrange.
+ * @param end     Ending index of the subrange (inclusive).
+ * @param fmt     The printf-style format specifier (e.g., "%g", "%f").
+ *
+ * This macro prints each element arr[i] for i in [start, end], bounded by [0, length-1].
+ */
+#define LOG_ARRAY_SUBRANGE_ALLOW(scope, level, arr, length, start, end, fmt)  \
+    do {                                                                      \
+        if (is_function_allowed(__func__) && (int)(level) <= (int)get_log_level()) { \
+            MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
+            PetscInt _start = (start) < 0 ? 0 : (start);                      \
+            PetscInt _end   = (end) >= (length) ? (length) - 1 : (end);       \
+            for (PetscInt i = _start; i <= _end; i++) {                       \
+                PetscPrintf(comm, "[%s] arr[%d] = " fmt "\n", __func__, i, (arr)[i]); \
+            }                                                                 \
+        }                                                                     \
+    } while (0)
+
+
+/**
+ * @brief Begins timing a function by:
+ *        1. Starting a wall-clock timer (PetscTime).
+ *        2. Beginning a PETSc log event.
+ *
+ * @param eventID   A previously registered PetscLogEvent (e.g., EVENT_EvalPosition).
+ * @param scope     LOCAL or GLOBAL (for potential later usage in logging).
+ * @param level     LOG_ERROR, LOG_WARNING, LOG_INFO, LOG_DEBUG.
+ *
+ * Example usage:
+ * \code{.c}
+ * LOG_FUNC_TIMER_BEGIN_EVENT(EVENT_EvalPosition, LOCAL, LOG_DEBUG);
+ * // ... function body ...
+ * LOG_FUNC_TIMER_END_EVENT(EVENT_EvalPosition, LOCAL, LOG_DEBUG);
+ * \endcode
+ */
+#define LOG_FUNC_TIMER_BEGIN_EVENT(eventID, scope)			\
+    double __funcTimerStart = 0.0;                                              \
+    PetscBool __funcTimerActive = PETSC_FALSE;                                  \
+    do {                                                                        \
+        if (is_function_allowed(__func__) && (int)(LOG_PROFILE) <= (int)get_log_level()) { \
+            PetscLogDouble _timeStamp = 0.0;                                    \
+            PetscTime(&_timeStamp);                                             \
+            __funcTimerStart = (double)_timeStamp;                              \
+            __funcTimerActive = PETSC_TRUE;                                     \
+            /* Start the PETSc log event (rank-wide). */                        \
+            PetscLogEventBegin(eventID, 0, 0, 0, 0);                            \
+        }                                                                       \
+    } while (0)
+
+/**
+ * @brief Ends timing a function by:
+ *        1. Ending a PETSc log event.
+ *        2. Logging the wall-clock elapsed time, if active.
+ *
+ * @param eventID  The same PetscLogEvent handle passed to LOG_FUNC_TIMER_BEGIN_EVENT.
+ * @param scope    LOCAL or GLOBAL for possible MPI_Comm usage.
+ * @param level    The log level at which to print the timing message.
+ *
+ * The log message is only printed if the function is in the allow-list
+ * and the current log level is >= the requested `level`.
+ */
+#define LOG_FUNC_TIMER_END_EVENT(eventID, scope)                         \
+    do {                                                                        \
+        if (__funcTimerActive == PETSC_TRUE) {                                  \
+            /* End the PETSc log event */                                       \
+            PetscLogEventEnd(eventID, 0, 0, 0, 0);                              \
+            /* Log the wall-clock elapsed time */                               \
+            if (is_function_allowed(__func__) && (int)(LOG_PROFILE) <= (int)get_log_level()) { \
+                PetscLogDouble _timeEnd = 0.0;                                  \
+                PetscTime(&_timeEnd);                                           \
+                double elapsed = (double)_timeEnd - __funcTimerStart;           \
+                MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
+                PetscPrintf(comm, "[%s] Elapsed Time: %f seconds\n", __func__, elapsed); \
+            }                                                                   \
+        }                                                                       \
+    } while (0)
+
+#define LOG_PROFILE_MSG(scope, fmt, ...)                                     \
+    do {                                                                     \
+        if ((int)(LOG_PROFILE) <= (int)get_log_level()) {                    \
+            MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
+            PetscPrintf(comm, "[PROFILE] " fmt, ##__VA_ARGS__);              \
+        }                                                                    \
+    } while (0)
+
+// Logging Events declaration!
+
+extern PetscLogEvent EVENT_Individualwalkingsearch;
+extern PetscLogEvent EVENT_walkingsearch;
 
 #endif // LOGGING_H

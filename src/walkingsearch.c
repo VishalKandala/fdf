@@ -834,6 +834,8 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
     const PetscReal threshold = 1e-14 ;
     DMDALocalInfo info;
     
+    //   LOG_FUNC_TIMER_BEGIN_EVENT(EVENT_Individualwalkingsearch,LOCAL);    
+
     // Retrieve local DMDA info (which holds xs, xm, ys, ym, zs, zm)
     ierr = DMDAGetLocalInfo(user->da,&info);
     
@@ -885,6 +887,8 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
 
     // Finalize traversal by reporting the results
     ierr = FinalizeTraversal(user, particle, traversal_steps, Cell_found, idx, idy, idz); CHKERRQ(ierr);
+
+    //  LOG_FUNC_TIMER_END_EVENT(EVENT_Individualwalkingsearch,LOCAL);
 
     return 0;
 }
