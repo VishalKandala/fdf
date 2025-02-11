@@ -211,3 +211,240 @@ PetscErrorCode InterpolateFieldFromCornerToCenter(Cmpnts ***field,
 
   return 0; // success
 }
+
+
+
+///////////////////////////// Single VTP Implementation ////////
+
+/**
+ * @brief Parses command-line options using PETSc's option database.
+ *
+ * This function initializes PETSc (via \c PetscInitialize) and extracts the
+ * user-specified time index, field name, and output extension from the
+ * command line. Defaults are assigned if these are not specified.
+ *
+ * @param[in]     argc           Number of command-line arguments.
+ * @param[in]     argv           The command-line argument strings.
+ * @param[out]    timeIndex      The time index (default = 0).
+ * @param[out]    fieldName      Buffer to store the parsed field name (default "velocity").
+ * @param[out]    outExt         Buffer to store the file extension (default "vtp").
+ * @param[in]     fieldNameSize  The maximum size of \p fieldName buffer.
+ * @param[in]     outExtSize     The maximum size of \p outExt buffer.
+ *
+ * @return PetscErrorCode  Returns 0 on success, otherwise an error code from PETSc.
+ */
+/*
+static PetscErrorCode ParseCommandLineOptions(int argc, char **argv,
+                                              int *timeIndex,
+                                              char *fieldName,
+                                              char *outExt,
+                                              size_t fieldNameSize,
+                                              size_t outExtSize)
+{
+  PetscFunctionBeginUser;
+
+  PetscErrorCode ierr;
+
+  *timeIndex = 0; // default
+  PetscStrcpy(fieldName, "velocity");
+  PetscStrcpy(outExt,    "vtp");
+
+  LOG_ALLOW(GLOBAL, LOG_DEBUG, "ParseCommandLineOptions - Parsing PETSc options.\n");
+  ierr = PetscInitialize(&argc, &argv, NULL, NULL);CHKERRQ(ierr);
+
+  // parse
+  PetscOptionsGetInt(NULL, NULL, "-ti", timeIndex, NULL);
+  PetscOptionsGetString(NULL, NULL, "-field", fieldName, fieldNameSize, NULL);
+  PetscOptionsGetString(NULL, NULL, "-out_ext", outExt, outExtSize, NULL);
+
+  LOG_ALLOW(GLOBAL, LOG_DEBUG, "ParseCommandLineOptions - Completed parsing.\n");
+  PetscFunctionReturn(0);
+}
+*/
+
+
+
+ /*
+ * @brief Main entry point for the PETSc-based VTK post-processing tool.
+ *
+ * This function reads coordinate and field data from distributed PETSc \c Vecs,
+ * gathers them onto rank 0, and writes them as a VTK file (either \c .vts or \c .vtp).
+ * The file name, time index, and field name are configured via command-line options.
+ *
+ * Usage:
+ * \code
+ *   mpirun -n X ./this_executable -ti 10 -field velocity -out_ext vtp
+ * \endcode
+ *
+ * @param[in] argc Number of command-line arguments.
+ * @param[in] argv Array of command-line argument strings.
+ *
+ * @return int Returns 0 on success, or an error code upon failures.
+ */
+
+/*
+int main(int argc, char **argv)
+{
+  PetscErrorCode ierr;
+  int            rank, size;
+  int            ti;
+  char           field_name[64];
+  char           out_ext[16];
+  double        *coordsArray = NULL;
+  double        *scalarArray = NULL;
+  PetscInt       Ncoords     = 0;
+  PetscInt       Nscalars    = 0;
+
+  LOG_ALLOW(GLOBAL, LOG_DEBUG, "main - Starting PETSc-based VTK post-processing.\n");
+
+  // 1) Parse command-line options and initialize PETSc 
+  ierr = ParseCommandLineOptions(argc, argv, &ti,
+                                 field_name, out_ext,
+                                 sizeof(field_name), sizeof(out_ext));CHKERRQ(ierr);
+  ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank);CHKERRQ(ierr);
+  ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size);CHKERRQ(ierr);
+  LOG_ALLOW(GLOBAL, LOG_INFO, "main - PETSc initialized. rank=%d of %d.\n", rank, size);
+
+  // 2) Build a user context 
+  UserCtx user;
+
+  ierr = BuildUserContext(&user);CHKERRQ(ierr);
+
+  // 3) Read coordinate data into coordsArray 
+  ierr = ReadPositions(ti, &user, &coordsArray, &Ncoords);CHKERRQ(ierr);
+
+  // 4) Read the field data into scalarArray 
+  ierr = ReadFieldDataWrapper(ti, field_name, &user, &scalarArray, &Nscalars);CHKERRQ(ierr);
+
+  // 5) Prepare the VTKMetaData struct 
+  VTKMetaData meta;
+  ierr = PrepareVTKMetaData(coordsArray, Ncoords,
+                            scalarArray, Nscalars,
+                            field_name, out_ext,
+                            &meta, rank);CHKERRQ(ierr);
+
+  // 6) Construct the output file name 
+  char outFile[256];
+  ierr = ConstructOutputFilename(field_name, ti, out_ext, outFile, sizeof(outFile));CHKERRQ(ierr);
+
+  // 7) Create the VTK file 
+  if (!rank) {
+    LOG_ALLOW(GLOBAL, LOG_INFO, "main - Creating VTK file '%s'.\n", outFile);
+  }
+  PetscErrorCode errorCode = 0;
+  errorCode = CreateAndWriteVTKFile(outFile, &meta, PETSC_COMM_WORLD);
+  if (errorCode) {
+    PetscPrintf(PETSC_COMM_WORLD,
+                "[ERROR] CreateVTKFileFromMetadata returned %d.\n", errorCode);
+    LOG_ALLOW(GLOBAL, LOG_ERROR,
+              "main - CreateVTKFileFromMetadata failed with code=%d.\n", errorCode);
+    goto finalize;
+  }
+  if (!rank) {
+    PetscPrintf(PETSC_COMM_SELF, "[postprocess] Wrote file: %s\n", outFile);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "main - Successfully wrote file: %s\n", outFile);
+  }
+
+finalize:
+  // Cleanup rank-0 memory 
+  if (!rank) {
+    free(coordsArray);
+    free(scalarArray);
+    if (meta.fileType == VTK_POLYDATA) {
+      free(meta.connectivity);
+      free(meta.offsets);
+    }
+  }
+
+  // Finalize PETSc //
+  LOG_ALLOW(GLOBAL, LOG_DEBUG, "main - Finalizing PETSc.\n");
+  PetscFinalize();
+  LOG_ALLOW(GLOBAL, LOG_DEBUG, "main - Program completed.\n");
+  return 0;
+}
+
+
+// @brief Constructs an output file path of the form "results/<fieldName><timeIndex>.<outExt>".
+// 
+//  @param[in]  fieldName   The name of the field (e.g., "velocity").
+//  @param[in]  timeIndex   The time index to be appended (zero-padded).
+//  @param[in]  outExt      The desired file extension (e.g., "vtp" or "vts").
+//  @param[out] outFile     Buffer to store the resulting file path.
+//  @param[in]  outFileSize The size of \p outFile buffer.
+// 
+//  @return PetscErrorCode  Returns 0 on success, or error from \c PetscSNPrintf.
+ 
+static PetscErrorCode ConstructOutputFilename(const char *fieldName,
+                                              PetscInt    timeIndex,
+                                              const char *outExt,
+                                              char       *outFile,
+                                              size_t      outFileSize)
+{
+  PetscFunctionBeginUser;
+  PetscErrorCode ierr;
+  ierr = PetscSNPrintf(outFile, outFileSize,
+                       "results/%s%05d.%s", fieldName, timeIndex, outExt);CHKERRQ(ierr);
+  LOG_ALLOW(GLOBAL, LOG_DEBUG, "ConstructOutputFilename - Created output file '%s'.\n", outFile);
+  PetscFunctionReturn(0);
+}
+
+*/ 
+
+
+///////////////////////////////////////////////////
+
+
+/**
+ * @brief Prints the coordinates of all particles in the swarm.
+ *
+ * This function retrieves the local number of particles and their coordinates
+ * from the DMSwarm associated with the provided UserCtx. It then prints out
+ * the coordinates of each particle in a synchronized manner across all MPI processes.
+ * The output includes the MPI rank, global particle ID, local particle index, and
+ * the (x, y, z) coordinates.
+ *
+ * @param[in] user    Pointer to the UserCtx structure containing simulation context.
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ */
+PetscErrorCode PrintParticleCoordinates(UserCtx* user) {
+    DM swarm = user->swarm;            // DMSwarm object containing particles
+    PetscErrorCode ierr;               // Error code for PETSc functions
+    PetscInt localNumParticles;        // Number of particles on the local MPI process
+    PetscReal *coordinates;            // Array to store particle coordinates
+    PetscMPIInt rank;                  // MPI rank of the current process
+
+    // Retrieve the MPI rank of the current process
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(LOG_INFO,LOCAL, "PrintParticleCoordinates - Rank %d is retrieving particle coordinates.\n", rank);
+
+    // Get the number of particles in the local swarm
+    ierr = DMSwarmGetLocalSize(swarm, &localNumParticles); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(LOG_DEBUG,LOCAL, "PrintParticleCoordinates - Rank %d has %d particles.\n", rank, localNumParticles);
+
+    // Access the 'position' field from the DMSwarm
+    ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void**)&coordinates); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(LOG_DEBUG,LOCAL, "PrintParticleCoordinates - Retrieved 'position' field.\n");
+
+    // Iterate over each local particle and print its coordinates
+    for (PetscInt i = 0; i < localNumParticles; i++) {
+        // Calculate the global particle ID (assuming particles are evenly distributed)
+        PetscInt64 globalParticleID = rank * localNumParticles + i + 1;
+
+        // Synchronized printing to ensure orderly output across MPI processes
+        ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD,
+            "Rank %d - Global Particle %" PetscInt64_FMT " - Local Particle %d : Coordinates = (%.6f, %.6f, %.6f)\n",
+            rank, globalParticleID, i + 1,
+            coordinates[3 * i], coordinates[3 * i + 1], coordinates[3 * i + 2]); CHKERRQ(ierr);
+    }
+
+    // Flush the synchronized output to ensure all messages are printed
+    ierr = PetscSynchronizedFlush(PETSC_COMM_WORLD, PETSC_STDOUT); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(LOG_DEBUG,LOCAL, "PrintParticleCoordinates - Completed printing coordinates on Rank %d.\n", rank);
+
+    // Restore the 'position' field to clean up
+    ierr = DMSwarmRestoreField(swarm, "position", NULL, NULL, (void**)&coordinates); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(LOG_DEBUG, LOCAL,"PrintParticleCoordinates - Restored 'position' field.\n");
+
+    return 0;
+}

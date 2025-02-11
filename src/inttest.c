@@ -212,12 +212,15 @@ PetscErrorCode UpdateCartesianVelocity(UserCtx *user)
     DMDALocalInfo info = user->info;
     Vec Coor;
     Cmpnts ***coor = NULL, ***centcoor = NULL, ***ucat = NULL;
+    PetscInt rank;
 
     PetscInt xs = info.xs, xe = info.xs + info.xm;
     PetscInt ys = info.ys, ye = info.ys + info.ym;
     PetscInt zs = info.zs, ze = info.zs + info.zm;
+ 
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "UpdateCartesianVelocity: Starting.\n");
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "UpdateCartesianVelocity: Starting on rank : %d \n",rank);
 
     /* 1) Access local coords (Coor) & velocity array (Ucat) */
     ierr = DMGetCoordinatesLocal(user->da, &Coor); CHKERRQ(ierr);
@@ -266,7 +269,7 @@ PetscErrorCode UpdateCartesianVelocity(UserCtx *user)
     ierr = DMDAVecRestoreArray(user->fda, user->Ucat, &ucat); CHKERRQ(ierr);
     ierr = DMDAVecRestoreArrayRead(user->fda, Coor, &coor); CHKERRQ(ierr);
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "UpdateCartesianVelocity: Completed.\n");
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "UpdateCartesianVelocity: Completed on rank : %d \n",rank);
     return 0;
 }
 
@@ -311,6 +314,7 @@ int main(int argc, char **argv) {
     PetscReal umax;
     PetscBool readFields = PETSC_FALSE;
     static char help[] = " Test for interpolation - swarm-curvIB";
+    PetscViewer logviewer;
 
     // -------------------- 1. PETSc Initialization --------------------
     ierr = PetscInitialize(&argc, &argv, (char *)0, help); CHKERRQ(ierr);
@@ -319,26 +323,33 @@ int main(int argc, char **argv) {
     // Only these function names will produce LOG_ALLOW (or LOG_ALLOW_SYNC) output.
     // You can add more as needed (e.g., "InitializeSimulation", "PerformParticleSwarmOperations", etc.).
     const char *allowedFuncs[] = {
-      "LocateAllParticlesInGrid",
-      // "InterpolateParticleVelocities",
-      //   "ComputeTrilinearWeights",
-      // "main",                 // We'll allow logging from this main function
-	//  "SetupGridAndVectors",
-	// "InitializeSimulation", // Example: also allow logs from InitializeSimulation
-        // "BroadcastAllBoundingBoxes",    // Uncomment to allow logs from that function, etc.
-        // "PerformParticleSwarmOperations"
-	//  "UpdateCartesianVelocity"
-	// "InterpolateFieldFromCornerToCenter"
+      //  "main",
+      //  "InitializeSimulation",                 
+      //  "SetupGridAndVectors",
+      //  "UpdateCartesianVelocity",
+      // "InterpolateFieldFromCornerToCenter",
+      //  "WriteSimulationFields",
+      //  "ReadSimulationFields",
+      //   "GatherAllBoundingBoxes",
+      //   "BroadcastAllBoundingBoxes",
+      // "PerformParticleSwarmOperations",
+      // "CreateParticleSwarm",
+      // "AssignInitialPropertiesToSwarm",
+      // "InitializeParticleBasicProperties",
+      // "FinalizeSwarmSetup",
+      //  "LocateAllParticlesInGrid",
+      //"InterpolateParticleVelocities",
+           //"ComputeTrilinearWeights",
+      // "FinalizeSimulation"
     };
-    set_allowed_functions(allowedFuncs, 1);
+    set_allowed_functions(allowedFuncs, 0);
 
+    // Enable PETSc default logging
+    ierr = PetscLogDefaultBegin(); CHKERRQ(ierr);
 
     registerEvents();   
 
-    // -------------------- 3. Demonstrate LOG_ALLOW in main -----------
-    // This message will only be printed if "main" is in the allow-list
-    // AND if the LOG_LEVEL environment variable is high enough (e.g., INFO or DEBUG).
-    LOG_ALLOW(GLOBAL, LOG_INFO, "==> Starting main with function-based logging...\n");
+    print_log_level();
 
     // Check if user requested to read fields instead of updating
     ierr = PetscOptionsGetBool(NULL, NULL, "-read_fields", &readFields, NULL); CHKERRQ(ierr);
@@ -347,7 +358,7 @@ int main(int argc, char **argv) {
     ierr = InitializeSimulation(&user, &rank, &size, &np, &rstart, &ti, &block_number); CHKERRQ(ierr);
 
     // Another demonstration of LOG_ALLOW
-    LOG_ALLOW(GLOBAL, LOG_INFO,
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
               "main: readFields = %s, rank = %d, size = %d\n",
               readFields ? "true" : "false", rank, size);
 
@@ -364,7 +375,7 @@ int main(int argc, char **argv) {
 
     // Compute and print maximum velocity magnitude
     ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
-    PetscPrintf(PETSC_COMM_WORLD, "Maximum velocity magnitude: %f\n", umax);
+    LOG_ALLOW(GLOBAL,LOG_INFO,"Maximum velocity magnitude: %f\n", umax);
 
     // Gather bounding boxes on rank 0
     ierr = GatherAllBoundingBoxes(user, &bboxlist); CHKERRQ(ierr);
@@ -374,6 +385,12 @@ int main(int argc, char **argv) {
 
     // Perform particle swarm operations with bboxlist knowledge on all ranks
     ierr = PerformParticleSwarmOperations(user, np, bboxlist); CHKERRQ(ierr);
+    
+    // Create an ASCII viewer to write log output to file
+    ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, "petsc_log.txt", &logviewer);
+
+    // Print PETSc logging results at the end
+    ierr = PetscLogView(logviewer); CHKERRQ(ierr);
 
     // Finalize simulation
     ierr = FinalizeSimulation(user, block_number, bboxlist); CHKERRQ(ierr);

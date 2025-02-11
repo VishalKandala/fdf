@@ -648,15 +648,12 @@ int ReadDataFileToArray(const char   *filename,
     double *array = NULL;      /* pointer to local array on each rank */
     int    fileExistsFlag = 0; /* 0 = doesn't exist, 1 = does exist */
 
-    PetscPrintf(comm, "=== STEP 0: Entering ReadDataFileToArray => file: %s ===\n", filename);
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
               "ReadDataFileToArray - Start reading from file: %s\n",
               filename);
 
     /* Basic error checking: data_out, Nout must be non-null. */
     if (!filename || !data_out || !Nout) {
-        PetscPrintf(comm,
-            "[ERROR] ReadDataFileToArray - Null pointer argument (filename/data_out/Nout).\n");
         LOG_ALLOW(GLOBAL, LOG_WARNING,
                   "ReadDataFileToArray - Null pointer argument provided.\n");
         return 1;
@@ -667,7 +664,6 @@ int ReadDataFileToArray(const char   *filename,
     MPI_Comm_size(comm, &size);
 
     /* STEP 1: On rank 0, check if file can be opened. */
-    PetscPrintf(comm, "STEP 1: Checking file existence on rank %d...\n", rank);
     if (!rank) {
         fp = fopen(filename, "r");
         if (fp) {
@@ -677,16 +673,12 @@ int ReadDataFileToArray(const char   *filename,
     }
 
     /* STEP 2: Broadcast file existence to all ranks. */
-    PetscPrintf(comm, "STEP 2: Broadcasting fileExistsFlag (%d) to all %d ranks...\n",
-                fileExistsFlag, size);
     // In ReadDataFileToArray:
     ierr = MPI_Bcast(&fileExistsFlag, 1, MPI_INT, 0, comm); CHKERRQ(ierr);
 
     if (!fileExistsFlag) {
         /* If file does not exist, log & return. */
         if (!rank) {
-            PetscPrintf(comm,
-                "[ERROR] ReadDataFileToArray - File '%s' not found.\n", filename);
             LOG_ALLOW(GLOBAL, LOG_WARNING,
                       "ReadDataFileToArray - File '%s' not found.\n",
                       filename);
@@ -695,12 +687,9 @@ int ReadDataFileToArray(const char   *filename,
     }
 
     /* STEP 3: Rank 0 re-opens and reads the file, counting lines, etc. */
-    PetscPrintf(comm, "STEP 3: If rank=0, open and parse file: %s\n", filename);
     if (!rank) {
         fp = fopen(filename, "r");
         if (!fp) {
-            PetscPrintf(comm,
-                "[ERROR] ReadDataFileToArray - Could not reopen file '%s'.\n", filename);
             LOG_ALLOW(GLOBAL, LOG_WARNING,
                       "ReadDataFileToArray - File '%s' could not be opened for reading.\n",
                       filename);
@@ -714,7 +703,6 @@ int ReadDataFileToArray(const char   *filename,
                 N++;
             }
         }
-        PetscPrintf(comm,"ReadDataFileToArray - File '%s' has %d lines.\n",filename, N);
 
         LOG_ALLOW(GLOBAL, LOG_DEBUG,
                   "ReadDataFileToArray - File '%s' has %d lines.\n",
@@ -724,8 +712,6 @@ int ReadDataFileToArray(const char   *filename,
         array = (double*)malloc(N * sizeof(double));
         if (!array) {
             fclose(fp);
-            PetscPrintf(comm,
-                "[ERROR] ReadDataFileToArray - malloc failed for array.\n");
             LOG_ALLOW(GLOBAL, LOG_WARNING,
                       "ReadDataFileToArray - malloc failed for array.\n");
             return 4;
@@ -745,26 +731,18 @@ int ReadDataFileToArray(const char   *filename,
         }
         fclose(fp);
 
-        PetscPrintf(comm,
-            "   => Rank 0 read %d values from '%s'.\n", N, filename);
         LOG_ALLOW(GLOBAL, LOG_INFO,
                   "ReadDataFileToArray - Successfully read %d values from '%s'.\n",
                   N, filename);
     }
 
     /* STEP 4: Broadcast the integer N to all ranks. */
-    PetscPrintf(comm,
-        "STEP 4: Broadcasting total count N=%d to all ranks...\n", N);
     ierr = MPI_Bcast(&N, 1, MPI_INT, 0, comm); CHKERRQ(ierr);
 
     /* STEP 5: Each rank allocates an array to receive the broadcast if rank>0. */
-    PetscPrintf(comm,
-        "STEP 5: Each rank (including rank 0) ensures array allocated => length=%d.\n", N);
     if (rank) {
         array = (double*)malloc(N * sizeof(double));
         if (!array) {
-            PetscPrintf(comm,
-                "[ERROR] ReadDataFileToArray - malloc failed on rank %d.\n", rank);
             LOG_ALLOW(GLOBAL, LOG_WARNING,
                       "ReadDataFileToArray - malloc failed on rank %d.\n",
                       rank);
@@ -773,21 +751,15 @@ int ReadDataFileToArray(const char   *filename,
     }
 
     /* STEP 6: Broadcast the actual data from rank 0 to all. */
-    PetscPrintf(comm,
-        "STEP 6: Broadcasting data array of length=%d from rank 0 to others...\n", N);
     ierr = MPI_Bcast(array, N, MPI_DOUBLE, 0, comm); CHKERRQ(ierr);
 
     /* STEP 7: Assign outputs on all ranks. */
-    PetscPrintf(comm,
-        "STEP 7: Storing array pointer & count in data_out/Nout.\n");
     *data_out = array;
     *Nout     = N;
 
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
               "ReadDataFileToArray - Done. Provided array of length=%d to all ranks.\n",
               N);
-
-    PetscPrintf(comm, "=== Exiting ReadDataFileToArray => success, array length=%d ===\n", N);
     return 0; /* success */
 }
 
@@ -807,29 +779,29 @@ int ReadDataFileToArray(const char   *filename,
 int WriteVTKAppendedBlock(FILE *fp, const void *data, int num_elements, size_t element_size) {
 
     // Log the function call with parameters
-    LOG_ALLOW_SYNC(LOG_INFO,LOCAL, "WriteVTKAppendedBlock - Called with %d elements, each of size %zu bytes.\n",
+  LOG_ALLOW_SYNC(LOCAL,LOG_INFO,"WriteVTKAppendedBlock - Called with %d elements, each of size %zu bytes.\n",
                    num_elements, element_size);
 
     // Calculate the block size
     int block_size = num_elements * (int)element_size;
-    LOG_ALLOW_SYNC(LOG_DEBUG,LOCAL, "WriteVTKAppendedBlock - Calculated block size: %d bytes.\n", block_size);
+    LOG_ALLOW_SYNC(LOCAL, LOG_DEBUG, "WriteVTKAppendedBlock - Calculated block size: %d bytes.\n", block_size);
 
     // Write the block size as a 4-byte integer
     if (fwrite(&block_size, sizeof(int), 1, fp) != 1) {
         fprintf(stderr, "[ERROR] Failed to write block size.\n");
-        LOG_ALLOW_SYNC(LOG_ERROR,LOCAL, "WriteVTKAppendedBlock - Error writing block size.\n");
+        LOG_ALLOW_SYNC(LOCAL, LOG_ERROR, "WriteVTKAppendedBlock - Error writing block size.\n");
         return 1;
     }
 
     // Write the actual data
     if (fwrite(data, element_size, num_elements, fp) != (size_t)num_elements) {
         fprintf(stderr, "[ERROR] Failed to write data block.\n");
-        LOG_ALLOW_SYNC(LOG_ERROR,LOCAL, "WriteVTKAppendedBlock - Error writing data block.\n");
+        LOG_ALLOW_SYNC(LOCAL, LOG_ERROR, "WriteVTKAppendedBlock - Error writing data block.\n");
         return 1;
     }
 
     // Log success
-    LOG_ALLOW_SYNC(LOG_INFO,LOCAL, "WriteVTKAppendedBlock - Successfully wrote block of %d bytes.\n", block_size);
+    LOG_ALLOW_SYNC(LOCAL, LOG_INFO, "WriteVTKAppendedBlock - Successfully wrote block of %d bytes.\n", block_size);
 
     return 0; // Success
 }
@@ -1247,7 +1219,6 @@ int CreateVTKFileFromMetadata(const char *filename,
 
         FILE *fp = fopen(filename, "wb");
         if (!fp) {
-            PetscPrintf(comm, "[ERROR] Could not open '%s' for writing.\n", filename);
             LOG_ALLOW(GLOBAL, LOG_ERROR, "CreateVTKFileFromMetadata - fopen failed for %s.\n", filename);
             return 1;
         }

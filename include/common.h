@@ -262,4 +262,19 @@ typedef enum {
 
 // Add other shared types (e.g., IBMNodes, IBMInfo) if needed
 
+
+/**
+ * @brief Enumerates the six faces of a cubic cell for distance calculations.
+ */
+typedef enum {
+    LEFT = 0,    /**< Left face (x-) */
+    RIGHT,       /**< Right face (x+) */
+    BOTTOM,      /**< Bottom face (y-) */
+    TOP,         /**< Top face (y+) */
+    FRONT,       /**< Front face (z-) */
+    BACK,        /**< Back face (z+) */
+    NUM_FACES    /**< Total number of faces */
+} Face;
+
+
 #endif // COMMON_H

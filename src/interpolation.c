@@ -43,10 +43,15 @@
 static inline void ComputeTrilinearWeights(PetscReal a1, PetscReal a2, PetscReal a3, PetscReal *w) {
     LOG_ALLOW(GLOBAL, LOG_DEBUG, "ComputeTrilinearWeights: Computing weights for a1=%f, a2=%f, a3=%f.\n", a1, a2, a3);
 
+    // Ensure a1, a2, a3 are within [0,1]
+    a1 = PetscMax(0.0, PetscMin(1.0, a1));
+    a2 = PetscMax(0.0, PetscMin(1.0, a2));
+    a3 = PetscMax(0.0, PetscMin(1.0, a3));
+
     // Compute complementary coefficients (1 - a)
-    PetscReal oa1 = a1 - 1.0; 
-    PetscReal oa2 = a2 - 1.0;
-    PetscReal oa3 = a3 - 1.0;
+    PetscReal oa1 = 1.0 - a1;  
+    PetscReal oa2 = 1.0 - a2;  
+    PetscReal oa3 = 1.0 - a3;
 
     // Compute weights for each corner of the cell
     w[0] = a1  * a2  * a3;   // Front-bottom-left
@@ -137,6 +142,15 @@ static inline PetscErrorCode InterpolateTrilinearVelocity(
     vel->y += wcorner[7] * ucat[k1][j1][i1].y;
     vel->z += wcorner[7] * ucat[k1][j1][i1].z;
 
+
+    LOG_ALLOW(LOCAL, LOG_DEBUG, 
+    "InterpolateTrilinearVelocity: Interpolated velocity at (i=%d, j=%d, k=%d) with a1=%.6f, a2=%.6f, a3=%.6f -> (x=%.6f, y=%.6f, z=%.6f).\n",
+    i, j, k, a1, a2, a3, vel->x, vel->y, vel->z);
+
+
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "InterpolateParticleVelocities: Completed particle velocity interpolation across all ranks.\n");
+
+
     PetscFunctionReturn(0);
 }
 
@@ -194,7 +208,7 @@ PetscErrorCode InterpolateParticleVelocities(UserCtx *user) {
     ierr = DMSwarmGetField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr); // Ensure 'weight' field exists
 
     // Access the local portion of the global velocity vector (Ucat) using 'fda'
-    ierr = DMDAVecGetArrayRead(user->fda,user->Ucat,&ucat);
+    ierr = DMDAVecGetArrayRead(user->fda,user->Ucat,&ucat);CHKERRQ(ierr);
 
 
     LOG_ALLOW(GLOBAL, LOG_DEBUG, "InterpolateParticleVelocities: Starting velocity assignment for particles.\n");
@@ -209,7 +223,7 @@ PetscErrorCode InterpolateParticleVelocities(UserCtx *user) {
         j = cellIDs[3 * p + 1];
         k = cellIDs[3 * p + 2];
 
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "Particle %d: Host Cell = (%d, %d, %d)\n", p, i, j, k);
+	LOG_LOOP_ALLOW(GLOBAL, LOG_DEBUG, p, 10, "Particle %d: Host Cell = (%d, %d, %d)\n", p, i, j, k);
 
 	// Clamp i, j, k to [0..mx-2], [0..my-2], [0..mz-2]
 	if (i >= user->info.mx - 1) i = user->info.mx - 2;
@@ -242,10 +256,8 @@ PetscErrorCode InterpolateParticleVelocities(UserCtx *user) {
         velocities[3 * p + 1] = ucat[k+1][j+1][i+1].y; // v-component
         velocities[3 * p + 2] = ucat[k+1][j+1][i+1].z; // w-component
        
-	
-
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "Particle %d: Interpolated velocity from (x=%f, y=%f, z=%f) to (x=%f, y=%f, z=%f).\n",
-            p, ucat[k][j][i].x, ucat[k][j][i].y, ucat[k][j][i].z,velocities[3 * p], velocities[3 * p + 1], velocities[3 * p + 2]);
+	LOG_LOOP_ALLOW(GLOBAL, LOG_DEBUG, p, 10, "Particle %d: Interpolated velocity: (velocity.x=%f, velocity.y=%f, velocity.z=%f).\n",
+                        p, velocities[3 * p], velocities[3 * p + 1], velocities[3 * p + 2]);	
     }
 
     // Restore the local velocity array
@@ -257,6 +269,12 @@ PetscErrorCode InterpolateParticleVelocities(UserCtx *user) {
     ierr = DMSwarmRestoreField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr);
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "InterpolateParticleVelocities: Particle velocity interpolation completed.\n");
+
+    // Ensure all ranks finish interpolation before proceeding
+    ierr = MPI_Barrier(PETSC_COMM_WORLD); CHKERRQ(ierr);
+
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "InterpolateParticleVelocities: All ranks completed particle interpolation.\n");
+
     return 0;
 }
 
@@ -316,6 +334,9 @@ PetscErrorCode InitializeSimulation(UserCtx **user, PetscInt *rank, PetscInt *si
     LOG_ALLOW(GLOBAL, LOG_INFO, "No. of Particles: %d\n", *np);
     LOG_ALLOW(GLOBAL, LOG_INFO, "No. of Grid blocks: %d\n", *nblk);
 
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "InitializeSimulation: Completed setup across all ranks.\n");
+
+
     return 0;
 }
 
@@ -349,7 +370,7 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
 	ierr = DMCreateGlobalVector(user[bi].da, &user[bi].Nvert_o); CHKERRQ(ierr);
       } //bi 
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "SetupGridAndVectors - Grid and vectors setup completed.\n");
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "SetupGridAndVectors - Grid and vectors setup completed on all ranks. \n");
     return 0;
 }
 
@@ -398,7 +419,7 @@ PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, Boundi
 
     // Step 2: Print particle fields for debugging (optional)
  //   LOG_ALLOW(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing initial particle fields (optional).\n");
-  //  ierr = PrintParticleFields(user); CHKERRQ(ierr);
+  //  ierr = LOG_PARTICLE_FIELDS(user,100); CHKERRQ(ierr);
 
     // Step 3: Locate particles within the computational grid
     // This updates each particle's cell indices and interpolation weights as needed.
@@ -408,7 +429,7 @@ PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, Boundi
 
     // Print particle fields again after location update (optional)
   //  LOG_ALLOW(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing particle fields after location update.\n");
- //   ierr = PrintParticleFields(user); CHKERRQ(ierr);
+    ierr = LOG_PARTICLE_FIELDS(user,10); CHKERRQ(ierr);
 
     // Step 4: Interpolate particle velocities using trilinear interpolation
     // This requires that particles have valid cell indices and weights from the previous step.
@@ -418,7 +439,7 @@ PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, Boundi
 
     // Print particle fields again after velocity interpolation (optional)
    LOG_ALLOW(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing particle fields after velocity interpolation.\n");
-   //  ierr = PrintParticleFields(user); CHKERRQ(ierr);
+   //  ierr = LOG_PARTICLE_FIELDS(user,100); CHKERRQ(ierr);
 
    // Write the particle positions to file.
    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the particle positions to file.\n");
@@ -428,7 +449,8 @@ PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, Boundi
    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the interpolated velocities to file.\n");
    ierr = WriteSwarmField(user,"velocity",0,"dat");
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle swarm operations completed.\n");
+   // Ensure all ranks complete before proceeding
+   LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle data writing completed across all ranks.\n");
 
     return 0;
 }
@@ -469,7 +491,10 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
         bboxlist = NULL;
     }
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "Simulation finalized and resources cleaned up.\n");
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "Simulation finalized and resources cleaned up on all ranks. \n");
+
+    // Ensure all MPI ranks reach this point before finalizing PETSc
+    ierr = MPI_Barrier(PETSC_COMM_WORLD); CHKERRQ(ierr);
 
     // Finalize PETSc
     ierr = PetscFinalize(); CHKERRQ(ierr);

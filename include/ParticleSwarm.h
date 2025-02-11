@@ -128,36 +128,6 @@ PetscErrorCode DistributeParticles(PetscInt numParticles, PetscMPIInt rank, Pets
 PetscErrorCode FinalizeSwarmSetup(PetscRandom *randx, PetscRandom *randy, PetscRandom *randz);
 
 /**
- * @brief Prints the coordinates of all particles in the swarm.
- *
- * This function retrieves the local number of particles and their coordinates
- * from the DMSwarm associated with the provided UserCtx. It then prints out
- * the coordinates of each particle in a synchronized manner across all MPI processes.
- * The output includes the MPI rank, global particle ID, local particle index, and
- * the (x, y, z) coordinates.
- *
- * @param[in] user    Pointer to the UserCtx structure containing simulation context.
- *
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
- */
-PetscErrorCode PrintParticleCoordinates(UserCtx* user);
-
-/**
- * @brief Prints the positions and associated metadata of all particles in the swarm.
- *
- * This function retrieves the local number of particles, their positions,
- * unique identifiers, and the MPI rank from the DMSwarm associated with the provided UserCtx.
- * It then prints out the positions of each particle along with their IDs and ranks
- * in a synchronized manner across all MPI processes. The output includes the MPI rank,
- * global particle ID, local particle index, position coordinates, and associated metadata.
- *
- * @param[in] user    Pointer to the UserCtx structure containing simulation context.
- *
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
- */
-PetscErrorCode PrintParticleFields(UserCtx* user);
-
-/**
  * @brief Defines the basic migration pattern for particles within the swarm.
  *
  * This function establishes the migration pattern that dictates how particles

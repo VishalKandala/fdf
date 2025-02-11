@@ -26,6 +26,8 @@
 // #include "interpolation.h"
 // #include "ParticleSwarm.h"
 
+#define MAX_FILENAME_LENGTH 256
+
 /**
  * @brief Prepares a VTKMetaData structure for VTK output.
  *
@@ -75,7 +77,7 @@ static PetscErrorCode PrepareVTKMetaData(const double *coordsArray,
    * Initialize the VTKMetaData structure by zeroing out all fields.
    *-----------------------------------------------------------------------*/
   memset(meta, 0, sizeof(VTKMetaData));
-  LOG_ALLOW(GLOBAL, LOG_DEBUG, "VTKMetaData structure initialized.\n");
+  LOG_ALLOW(LOCAL, LOG_DEBUG, "VTKMetaData structure initialized.\n");
 
   /*-----------------------------------------------------------------------
    * Determine the output file type by comparing outExt with "vtp".
@@ -84,13 +86,13 @@ static PetscErrorCode PrepareVTKMetaData(const double *coordsArray,
    *-----------------------------------------------------------------------*/
   ierr = PetscStrcmp(outExt, "vtp", &match);CHKERRQ(ierr);
   isVTP = match ? PETSC_TRUE : PETSC_FALSE;
-  LOG_ALLOW(GLOBAL, LOG_INFO, "Output file extension '%s' detected; isVTP = %d.\n", outExt, isVTP);
+  LOG_ALLOW(LOCAL, LOG_INFO, "Output file extension '%s' detected; isVTP = %d.\n", outExt, isVTP);
 
   if (!isVTP) {
     /*=====================================================================
      * Structured Grid Output: VTK_STRUCTURED
      *=====================================================================*/
-    LOG_ALLOW(GLOBAL, LOG_INFO, "Configuring for VTK_STRUCTURED output.\n");
+    LOG_ALLOW(LOCAL, LOG_INFO, "Configuring for VTK_STRUCTURED output.\n");
     meta->fileType = VTK_STRUCTURED;
 
     /*---------------------------------------------------------------------
@@ -105,11 +107,11 @@ static PetscErrorCode PrepareVTKMetaData(const double *coordsArray,
     ierr = PetscOptionsGetInt(NULL, NULL, "-km", &mz, NULL);CHKERRQ(ierr);
 
     if (mx < 2 || my < 2 || mz < 2) {
-      LOG_ALLOW(GLOBAL, LOG_WARNING, "Invalid grid dimensions: mx=%d, my=%d, mz=%d. All dimensions must be >= 2.\n", mx, my, mz);
+      LOG_ALLOW(LOCAL, LOG_WARNING, "Invalid grid dimensions: mx=%d, my=%d, mz=%d. All dimensions must be >= 2.\n", mx, my, mz);
       SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG,
               "Grid dimensions must be at least 2 in each direction.");
     }
-    LOG_ALLOW(GLOBAL, LOG_INFO, "Grid dimensions obtained from options: mx=%d, my=%d, mz=%d.\n", mx, my, mz);
+    LOG_ALLOW(LOCAL, LOG_INFO, "Grid dimensions obtained from options: mx=%d, my=%d, mz=%d.\n", mx, my, mz);
 
     // These are number of cells , hence we add one for each dimension to get number of grid points
 
@@ -119,7 +121,7 @@ static PetscErrorCode PrepareVTKMetaData(const double *coordsArray,
     /* Compute the number of  cells (nodes) for the structured grid.*/
     
     meta->nnodes = (mx+1) * (my+1) * (mz+1);
-    LOG_ALLOW(GLOBAL, LOG_INFO, "Computed number of nodes (cells): %d.\n", meta->nnodes);
+    LOG_ALLOW(LOCAL, LOG_INFO, "Computed number of nodes (cells): %d.\n", meta->nnodes);
 
     /*---------------------------------------------------------------------
      * Populate the metadata only on rank 0.
@@ -128,12 +130,12 @@ static PetscErrorCode PrepareVTKMetaData(const double *coordsArray,
      *---------------------------------------------------------------------*/
     if (!rank) {
       PetscInt npoints = (mx+1) * (my+1) * (mz+1);
-      //     if (Ncoords != npoints * 3) {
-      //   LOG_ALLOW(GLOBAL, LOG_WARNING, "Coordinates array length mismatch: expected %d, got %d.\n", npoints * 3, Ncoords);
-      //   SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG,
-      //           "Coordinates array length does not match grid dimensions.");
-      //  }
-      LOG_ALLOW(GLOBAL, LOG_INFO, "Coordinates array validated: %d points (%d values).\n", npoints, Ncoords);
+           if (Ncoords != npoints * 3) {
+	     LOG_ALLOW(LOCAL, LOG_WARNING, "Coordinates array length mismatch: expected %d, got %d.\n", npoints * 3, Ncoords);
+	     SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG,
+                 "Coordinates array length does not match grid dimensions.");
+        }
+      LOG_ALLOW(LOCAL, LOG_INFO, "Coordinates array validated: %d points (%d values).\n", npoints, Ncoords);
       meta->coords = (double*)coordsArray;
 
       /*-------------------------------------------------------------------
@@ -146,25 +148,25 @@ static PetscErrorCode PrepareVTKMetaData(const double *coordsArray,
         meta->vectorFieldName  = fieldName;
         meta->numVectorFields  = 1;
         meta->numScalarFields  = 0;
-        LOG_ALLOW(GLOBAL, LOG_INFO, "Field '%s' interpreted as a vector for structured grid.\n", fieldName);
+        LOG_ALLOW(LOCAL, LOG_INFO, "Field '%s' interpreted as a vector for structured grid.\n", fieldName);
       } else if (Nscalars == npoints) {
         meta->scalarField      = fieldArray;
         meta->scalarFieldName  = fieldName;
         meta->numScalarFields  = 1;
         meta->numVectorFields  = 0;
-        LOG_ALLOW(GLOBAL, LOG_INFO, "Field '%s' interpreted as a scalar for structured grid.\n", fieldName);
+        LOG_ALLOW(LOCAL, LOG_INFO, "Field '%s' interpreted as a scalar for structured grid.\n", fieldName);
       } else {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "Field array length %d does not match expected sizes for grid points (%d or %d).\n", Nscalars, npoints, npoints * 3);
+        LOG_ALLOW(LOCAL, LOG_WARNING, "Field array length %d does not match expected sizes for grid points (%d or %d).\n", Nscalars, npoints, npoints * 3);
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG,
                 "Field array length does not match number of grid points for scalar or vector.");
       }
-      LOG_ALLOW(GLOBAL, LOG_DEBUG, "Structured grid metadata setup complete on rank 0.\n");
+      LOG_ALLOW(LOCAL, LOG_DEBUG, "Structured grid metadata setup complete on rank 0.\n");
     }
   } else {
     /*=====================================================================
      * Polydata Output: VTK_POLYDATA
      *=====================================================================*/
-    LOG_ALLOW(GLOBAL, LOG_INFO, "Configuring for VTK_POLYDATA output.\n");
+    LOG_ALLOW(LOCAL, LOG_INFO, "Configuring for VTK_POLYDATA output.\n");
     meta->fileType = VTK_POLYDATA;
     if (!rank) {
       /*-------------------------------------------------------------------
@@ -173,14 +175,14 @@ static PetscErrorCode PrepareVTKMetaData(const double *coordsArray,
        *-------------------------------------------------------------------*/
       meta->coords = (double*)coordsArray;
       if (Ncoords % 3 != 0) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "Coordinates array length %d is not a multiple of 3.\n", Ncoords);
-        LOG_ALLOW(GLOBAL, LOG_INFO, "Coordinates array: %d values provided.\n", Ncoords);
+        LOG_ALLOW(LOCAL, LOG_WARNING, "Coordinates array length %d is not a multiple of 3.\n", Ncoords);
+        LOG_ALLOW(LOCAL, LOG_INFO, "Coordinates array: %d values provided.\n", Ncoords);
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG,
                 "Coordinates length must be multiple of 3.");
       }
       /* Compute the number of points. */
       meta->npoints = Ncoords / 3;
-      LOG_ALLOW(GLOBAL, LOG_INFO, "Number of points computed from coordinates: %d.\n", meta->npoints);
+      LOG_ALLOW(LOCAL, LOG_INFO, "Number of points computed from coordinates: %d.\n", meta->npoints);
 
       /*-------------------------------------------------------------------
        * Identify the field type.
@@ -192,13 +194,13 @@ static PetscErrorCode PrepareVTKMetaData(const double *coordsArray,
         meta->vectorFieldName  = fieldName;
         meta->numVectorFields  = 1;
         meta->numScalarFields  = 0;
-        LOG_ALLOW(GLOBAL, LOG_INFO, "Field '%s' interpreted as a vector for polydata.\n", fieldName);
+        LOG_ALLOW(LOCAL, LOG_INFO, "Field '%s' interpreted as a vector for polydata.\n", fieldName);
       } else {
         meta->scalarField      = fieldArray;
         meta->scalarFieldName  = fieldName;
         meta->numScalarFields  = 1;
         meta->numVectorFields  = 0;
-        LOG_ALLOW(GLOBAL, LOG_INFO, "Field '%s' interpreted as a scalar for polydata.\n", fieldName);
+        LOG_ALLOW(LOCAL, LOG_INFO, "Field '%s' interpreted as a scalar for polydata.\n", fieldName);
       }
 
       /*-------------------------------------------------------------------
@@ -211,11 +213,11 @@ static PetscErrorCode PrepareVTKMetaData(const double *coordsArray,
         meta->connectivity[i] = i;
         meta->offsets[i]      = i + 1;
       }
-      LOG_ALLOW(GLOBAL, LOG_INFO, "Connectivity and offsets arrays created for %d points.\n", meta->npoints);
+      LOG_ALLOW(LOCAL, LOG_INFO, "Connectivity and offsets arrays created for %d points.\n", meta->npoints);
     }
   }
 
-  LOG_ALLOW(GLOBAL, LOG_DEBUG, "PrepareVTKMetaData - Setup complete.\n");
+  LOG_ALLOW(LOCAL, LOG_DEBUG, "PrepareVTKMetaData - Setup complete.\n");
   PetscFunctionReturn(0);
 }
 
@@ -224,17 +226,17 @@ static PetscErrorCode CreateAndWriteVTKFile(const char   *outFile,
                                             MPI_Comm      comm)
 {
   PetscFunctionBeginUser;
-  LOG_ALLOW(GLOBAL, LOG_DEBUG,
+  LOG_ALLOW(LOCAL, LOG_DEBUG,
             "CreateAndWriteVTKFile - Calling CreateVTKFileFromMetadata for '%s'.\n", outFile);
 
   int err = CreateVTKFileFromMetadata(outFile, meta, comm);
   if (err) {
-    LOG_ALLOW(GLOBAL, LOG_ERROR,
+    LOG_ALLOW_SYNC(LOCAL, LOG_ERROR,
               "CreateAndWriteVTKFile - CreateVTKFileFromMetadata returned code=%d.\n", err);
     SETERRQ(comm, PETSC_ERR_FILE_WRITE,
             "CreateVTKFileFromMetadata returned an error. \n");
   }
-  LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateAndWriteVTKFile - Successfully wrote VTK file '%s'.\n", outFile);
+  LOG_ALLOW(LOCAL, LOG_DEBUG, "CreateAndWriteVTKFile - Successfully wrote VTK file '%s'.\n", outFile);
   PetscFunctionReturn(0);
 }
 
@@ -285,7 +287,7 @@ static PetscErrorCode ParsePostProcessingParams(PostProcessParams *pps)
     strcpy(pps->particlePrefix,"viz"); // Prefix(directory to save eulerian fields in.                         
 
     // 5) Log parsed values
-    LOG_ALLOW(GLOBAL,LOG_INFO, "Parsed PostProcessingParams: startTime=%d, endTime=%d, timeStep=%d\n",
+    LOG_ALLOW(LOCAL,LOG_INFO, "Parsed PostProcessingParams: startTime=%d, endTime=%d, timeStep=%d\n",
                 pps->startTime, pps->endTime, pps->timeStep);
 
     PetscFunctionReturn(0);
@@ -328,23 +330,23 @@ PetscErrorCode GatherAndWriteField(UserCtx *user,
 
     /* 1) Detect if the field exists in DMSwarm (for ".vtp" cases) */
     if (strcmp(outExt, "vtp") == 0) {
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Attempting to create global vector from swarm field '%s'.\n", fieldName);
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "GatherAndWriteField - Attempting to create global vector from swarm field '%s'.\n", fieldName);
         ierr = DMSwarmCreateGlobalVectorFromField(user->swarm, fieldName, &fieldVec);
         if (ierr) {
             /* An error occurred so assume the field does not exist in the swarm.
                Clear the error code and mark isSwarmField as false. */
-            LOG_ALLOW(GLOBAL, LOG_WARNING, "GatherAndWriteField - Field '%s' not found in swarm, treating as Eulerian field.\n", fieldName);
+            LOG_ALLOW(LOCAL, LOG_WARNING, "GatherAndWriteField - Field '%s' not found in swarm, treating as Eulerian field.\n", fieldName);
             isSwarmField = PETSC_FALSE;
             ierr = 0;  /* Reset the error code so that we can continue */
         } else {
             isSwarmField = PETSC_TRUE;
-            LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Successfully created swarm vector for field '%s'.\n", fieldName);
+            LOG_ALLOW(LOCAL, LOG_DEBUG, "GatherAndWriteField - Successfully created swarm vector for field '%s'.\n", fieldName);
         }
     }
 
     /* 2) If not a swarm field, assume it's a normal Eulerian field */
     if (!isSwarmField) {
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Using Eulerian field for '%s'.\n", fieldName);
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "GatherAndWriteField - Using Eulerian field for '%s'.\n", fieldName);
         if (strcmp(fieldName, "Ucat") == 0) fieldVec = user->Ucat;
         else if (strcmp(fieldName, "P") == 0) fieldVec = user->P;
         else if (strcmp(fieldName, "Ucont") == 0) fieldVec = user->Ucont;
@@ -356,9 +358,9 @@ PetscErrorCode GatherAndWriteField(UserCtx *user,
     PetscInt  Nfield = 0;
     double   *fieldArray = NULL;
     if (fieldVec) {
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Gathering field data for '%s'.\n", fieldName);
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "GatherAndWriteField - Gathering field data for '%s'.\n", fieldName);
         ierr = VecToArrayOnRank0(fieldVec, &Nfield, &fieldArray);CHKERRQ(ierr);
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Field data gathered: Nfield=%D.\n", Nfield);
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "GatherAndWriteField - Field data gathered: Nfield=%D.\n", Nfield);
     }
 
     /* 4) Gather coordinate data based on file type.
@@ -369,43 +371,43 @@ PetscErrorCode GatherAndWriteField(UserCtx *user,
     double   *coordsArray = NULL;
     Vec coordsVec;
     if (strcmp(outExt, "vtp") == 0) {
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Gathering particle positions from swarm for .vtp output.\n");
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "GatherAndWriteField - Gathering particle positions from swarm for .vtp output.\n");
         ierr = DMSwarmCreateGlobalVectorFromField(user->swarm, "position", &coordsVec);CHKERRQ(ierr);
         ierr = VecToArrayOnRank0(coordsVec, &Ncoords, &coordsArray);CHKERRQ(ierr);
         ierr = DMSwarmDestroyGlobalVectorFromField(user->swarm, "position", &coordsVec);CHKERRQ(ierr);
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Particle positions gathered: Ncoords=%D.\n", Ncoords);
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "GatherAndWriteField - Particle positions gathered: Ncoords=%D.\n", Ncoords);
     } else if (strcmp(outExt, "vts") == 0) {
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Gathering Eulerian coordinates for .vts output.\n");
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "GatherAndWriteField - Gathering Eulerian coordinates for .vts output.\n");
          /* For structured grid, get the coordinates vector from DMDA */
          ierr = DMGetCoordinatesLocal(user->da, &coordsVec);CHKERRQ(ierr);
          ierr = VecToArrayOnRank0(coordsVec, &Ncoords, &coordsArray);CHKERRQ(ierr);
-         LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Eulerian coordinates gathered: Ncoords=%D.\n", Ncoords);
+         LOG_ALLOW(LOCAL, LOG_DEBUG, "GatherAndWriteField - Eulerian coordinates gathered: Ncoords=%D.\n", Ncoords);
     }
 
     /* 5) Prepare VTK metadata.
      * For ".vts" files, coordsArray now contains the Eulerian grid coordinates.
      */
     VTKMetaData meta;
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Preparing VTK metadata.\n");
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "GatherAndWriteField - Preparing VTK metadata.\n");
     ierr = PrepareVTKMetaData(coordsArray, Ncoords,  /* coordsArray will be non-NULL for "vts" */
                               fieldArray, Nfield,
                               fieldName, outExt,
                               &meta, rank);CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - VTK metadata prepared.\n");
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "GatherAndWriteField - VTK metadata prepared.\n");
 
     /* 6) Construct the filename (e.g., "Ucat_00010.vts" OR "particleVelocity_00010.vtp") */
     char outFile[256];
-    sprintf(outFile, "%s/%s_%05d.%s", prefix, fieldName, (int)timeIndex, outExt);
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Constructed output filename: %s\n", outFile);
+    snprintf(outFile, MAX_FILENAME_LENGTH, "%s/%s_%05d.%s", prefix, fieldName, (int)timeIndex, outExt);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "GatherAndWriteField - Constructed output filename: %s\n", outFile);
 
     /* 7) Write the VTK file */
-    LOG_ALLOW(GLOBAL, LOG_INFO, "GatherAndWriteField - Writing VTK file '%s'.\n", outFile);
+    LOG_ALLOW(LOCAL, LOG_INFO, "GatherAndWriteField - Writing VTK file '%s'.\n", outFile);
     ierr = CreateAndWriteVTKFile(outFile, &meta, comm);CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL, LOG_INFO, "GatherAndWriteField - Successfully wrote VTK file '%s'.\n", outFile);
+    LOG_ALLOW(LOCAL, LOG_INFO, "GatherAndWriteField - Successfully wrote VTK file '%s'.\n", outFile);
 
     /* 8) Cleanup on rank 0 */
     if (rank == 0) {
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Cleaning up rank 0 memory.\n");
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "GatherAndWriteField - Cleaning up rank 0 memory.\n");
         if (meta.fileType == VTK_POLYDATA) {
             free(meta.connectivity);
             free(meta.offsets);
@@ -416,7 +418,7 @@ PetscErrorCode GatherAndWriteField(UserCtx *user,
 
     /* 9) Cleanup DMSwarm Vec reference (if created) */
     if (isSwarmField) {
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "GatherAndWriteField - Cleaning up swarm field vector for '%s'.\n", fieldName);
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "GatherAndWriteField - Cleaning up swarm field vector for '%s'.\n", fieldName);
         ierr = DMSwarmDestroyGlobalVectorFromField(user->swarm, fieldName, &fieldVec);CHKERRQ(ierr);
     }
 
@@ -532,24 +534,21 @@ int main(int argc, char **argv)
       "VecToArrayOnRank0",
       "PrepareVTKMetaData",
      "CreateAndWriteVTKFile",
-     "CreateVTKFileFromMetadata"
+      "CreateVTKFileFromMetadata",
       // "InitializeSimulation",
       // "ReadSwarmField",
       // "ReadFieldData",
       // "ReadAllSwarmFields",
       // "InitializeSwarm"
-      // "main",                 
+       "main"                 
       // "InitializeSimulation",
       // "CreateParticleSwarm" 
       // "ParsePostProcessingParams",
       // "ReadSimulationFields",
     };
-    set_allowed_functions(allowedFuncs, 5);
+    set_allowed_functions(allowedFuncs, 6);
 
-    // -------------------- Demonstrate LOG_ALLOW in main -----------
-    // This message will only be printed if "main" is in the allow-list
-    // AND if the LOG_LEVEL environment variable is high enough (e.g., INFO or DEBUG).
-    LOG_ALLOW(GLOBAL, LOG_INFO, "==> Starting main with function-based logging...\n");
+    print_log_level();
 
     // Parse the Post Processing parameters.
     ierr = ParsePostProcessingParams(&pps);
@@ -570,11 +569,11 @@ int main(int argc, char **argv)
       // We store the current timestep in user->ti if needed. 
 
          user->ti = (PetscInt) ti;
-	 LOG_ALLOW(GLOBAL,LOG_INFO, "  Output Timestep : %d \n",ti);
+	 LOG_ALLOW(LOCAL,LOG_INFO, "  Output Timestep : %d \n",ti);
 
 	 // Read the eulerian fields from data files.
 	 ierr = ReadSimulationFields(user,ti); CHKERRQ(ierr);
-	 LOG_ALLOW(GLOBAL,LOG_INFO, " Eulerian Fields Read \n",ti);
+	 LOG_ALLOW(LOCAL,LOG_INFO, " Eulerian Fields Read \n",ti);
 
          // Write Eulerian field data to vts files
          ierr =  WriteEulerianVTK(user, ti, pps.eulerianExt,pps.eulerianPrefix);
@@ -582,7 +581,7 @@ int main(int argc, char **argv)
 	 if(pps.outputParticles){
 	 // Read lagrangian fields from data files.
 	   ierr = ReadAllSwarmFields(user,ti);	 
-	   LOG_ALLOW(GLOBAL,LOG_INFO, " Particle Fields Read \n",ti);
+	   LOG_ALLOW(LOCAL,LOG_INFO, " Particle Fields Read \n",ti);
     
 	 // Write Lagrangian/particle data to vtp file/files.
 	   ierr = WriteParticleVTK(user, ti, pps.particleExt,pps.particlePrefix); 
@@ -596,178 +595,3 @@ int main(int argc, char **argv)
 }
 
 
-///////////////////////////// Single VTP Implementation ////////
-
-/**
- * @brief Parses command-line options using PETSc's option database.
- *
- * This function initializes PETSc (via \c PetscInitialize) and extracts the
- * user-specified time index, field name, and output extension from the
- * command line. Defaults are assigned if these are not specified.
- *
- * @param[in]     argc           Number of command-line arguments.
- * @param[in]     argv           The command-line argument strings.
- * @param[out]    timeIndex      The time index (default = 0).
- * @param[out]    fieldName      Buffer to store the parsed field name (default "velocity").
- * @param[out]    outExt         Buffer to store the file extension (default "vtp").
- * @param[in]     fieldNameSize  The maximum size of \p fieldName buffer.
- * @param[in]     outExtSize     The maximum size of \p outExt buffer.
- *
- * @return PetscErrorCode  Returns 0 on success, otherwise an error code from PETSc.
- */
-/*
-static PetscErrorCode ParseCommandLineOptions(int argc, char **argv,
-                                              int *timeIndex,
-                                              char *fieldName,
-                                              char *outExt,
-                                              size_t fieldNameSize,
-                                              size_t outExtSize)
-{
-  PetscFunctionBeginUser;
-
-  PetscErrorCode ierr;
-
-  *timeIndex = 0; // default
-  PetscStrcpy(fieldName, "velocity");
-  PetscStrcpy(outExt,    "vtp");
-
-  LOG_ALLOW(GLOBAL, LOG_DEBUG, "ParseCommandLineOptions - Parsing PETSc options.\n");
-  ierr = PetscInitialize(&argc, &argv, NULL, NULL);CHKERRQ(ierr);
-
-  // parse
-  PetscOptionsGetInt(NULL, NULL, "-ti", timeIndex, NULL);
-  PetscOptionsGetString(NULL, NULL, "-field", fieldName, fieldNameSize, NULL);
-  PetscOptionsGetString(NULL, NULL, "-out_ext", outExt, outExtSize, NULL);
-
-  LOG_ALLOW(GLOBAL, LOG_DEBUG, "ParseCommandLineOptions - Completed parsing.\n");
-  PetscFunctionReturn(0);
-}
-*/
-
-
-
- /*
- * @brief Main entry point for the PETSc-based VTK post-processing tool.
- *
- * This function reads coordinate and field data from distributed PETSc \c Vecs,
- * gathers them onto rank 0, and writes them as a VTK file (either \c .vts or \c .vtp).
- * The file name, time index, and field name are configured via command-line options.
- *
- * Usage:
- * \code
- *   mpirun -n X ./this_executable -ti 10 -field velocity -out_ext vtp
- * \endcode
- *
- * @param[in] argc Number of command-line arguments.
- * @param[in] argv Array of command-line argument strings.
- *
- * @return int Returns 0 on success, or an error code upon failures.
- */
-
-/*
-int main(int argc, char **argv)
-{
-  PetscErrorCode ierr;
-  int            rank, size;
-  int            ti;
-  char           field_name[64];
-  char           out_ext[16];
-  double        *coordsArray = NULL;
-  double        *scalarArray = NULL;
-  PetscInt       Ncoords     = 0;
-  PetscInt       Nscalars    = 0;
-
-  LOG_ALLOW(GLOBAL, LOG_DEBUG, "main - Starting PETSc-based VTK post-processing.\n");
-
-  // 1) Parse command-line options and initialize PETSc 
-  ierr = ParseCommandLineOptions(argc, argv, &ti,
-                                 field_name, out_ext,
-                                 sizeof(field_name), sizeof(out_ext));CHKERRQ(ierr);
-  ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank);CHKERRQ(ierr);
-  ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size);CHKERRQ(ierr);
-  LOG_ALLOW(GLOBAL, LOG_INFO, "main - PETSc initialized. rank=%d of %d.\n", rank, size);
-
-  // 2) Build a user context 
-  UserCtx user;
-
-  ierr = BuildUserContext(&user);CHKERRQ(ierr);
-
-  // 3) Read coordinate data into coordsArray 
-  ierr = ReadPositions(ti, &user, &coordsArray, &Ncoords);CHKERRQ(ierr);
-
-  // 4) Read the field data into scalarArray 
-  ierr = ReadFieldDataWrapper(ti, field_name, &user, &scalarArray, &Nscalars);CHKERRQ(ierr);
-
-  // 5) Prepare the VTKMetaData struct 
-  VTKMetaData meta;
-  ierr = PrepareVTKMetaData(coordsArray, Ncoords,
-                            scalarArray, Nscalars,
-                            field_name, out_ext,
-                            &meta, rank);CHKERRQ(ierr);
-
-  // 6) Construct the output file name 
-  char outFile[256];
-  ierr = ConstructOutputFilename(field_name, ti, out_ext, outFile, sizeof(outFile));CHKERRQ(ierr);
-
-  // 7) Create the VTK file 
-  if (!rank) {
-    LOG_ALLOW(GLOBAL, LOG_INFO, "main - Creating VTK file '%s'.\n", outFile);
-  }
-  PetscErrorCode errorCode = 0;
-  errorCode = CreateAndWriteVTKFile(outFile, &meta, PETSC_COMM_WORLD);
-  if (errorCode) {
-    PetscPrintf(PETSC_COMM_WORLD,
-                "[ERROR] CreateVTKFileFromMetadata returned %d.\n", errorCode);
-    LOG_ALLOW(GLOBAL, LOG_ERROR,
-              "main - CreateVTKFileFromMetadata failed with code=%d.\n", errorCode);
-    goto finalize;
-  }
-  if (!rank) {
-    PetscPrintf(PETSC_COMM_SELF, "[postprocess] Wrote file: %s\n", outFile);
-    LOG_ALLOW(GLOBAL, LOG_INFO, "main - Successfully wrote file: %s\n", outFile);
-  }
-
-finalize:
-  // Cleanup rank-0 memory 
-  if (!rank) {
-    free(coordsArray);
-    free(scalarArray);
-    if (meta.fileType == VTK_POLYDATA) {
-      free(meta.connectivity);
-      free(meta.offsets);
-    }
-  }
-
-  // Finalize PETSc //
-  LOG_ALLOW(GLOBAL, LOG_DEBUG, "main - Finalizing PETSc.\n");
-  PetscFinalize();
-  LOG_ALLOW(GLOBAL, LOG_DEBUG, "main - Program completed.\n");
-  return 0;
-}
-
-
-// @brief Constructs an output file path of the form "results/<fieldName><timeIndex>.<outExt>".
-// 
-//  @param[in]  fieldName   The name of the field (e.g., "velocity").
-//  @param[in]  timeIndex   The time index to be appended (zero-padded).
-//  @param[in]  outExt      The desired file extension (e.g., "vtp" or "vts").
-//  @param[out] outFile     Buffer to store the resulting file path.
-//  @param[in]  outFileSize The size of \p outFile buffer.
-// 
-//  @return PetscErrorCode  Returns 0 on success, or error from \c PetscSNPrintf.
- 
-static PetscErrorCode ConstructOutputFilename(const char *fieldName,
-                                              PetscInt    timeIndex,
-                                              const char *outExt,
-                                              char       *outFile,
-                                              size_t      outFileSize)
-{
-  PetscFunctionBeginUser;
-  PetscErrorCode ierr;
-  ierr = PetscSNPrintf(outFile, outFileSize,
-                       "results/%s%05d.%s", fieldName, timeIndex, outExt);CHKERRQ(ierr);
-  LOG_ALLOW(GLOBAL, LOG_DEBUG, "ConstructOutputFilename - Created output file '%s'.\n", outFile);
-  PetscFunctionReturn(0);
-}
-
-*/ 

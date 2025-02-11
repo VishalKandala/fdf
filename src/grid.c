@@ -58,7 +58,7 @@ PetscErrorCode InitializeGridDM(UserCtx *user, PetscReal L_x, PetscReal L_y, Pet
     PetscReal y_min = 0.0, y_max = L_y;
     PetscReal z_min = 0.0, z_max = L_z;
     ierr = DMDASetUniformCoordinates(user->da, x_min, x_max, y_min, y_max, z_min, z_max); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Coordinates set in the range [%f, %f] x [%f, %f] x [%f, %f].\n", 
+    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "InitializeGridDM - Coordinates set in the range [%f, %f] x [%f, %f] x [%f, %f].\n", 
         x_min, x_max, y_min, y_max, z_min, z_max);
 
     // Retrieve the coordinate DM
@@ -66,7 +66,8 @@ PetscErrorCode InitializeGridDM(UserCtx *user, PetscReal L_x, PetscReal L_y, Pet
     LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Coordinate DM retrieved.\n");
 
     // Debugging logs for DMDA and its coordinate DM
-    if (get_log_level() == LOG_DEBUG) {
+    if (get_log_level() == LOG_DEBUG && is_function_allowed(__func__)) {
+        
         LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - Viewing DMDA:\n");
         ierr = DMView(user->da, PETSC_VIEWER_STDOUT_WORLD); CHKERRQ(ierr);
 
@@ -281,11 +282,11 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user, PetscInt generate_grid, Pets
     // Broadcast grid coordinates to all ranks from rank 0
     if (grid1d) {
         ierr = MPI_Bcast(gc, IM + JM + KM, MPIU_REAL, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Broadcasted 1D grid coordinates.\n");
+        LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Broadcasted 1D grid coordinates.\n");
     } else {
         PetscInt total_points = 3 * (IM + 1) * (JM + 1) * (KM + 1);
         ierr = MPI_Bcast(gc, total_points, MPIU_REAL, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Broadcasted 3D grid coordinates.\n");
+        LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Broadcasted 3D grid coordinates.\n");
     }
 
     // Assign coordinates to the local grid
@@ -396,7 +397,7 @@ PetscErrorCode DetermineGridSizes(PetscInt bi, UserCtx *user, PetscInt *IM, Pets
     ierr = MPI_Bcast(IM, 1, MPI_INT, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
     ierr = MPI_Bcast(JM, 1, MPI_INT, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
     ierr = MPI_Bcast(KM, 1, MPI_INT, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "DetermineGridSizes - Broadcasted grid dimensions: IM=%d, JM=%d, KM=%d.\n", 
+    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "DetermineGridSizes - Broadcasted grid dimensions: IM=%d, JM=%d, KM=%d.\n", 
         *IM, *JM, *KM);
 
     // Update the user context on all ranks
@@ -704,7 +705,7 @@ PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
         return ierr;
     }
 
-    LOG_ALLOW(LOCAL, LOG_INFO, "GatherAllBoundingBoxes: MPI rank=%d, size=%d.\n", rank, size);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "GatherAllBoundingBoxes: MPI rank=%d, size=%d.\n", rank, size);
 
     // Compute the local bounding box on each process
     ierr = ComputeLocalBoundingBox(user, &localBBox);
@@ -738,7 +739,7 @@ PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
     // On rank 0, assign the gathered bounding boxes to the output pointer
     if (rank == 0) {
         *allBBoxes = bboxArray;
-        LOG_ALLOW(GLOBAL, LOG_INFO, "GatherAllBoundingBoxes: Successfully gathered bounding boxes on rank 0.\n");
+        LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "GatherAllBoundingBoxes: Successfully gathered bounding boxes on rank 0.\n");
     } else {
         *allBBoxes = NULL;
     }
@@ -774,6 +775,8 @@ PetscErrorCode BroadcastAllBoundingBoxes(UserCtx *user, BoundingBox **bboxlist) 
         *bboxlist = (BoundingBox *)malloc(size * sizeof(BoundingBox));
         if (!*bboxlist) SETERRABORT(PETSC_COMM_WORLD, PETSC_ERR_MEM, "Failed to allocate memory for bboxlist on non-root ranks.");
     }
+
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "BroadcastAllBoundingBoxes: Broadcasting bounding box information from rank 0.\n");
 
     // Broadcast bboxlist from rank 0 to all other ranks
     ierr = MPI_Bcast(*bboxlist, (int)(size * sizeof(BoundingBox)), MPI_BYTE, 0, PETSC_COMM_WORLD);

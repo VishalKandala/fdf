@@ -18,21 +18,6 @@
 #include "common.h"   // Common type definitions
 #include "logging.h"  // Logging macros and definitions
 
-// --------------------- Enumerations ---------------------
-
-/**
- * @brief Enumerates the six faces of a cubic cell for distance calculations.
- */
-typedef enum {
-    LEFT = 0,    /**< Left face (x-) */
-    RIGHT,       /**< Right face (x+) */
-    BOTTOM,      /**< Bottom face (y-) */
-    TOP,         /**< Top face (y+) */
-    FRONT,       /**< Front face (z-) */
-    BACK,        /**< Back face (z+) */
-    NUM_FACES    /**< Total number of faces */
-} Face;
-
 // --------------------- Function Declarations ---------------------
 
 /**
@@ -165,55 +150,6 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
  * - The `Particle` structure should have its `loc` field accurately set before calling this function.
  */
 PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal* d);
-
-/**
- * @brief Prints the signed distances to each face of the cell.
- *
- * This function iterates through the six signed distances from a point to each face of a given cell
- * and prints their values. It is primarily used for debugging purposes to verify the correctness
- * of distance calculations.
- *
- * @param[in]  d        An array of six `PetscReal` values representing the signed distances.
- *                      The indices correspond to:
- *                      - d[LEFT]: Left Face
- *                      - d[RIGHT]: Right Face
- *                      - d[BOTTOM]: Bottom Face
- *                      - d[TOP]: Top Face
- *                      - d[FRONT]: Front Face
- *                      - d[BACK]: Back Face
- * @param[in]  ctr      Current counter value for debugging or conditional printing.
- * @param[in]  visflg   Flag to control whether the distances should be printed.
- *
- * @return PetscErrorCode Returns 0 to indicate successful execution. Non-zero on failure.
- *
- * @note
- * - Ensure that the `d` array is correctly populated with signed distances before calling this function.
- * - The `visflg` parameter allows selective printing based on the current counter value,
- *   which can be useful to limit output in large-scale simulations.
- */
-PetscErrorCode PrintFaceDistances(PetscReal* d, PetscInt ctr, PetscInt visflg);
-
-
-/**
- * @brief Prints the coordinates of a cell's vertices.
- *
- * This function iterates through the eight vertices of a given cell and prints their
- * coordinates. It is primarily used for debugging purposes to verify the correctness
- * of cell vertex assignments.
- *
- * @param[in]  cell     Pointer to a `Cell` structure representing the cell, containing its vertices.
- * @param[in]  rank     MPI rank for identification (useful in parallel environments).
- * @param[in]  ctr      Current counter value for debugging or conditional printing.
- * @param[in]  visflg   Flag to control whether the cell's vertices should be printed.
- *
- * @return PetscErrorCode Returns 0 to indicate successful execution. Non-zero on failure.
- *
- * @note
- * - Ensure that the `cell` pointer is not `NULL` before calling this function.
- * - The `visflg` parameter allows selective printing based on the current counter value,
- *   which can be useful to limit output in large-scale simulations.
- */
-PetscErrorCode PrintCellVertices(const Cell *cell, PetscInt rank, PetscInt ctr, PetscInt visflg);
 
 /**
  * @brief Updates the cell indices based on the signed distances to each face.

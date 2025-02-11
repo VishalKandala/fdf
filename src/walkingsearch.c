@@ -1,6 +1,5 @@
 // walkingsearch.c
 
-
 #include "walkingsearch.h"
 #include "logging.h"
 #include <petsc.h>
@@ -9,6 +8,7 @@
 
 // Define maximum traversal steps to prevent infinite loops
 #define MAX_TRAVERSAL 1000
+#define DISTANCE_THRESHOLD 1e-14
 
 /**
  * @brief Computes the signed distance from a point to the plane defined by four other points.
@@ -38,18 +38,21 @@
  */
 void ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts p3, const Cmpnts p4, const Cmpnts p, PetscReal *d, const PetscReal threshold)
 {
+  
+   PetscMPIInt rank;
+   MPI_Comm_rank(MPI_COMM_WORLD,&rank);
     // Validate output pointer
     if (d == NULL) {
-      LOG_ALLOW(GLOBAL,LOG_ERROR, "ComputeSignedDistanceToPlane - Output pointer 'd' is NULL.\n");
+      LOG_ALLOW(LOCAL,LOG_ERROR, "ComputeSignedDistanceToPlane - Output pointer 'd' is NULL on rank %d \n",rank);
         return;
     }
 
     // Debug: Print points defining the plane and the point p
-    LOG_ALLOW(GLOBAL,LOG_DEBUG, "ComputeSignedDistanceToPlane - Computing distance for point (%.3f, %.3f, %.3f) to plane defined by:\n", p.x, p.y, p.z);
-    LOG_ALLOW(GLOBAL,LOG_DEBUG, "  p1: (%.3f, %.3f, %.3f)\n", p1.x, p1.y, p1.z);
-    LOG_ALLOW(GLOBAL,LOG_DEBUG, "  p2: (%.3f, %.3f, %.3f)\n", p2.x, p2.y, p2.z);
-    LOG_ALLOW(GLOBAL,LOG_DEBUG, "  p3: (%.3f, %.3f, %.3f)\n", p3.x, p3.y, p3.z);
-    LOG_ALLOW(GLOBAL,LOG_DEBUG, "  p4: (%.3f, %.3f, %.3f)\n", p4.x, p4.y, p4.z);
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "ComputeSignedDistanceToPlane - Computing distance for point (%.3f, %.3f, %.3f) to plane defined by:\n", p.x, p.y, p.z);
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "  p1: (%.3f, %.3f, %.3f)\n", p1.x, p1.y, p1.z);
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "  p2: (%.3f, %.3f, %.3f)\n", p2.x, p2.y, p2.z);
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "  p3: (%.3f, %.3f, %.3f)\n", p3.x, p3.y, p3.z);
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "  p4: (%.3f, %.3f, %.3f)\n", p4.x, p4.y, p4.z);
     
     // Calculate vectors in the plane
     PetscReal vector1_x = p3.x - p1.x;
@@ -70,7 +73,7 @@ void ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts
 
     // Check for degenerate plane
     if (normal_magnitude == 0.0) {
-      LOG_ALLOW(GLOBAL,LOG_ERROR, "ComputeSignedDistanceToPlane - Degenerate plane detected (zero normal vector).\n");
+      LOG_ALLOW(LOCAL,LOG_ERROR, "ComputeSignedDistanceToPlane - Degenerate plane detected (zero normal vector) on rank %d \n",rank);
         *d = 0.0;
         return;
     }
@@ -298,94 +301,6 @@ PetscErrorCode DeterminePointPosition(const Cmpnts p, const Cell *cell, int *res
 }
 
 /**
- * @brief Prints the coordinates of a cell's vertices.
- *
- * This function iterates through the eight vertices of a given cell and prints their
- * coordinates. It is primarily used for debugging purposes to verify the correctness
- * of cell vertex assignments.
- *
- * @param[in]  cell     Pointer to a `Cell` structure representing the cell, containing its vertices.
- * @param[in]  rank     MPI rank for identification (useful in parallel environments).
- * @param[in]  ctr      Current counter value for debugging or conditional printing.
- * @param[in]  visflg   Flag to control whether the cell's vertices should be printed.
- *
- * @return PetscErrorCode Returns 0 to indicate successful execution. Non-zero on failure.
- *
- * @note
- * - Ensure that the `cell` pointer is not `NULL` before calling this function.
- * - The `visflg` parameter allows selective printing based on the current counter value,
- *   which can be useful to limit output in large-scale simulations.
- */
-PetscErrorCode PrintCellVertices(const Cell *cell, PetscInt rank, PetscInt ctr, PetscInt visflg)
-{
-
-    // Validate input pointers
-    if (cell == NULL) {
-      LOG_ALLOW(GLOBAL,LOG_ERROR, "PrintCellVertices - 'cell' is NULL.\n");
-        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "PrintCellVertices - Input parameter 'cell' is NULL.");
-    }
-
-    // Conditional printing based on 'visflg' and 'ctr'
-    if (visflg == ctr) {
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "PrintCellVertices - Rank %d, Cell Vertices:\n", rank);
-        for(int i = 0; i < 8; i++){ 
-	  LOG_ALLOW(LOCAL,LOG_DEBUG, "  Vertex[%d]: (%.2f, %.2f, %.2f)\n", 
-                       i, cell->vertices[i].x, cell->vertices[i].y, cell->vertices[i].z);
-        }
-    }
-
-    return 0; // Indicate successful execution
-}
-
-/**
- * @brief Prints the signed distances to each face of the cell.
- *
- * This function iterates through the six signed distances from a point to each face of a given cell
- * and prints their values. It is primarily used for debugging purposes to verify the correctness
- * of distance calculations.
- *
- * @param[in]  d        An array of six `PetscReal` values representing the signed distances.
- *                      The indices correspond to:
- *                      - d[LEFT]: Left Face
- *                      - d[RIGHT]: Right Face
- *                      - d[BOTTOM]: Bottom Face
- *                      - d[TOP]: Top Face
- *                      - d[FRONT]: Front Face
- *                      - d[BACK]: Back Face
- * @param[in]  ctr      Current counter value for debugging or conditional printing.
- * @param[in]  visflg   Flag to control whether the distances should be printed.
- *
- * @return PetscErrorCode Returns 0 to indicate successful execution. Non-zero on failure.
- *
- * @note
- * - Ensure that the `d` array is correctly populated with signed distances before calling this function.
- * - The `visflg` parameter allows selective printing based on the current counter value,
- *   which can be useful to limit output in large-scale simulations.
- */
-PetscErrorCode PrintFaceDistances(PetscReal* d, PetscInt ctr, PetscInt visflg)
-{
-
-    // Validate input array
-    if (d == NULL) {
-      LOG_ALLOW(LOCAL,LOG_ERROR, "PrintFaceDistances - 'd' is NULL.\n");
-        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "PrintFaceDistances - Input array 'd' is NULL.");
-    }
-
-    // Conditional printing based on 'visflg' and 'ctr'
-    if (visflg == ctr) {
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "PrintFaceDistances - Face Distances:\n");
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "  LEFT(%d):   %.15f\n", LEFT, d[LEFT]);
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "  RIGHT(%d):  %.15f\n", RIGHT, d[RIGHT]);
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "  BOTTOM(%d): %.15f\n", BOTTOM, d[BOTTOM]);
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "  TOP(%d):    %.15f\n", TOP, d[TOP]);
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "  FRONT(%d):  %.15f\n", FRONT, d[FRONT]);
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "  BACK(%d):   %.15f\n", BACK, d[BACK]);
-    }
-
-    return 0; // Indicate successful execution
-}
-
-/**
  * @brief Retrieves the coordinates of the eight vertices of a cell based on grid indices.
  *
  * This function populates the `cell` structure with the coordinates of the eight vertices
@@ -540,7 +455,7 @@ PetscErrorCode CheckCellWithinLocalGrid(UserCtx *user, PetscInt idx, PetscInt id
 
     // Validate input pointers
     if (user == NULL || is_within == NULL) {
-      LOG_ALLOW(GLOBAL,LOG_ERROR, "CheckCellWithinLocalGrid - One or more input pointers are NULL.\n");
+      LOG_ALLOW(LOCAL,LOG_ERROR, "CheckCellWithinLocalGrid - One or more input pointers are NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "CheckCellWithinLocalGrid - One or more input pointers are NULL.");
     }
 
@@ -583,7 +498,7 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
 
     // Validate input pointers
     if (user == NULL || cell == NULL) {
-      LOG_ALLOW(GLOBAL,LOG_ERROR, "RetrieveCurrentCell - One or more input pointers are NULL.\n");
+      LOG_ALLOW(LOCAL,LOG_ERROR, "RetrieveCurrentCell - One or more input pointers are NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "RetrieveCurrentCell - One or more input pointers are NULL.");
     }
 
@@ -602,7 +517,7 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
 
     // Debug: Print cell vertices
     LOG_ALLOW(LOCAL,LOG_DEBUG, "RetrieveCurrentCell - Cell (%d, %d, %d) vertices \n", idx, idy, idz);
-    ierr = PrintCellVertices(cell, rank, 1, 1); // change ctr and visflg hardcoding later. CHKERRQ(ierr);
+    ierr = LOG_CELL_VERTICES(cell, rank); CHKERRQ(ierr);
 
     return 0;
 }
@@ -658,7 +573,7 @@ PetscErrorCode EvaluateParticlePosition(const Cell *cell, PetscReal *d, const Cm
 
     // Validate input pointers to ensure they are not NULL, preventing potential segmentation faults.
     if (cell == NULL || position == NULL) {
-      LOG_ALLOW(GLOBAL,LOG_ERROR, "EvaluateParticlePosition - One or more input pointers are NULL.\n");
+      LOG_ALLOW(LOCAL,LOG_ERROR, "EvaluateParticlePosition - One or more input pointers are NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "EvaluateParticlePosition - One or more input pointers are NULL.");
     }
 
@@ -669,7 +584,7 @@ PetscErrorCode EvaluateParticlePosition(const Cell *cell, PetscReal *d, const Cm
 
     // Debugging output: Print the computed distances to each face for verification purposes.
     LOG_ALLOW(LOCAL,LOG_DEBUG, "EvaluateParticlePosition - Face Distances:\n");
-    ierr = PrintFaceDistances(d, 1, 1); 
+    ierr = LOG_FACE_DISTANCES(d); 
     CHKERRQ(ierr); // Check for errors in printing distances.
 
     // Determine the particle's position relative to the cell based on the computed distances.
@@ -714,17 +629,17 @@ PetscErrorCode UpdateCellIndicesBasedOnDistances( PetscReal d[NUM_FACES], PetscI
     
     // Validate input pointers
     if (d == NULL) {
-      LOG_ALLOW(GLOBAL,LOG_ERROR, "UpdateCellIndicesBasedOnDistances - 'd' is NULL.\n");
+      LOG_ALLOW(LOCAL,LOG_ERROR, "UpdateCellIndicesBasedOnDistances - 'd' is NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UpdateCellIndicesBasedOnDistances - Input array 'd' is NULL.");
     }
     if (idx == NULL || idy == NULL || idz == NULL) {
-      LOG_ALLOW(GLOBAL,LOG_ERROR, "UpdateCellIndicesBasedOnDistances - One or more index pointers are NULL.\n");
+      LOG_ALLOW(LOCAL,LOG_ERROR, "UpdateCellIndicesBasedOnDistances - One or more index pointers are NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UpdateCellIndicesBasedOnDistances - One or more index pointers are NULL.");
     }
 
     // Debug: Print current face distances
     LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Current Face Distances:\n");
-    PrintFaceDistances(d, 1, 1);
+    LOG_FACE_DISTANCES(d);
 
     // Update k-direction based on FRONT and BACK distances
     if (d[FRONT] < 0.0) {
@@ -738,17 +653,17 @@ PetscErrorCode UpdateCellIndicesBasedOnDistances( PetscReal d[NUM_FACES], PetscI
 
     // Update i-direction based on LEFT and RIGHT distances
     if (d[LEFT] < 0.0) {
-      LOG_ALLOW(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[LEFT] < 0.0, decrementing idx.\n");
+      LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[LEFT] < 0.0, decrementing idx.\n");
         (*idx) -= 1;
     }
     else if (d[RIGHT] < 0.0) {
-      LOG_ALLOW(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[RIGHT] < 0.0, incrementing idx.\n");
+      LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[RIGHT] < 0.0, incrementing idx.\n");
         (*idx) += 1;
     }
 
     // Update j-direction based on BOTTOM and TOP distances
     if (d[BOTTOM] < 0.0) {
-      LOG_ALLOW(LOCAL,LOG_INFO, "UpdateCellIndicesBasedOnDistances - Condition met: d[BOTTOM] < 0.0, decrementing idy.\n");
+      LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[BOTTOM] < 0.0, decrementing idy.\n");
         (*idy) -= 1;
     }
     else if (d[TOP] < 0.0) {
@@ -802,6 +717,9 @@ PetscErrorCode FinalizeTraversal(UserCtx *user, Particle *particle, PetscInt tra
         particle->cell[2] = -1;
     }
 
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "FinalizeTraversal - Completed final traversal sync across all ranks.\n");
+
+
     return 0;
 }
 
@@ -831,13 +749,13 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
     PetscBool Cell_found = PETSC_FALSE;
     Cmpnts p = particle->loc;
     Cell current_cell;
-    const PetscReal threshold = 1e-14 ;
+    const PetscReal threshold = DISTANCE_THRESHOLD ;
     DMDALocalInfo info;
     
     //   LOG_FUNC_TIMER_BEGIN_EVENT(EVENT_Individualwalkingsearch,LOCAL);    
 
     // Retrieve local DMDA info (which holds xs, xm, ys, ym, zs, zm)
-    ierr = DMDAGetLocalInfo(user->da,&info);
+    ierr = DMDAGetLocalInfo(user->da,&info); CHKERRQ(ierr);
     
     // Initialize traversal parameters
     ierr = InitializeTraversalParameters(user, particle, &idx, &idy, &idz, &traversal_steps); CHKERRQ(ierr);
@@ -861,6 +779,12 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
         int position;
         ierr = EvaluateParticlePosition(&current_cell, d, p, &position, threshold); CHKERRQ(ierr);
 	
+	// Log every 10th iteration of evaluation
+	LOG_LOOP_ALLOW(GLOBAL, LOG_DEBUG, traversal_steps, 10,
+		       "LocateParticleInGrid - At traversal step %d, evaluated particle position relative to cell (%d, %d, %d): position=%d.\n",
+		       traversal_steps, idx, idy, idz, position);
+
+
         if (position == 0) { // Inside the cell
             Cell_found = PETSC_TRUE;
             particle->cell[0] = idx;
@@ -887,6 +811,9 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
 
     // Finalize traversal by reporting the results
     ierr = FinalizeTraversal(user, particle, traversal_steps, Cell_found, idx, idy, idz); CHKERRQ(ierr);
+
+    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO, "LocateParticleInGrid - Finalized particle search across all ranks.\n");
+
 
     //  LOG_FUNC_TIMER_END_EVENT(EVENT_Individualwalkingsearch,LOCAL);
 

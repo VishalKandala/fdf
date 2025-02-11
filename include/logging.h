@@ -13,7 +13,7 @@
 #include <petsc.h>   // PETSc library header
 #include <stdlib.h>
 #include <string.h>
-
+#include "common.h"
 // --------------------- Logging Levels Definition ---------------------
 
 /**
@@ -30,7 +30,6 @@ typedef enum {
     LOG_DEBUG,       /**< Detailed debugging information */
 } LogLevel;
 
-
 // -------------------- Logging Scope Definitions ------------------
 
 /**
@@ -42,17 +41,12 @@ typedef enum {
 #define LOCAL  0  ///< Scope for local logging on the current process.
 #define GLOBAL 1  ///< Scope for global logging across all processes.
 
-// --------------------- Function Declarations ---------------------
 
-/**
- * @brief Retrieves the current logging level from the environment variable `LOG_LEVEL`.
- *
- * The function checks the `LOG_LEVEL` environment variable and sets the logging level accordingly.
- * Supported levels are "DEBUG", "INFO", "WARNING", and defaults to "ERROR" if not set or unrecognized.
- *
- * @return LogLevel The current logging level.
- */
-LogLevel get_log_level();
+// ---------------------Logging Events declarations ----------------
+
+extern PetscLogEvent EVENT_Individualwalkingsearch;
+extern PetscLogEvent EVENT_walkingsearch;
+
 
 // --------------------- Logging Macros ---------------------
 
@@ -176,23 +170,7 @@ LogLevel get_log_level();
         } \
     } while (0)
 
-/* ------------------------------------------------------------------- */
-/*  Per-function allow-list for logging                                */
-/* ------------------------------------------------------------------- */
 
-/**
- * @brief Sets the global list of function names that are allowed to log.
- *
- * You can replace the entire list of allowed function names at runtime.
- */
-void set_allowed_functions(const char** functionList, int count);
-
-/**
- * @brief Checks if a given function is in the allow-list.
- *
- * This helper is used internally by the LOG_ALLOW macro.
- */
-PetscBool is_function_allowed(const char* functionName);
 
 /**
  * @brief Logging macro that checks both the log level and whether the calling function
@@ -237,7 +215,7 @@ PetscBool is_function_allowed(const char* functionName);
  * LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,  "Synchronized info in %s\n", __func__);
  * \endcode
  */
-#define LOG_ALLOW_SYNC(level,scope, fmt, ...)                                 \
+#define LOG_ALLOW_SYNC(scope,level, fmt, ...)                                 \
     do {                                                                       \
         if ((scope != LOCAL && scope != GLOBAL)) {                             \
             fprintf(stderr, "LOG_ALLOW_SYNC ERROR: Invalid scope at %s:%d\n",  \
@@ -265,7 +243,7 @@ PetscBool is_function_allowed(const char* functionName);
  *        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "Value of i=%d\n", i);
  *    }
  */
-#define LOG_LOOP_ALLOW(scope, level, iterVar, interval, fmt, ...)              \
+#define LOG_LOOP_ALLOW(scope,level, iterVar, interval, fmt, ...)              \
     do {                                                                       \
         if (is_function_allowed(__func__) && (int)(level) <= (int)get_log_level()) { \
             if ((iterVar) % (interval) == 0) {                                 \
@@ -291,7 +269,7 @@ PetscBool is_function_allowed(const char* functionName);
  *  2) The requested logging `level` <= the current global `get_log_level()`.
  *  3) The index `idx` is valid (0 <= idx < length).
  */
-#define LOG_ARRAY_ELEMENT_ALLOW(scope, level, arr, length, idx, fmt)          \
+#define LOG_ARRAY_ELEMENT_ALLOW(scope,level, arr, length, idx, fmt)          \
     do {                                                                      \
         if (is_function_allowed(__func__) && (int)(level) <= (int)get_log_level()) { \
             if ((idx) >= 0 && (idx) < (length)) {                             \
@@ -315,7 +293,7 @@ PetscBool is_function_allowed(const char* functionName);
  *
  * This macro prints each element arr[i] for i in [start, end], bounded by [0, length-1].
  */
-#define LOG_ARRAY_SUBRANGE_ALLOW(scope, level, arr, length, start, end, fmt)  \
+#define LOG_ARRAY_SUBRANGE_ALLOW(scope,level, arr, length, start, end, fmt)  \
     do {                                                                      \
         if (is_function_allowed(__func__) && (int)(level) <= (int)get_log_level()) { \
             MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
@@ -386,6 +364,7 @@ PetscBool is_function_allowed(const char* functionName);
         }                                                                       \
     } while (0)
 
+
 #define LOG_PROFILE_MSG(scope, fmt, ...)                                     \
     do {                                                                     \
         if ((int)(LOG_PROFILE) <= (int)get_log_level()) {                    \
@@ -394,9 +373,104 @@ PetscBool is_function_allowed(const char* functionName);
         }                                                                    \
     } while (0)
 
-// Logging Events declaration!
+// --------------------- Function Declarations ---------------------
 
-extern PetscLogEvent EVENT_Individualwalkingsearch;
-extern PetscLogEvent EVENT_walkingsearch;
+/**
+ * @brief Retrieves the current logging level from the environment variable `LOG_LEVEL`.
+ *
+ * The function checks the `LOG_LEVEL` environment variable and sets the logging level accordingly.
+ * Supported levels are "DEBUG", "INFO", "WARNING", and defaults to "ERROR" if not set or unrecognized.
+ *
+ * @return LogLevel The current logging level.
+ */
+LogLevel get_log_level();
+
+/**
+ * @brief Prints the current logging level to the console.
+ *
+ * This function retrieves the log level using `get_log_level()` and prints 
+ * the corresponding log level name. It helps verify the logging configuration 
+ * at runtime.
+ *
+ * The log levels supported are:
+ * - `LOG_PROFILE` (0) : Logs performance profiling details.
+ * - `LOG_ERROR`   (1) : Logs only critical errors.
+ * - `LOG_WARNING` (2) : Logs warnings and errors.
+ * - `LOG_INFO`    (3) : Logs general information, warnings, and errors.
+ * - `LOG_DEBUG`   (4) : Logs debugging information, info, warnings, and errors.
+ *
+ * @note The log level is determined from the `LOG_LEVEL` environment variable.
+ * If `LOG_LEVEL` is not set, it defaults to `LOG_INFO`.
+ *
+ * @see get_log_level()
+ */
+void print_log_level();
+
+/**
+ * @brief Sets the global list of function names that are allowed to log.
+ *
+ * You can replace the entire list of allowed function names at runtime.
+ */
+void set_allowed_functions(const char** functionList, int count);
+
+/**
+ * @brief Checks if a given function is in the allow-list.
+ *
+ * This helper is used internally by the LOG_ALLOW macro.
+ */
+PetscBool is_function_allowed(const char* functionName);
+
+/**
+ * @brief Prints the coordinates of a cell's vertices.
+ *
+ * This function iterates through the eight vertices of a given cell and prints their
+ * coordinates. It is primarily used for debugging purposes to verify the correctness
+ * of cell vertex assignments.
+ *
+ * @param[in]  cell     Pointer to a `Cell` structure representing the cell, containing its vertices.
+ * @param[in]  rank     MPI rank for identification (useful in parallel environments).
+ * @return PetscErrorCode Returns 0 to indicate successful execution. Non-zero on failure.
+ *
+ * @note
+ * - Ensure that the `cell` pointer is not `NULL` before calling this function..
+ */
+PetscErrorCode LOG_CELL_VERTICES(const Cell *cell, PetscInt rank);
+
+/**
+ * @brief Prints the signed distances to each face of the cell.
+ *
+ * This function iterates through the six signed distances from a point to each face of a given cell
+ * and prints their values. It is primarily used for debugging purposes to verify the correctness
+ * of distance calculations.
+ *
+ * @param[in]  d        An array of six `PetscReal` values representing the signed distances.
+ *                      The indices correspond to:
+ *                      - d[LEFT]: Left Face
+ *                      - d[RIGHT]: Right Face
+ *                      - d[BOTTOM]: Bottom Face
+ *                      - d[TOP]: Top Face
+ *                      - d[FRONT]: Front Face
+ *                      - d[BACK]: Back Face
+ *
+ * @return PetscErrorCode Returns 0 to indicate successful execution. Non-zero on failure.
+ *
+ * @note
+ * - Ensure that the `d` array is correctly populated with signed distances before calling this function.
+ */
+PetscErrorCode LOG_FACE_DISTANCES(PetscReal* d);
+
+/**
+ * @brief Prints particle fields in a table that automatically adjusts its column widths.
+ *
+ * This function retrieves data from the particle swarm and prints a table where the
+ * width of each column is determined by the maximum width needed to display the data.
+ * Only every 'printInterval'-th particle is printed.
+ *
+ * @param[in] user           Pointer to the UserCtx structure.
+ * @param[in] printInterval  Only every printInterval‑th particle is printed.
+ *
+ * @return PetscErrorCode Returns 0 on success.
+ */
+PetscErrorCode LOG_PARTICLE_FIELDS(UserCtx* user, PetscInt printInterval);
 
 #endif // LOGGING_H
