@@ -473,4 +473,16 @@ PetscErrorCode LOG_FACE_DISTANCES(PetscReal* d);
  */
 PetscErrorCode LOG_PARTICLE_FIELDS(UserCtx* user, PetscInt printInterval);
 
+/**
+  * @brief Logs the interpolation error between the analytical and computed solutions.
+  *
+  * This function creates global vectors for the "position" and "velocity" fields from the DMSwarm,
+  * applies the analytical solution to the position vector, and then computes the L2 norm of the difference
+  * between the analytical and computed solutions. The resulting interpolation error is logged.
+  *
+  * @param user The user context.
+  * @return PetscErrorCode Returns 0 on success.
+  */
+  PetscErrorCode LOG_INTERPOLATION_ERROR(UserCtx *user);
+
 #endif // LOGGING_H

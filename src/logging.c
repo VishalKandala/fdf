@@ -425,9 +425,9 @@ PetscErrorCode LOG_PARTICLE_FIELDS(UserCtx* user, PetscInt printInterval)
     BuildRowFormatString(wRank, wPID, wCell, wPos, wVel, wWt, rowFmt, sizeof(rowFmt));
 
     /* Print header (using synchronized printing for parallel output). */
-    ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "------------------------------------------------------------------------------------------\n"); CHKERRQ(ierr);
+    ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "--------------------------------------------------------------------------------------------------------------\n"); CHKERRQ(ierr);
     ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "%s", headerFmt); CHKERRQ(ierr);
-    ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "------------------------------------------------------------------------------------------\n"); CHKERRQ(ierr);
+    ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "--------------------------------------------------------------------------------------------------------------\n"); CHKERRQ(ierr);
 
     /* Loop over particles and print every printInterval-th row. */
     char rowStr[256];
@@ -454,9 +454,10 @@ PetscErrorCode LOG_PARTICLE_FIELDS(UserCtx* user, PetscInt printInterval)
         }
     }
     
-    ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "------------------------------------------------------------------------------------------\n"); CHKERRQ(ierr);
+    ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "--------------------------------------------------------------------------------------------------------------\n"); CHKERRQ(ierr);
     ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "\n"); CHKERRQ(ierr);
     ierr = PetscSynchronizedFlush(PETSC_COMM_WORLD, PETSC_STDOUT); CHKERRQ(ierr);
+
     LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"PrintParticleFields - Completed printing on Rank %d.\n", rank);
 
     /* Restore fields */
@@ -470,3 +471,75 @@ PetscErrorCode LOG_PARTICLE_FIELDS(UserCtx* user, PetscInt printInterval)
     LOG_ALLOW(LOCAL,LOG_DEBUG, "PrintParticleFields - Restored all particle fields.\n");
     return 0;
 }
+
+
+/**
+ * @brief Applies the analytical solution to the position vector.
+ *
+ * This function updates each entry in the provided PETSc vector by computing its sine,
+ * thereby replacing each position with sin(position).
+ *
+ * @param positionVec The PETSc Vec containing particle positions.
+ * @return PetscErrorCode Returns 0 on success.
+ */
+static PetscErrorCode SetAnalyticalSolution(Vec positionVec)
+ {
+     PetscErrorCode ierr;
+     PetscInt nParticles;
+     PetscReal *positions;
+ 
+     LOG_ALLOW(GLOBAL, LOG_DEBUG, "SetAnalyticalSolution - Starting analytical solution computation.\n");
+ 
+     ierr = VecGetLocalSize(positionVec, &nParticles); CHKERRQ(ierr);
+     LOG_ALLOW(GLOBAL, LOG_DEBUG, "SetAnalyticalSolution - Number of local particles: %d.\n", nParticles);
+ 
+     ierr = VecGetArray(positionVec, &positions); CHKERRQ(ierr);
+     for (PetscInt i = 0; i < nParticles; i++) {
+         positions[i] = sin(positions[i]);
+     }
+     ierr = VecRestoreArray(positionVec, &positions); CHKERRQ(ierr);
+ 
+     LOG_ALLOW(GLOBAL, LOG_DEBUG, "SetAnalyticalSolution - Completed analytical solution computation.\n");
+     return 0;
+ }
+ 
+ /**
+  * @brief Logs the interpolation error between the analytical and computed solutions.
+  *
+  * This function creates global vectors for the "position" and "velocity" fields from the DMSwarm,
+  * applies the analytical solution to the position vector, and then computes the L2 norm of the difference
+  * between the analytical and computed solutions. The resulting interpolation error is logged.
+  *
+  * @param user The user context.
+  * @return PetscErrorCode Returns 0 on success.
+  */
+ PetscErrorCode LOG_INTERPOLATION_ERROR(UserCtx *user)
+ {
+     PetscErrorCode ierr;
+     DM swarm = user->swarm;
+     Vec positionVec, velocityVec;
+     PetscReal Interpolation_error = 0.0;
+ 
+     LOG_ALLOW(GLOBAL, LOG_DEBUG, "LOG_INTERPOLATION_ERROR - Creating global vectors for 'position' and 'velocity'.\n");
+     ierr = DMSwarmCreateGlobalVectorFromField(swarm, "position", &positionVec); CHKERRQ(ierr);
+     ierr = DMSwarmCreateGlobalVectorFromField(swarm, "velocity", &velocityVec); CHKERRQ(ierr);
+ 
+     LOG_ALLOW(GLOBAL, LOG_DEBUG, "LOG_INTERPOLATION_ERROR - Applying analytical solution to position vector.\n");
+     ierr = SetAnalyticalSolution(positionVec); CHKERRQ(ierr);
+ 
+     LOG_ALLOW(GLOBAL, LOG_DEBUG, "LOG_INTERPOLATION_ERROR - Computing difference between velocity and analytical solution.\n");
+     ierr = VecAXPY(velocityVec, -1.0, positionVec); CHKERRQ(ierr);
+ 
+     LOG_ALLOW(GLOBAL, LOG_DEBUG, "LOG_INTERPOLATION_ERROR - Calculating L2 norm of the difference.\n");
+     ierr = VecNorm(positionVec, NORM_2, &Interpolation_error); CHKERRQ(ierr);
+     LOG_ALLOW(GLOBAL, LOG_INFO, "LOG_INTERPOLATION_ERROR - Interpolation error (L2 norm): %g.\n", Interpolation_error);
+ 
+     PetscPrintf(PETSC_COMM_WORLD, "Interpolation error (L2 norm): %g\n", Interpolation_error);
+
+     ierr = DMSwarmDestroyGlobalVectorFromField(swarm, "position", &positionVec); CHKERRQ(ierr);
+     ierr = DMSwarmDestroyGlobalVectorFromField(swarm, "velocity", &velocityVec); CHKERRQ(ierr);
+ 
+     LOG_ALLOW(GLOBAL, LOG_DEBUG, "LOG_INTERPOLATION_ERROR - Completed logging interpolation error.\n");
+     return 0;
+ }
+ 

@@ -427,11 +427,7 @@ PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, Boundi
     ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
     LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle positions updated after grid search.\n");
 
-    // Print particle fields again after location update (optional)
-  //  LOG_ALLOW(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing particle fields after location update.\n");
-    ierr = LOG_PARTICLE_FIELDS(user,10); CHKERRQ(ierr);
-
-    // Step 4: Interpolate particle velocities using trilinear interpolation
+    // Interpolate particle velocities using trilinear interpolation
     // This requires that particles have valid cell indices and weights from the previous step.
     LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Interpolating particle velocities using trilinear interpolation.\n");
     ierr = InterpolateParticleVelocities(user); CHKERRQ(ierr);
@@ -439,7 +435,7 @@ PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, Boundi
 
     // Print particle fields again after velocity interpolation (optional)
    LOG_ALLOW(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing particle fields after velocity interpolation.\n");
-   //  ierr = LOG_PARTICLE_FIELDS(user,100); CHKERRQ(ierr);
+    ierr = LOG_PARTICLE_FIELDS(user,10); CHKERRQ(ierr);
 
    // Write the particle positions to file.
    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the particle positions to file.\n");
@@ -451,6 +447,9 @@ PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, Boundi
 
    // Ensure all ranks complete before proceeding
    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle data writing completed across all ranks.\n");
+
+    // Print out the interpolation error
+    ierr = LOG_INTERPOLATION_ERROR(user); CHKERRQ(ierr);
 
     return 0;
 }
