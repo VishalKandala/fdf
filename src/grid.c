@@ -27,6 +27,15 @@
 PetscErrorCode InitializeGridDM(UserCtx *user, PetscReal L_x, PetscReal L_y, PetscReal L_z) {
     PetscErrorCode ierr; // PETSc error handling
 
+    // Check if L_x, L_y, L_z are valid
+    if (L_x <= 0.0 || L_y <= 0.0 || L_z <= 0.0) {
+        LOG_ALLOW(GLOBAL, LOG_ERROR, 
+            "InitializeGridDM - One or more domain lengths are non-positive: L_x=%.3f, L_y=%.3f, L_z=%.3f\n",
+            (double)L_x, (double)L_y, (double)L_z);
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_OUTOFRANGE,
+            "InitializeGridDM - Domain lengths must be positive in all directions.");
+    }
+
     // Validate grid dimensions
     if (user->IM <= 0 || user->JM <= 0 || user->KM <= 0) {
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_OUTOFRANGE, 
@@ -572,11 +581,11 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
     // Validate input pointers
     if (!user) {
         LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Input 'user' pointer is NULL.\n");
-        return -1;
+        return PETSC_ERR_ARG_NULL;
     }
     if (!localBBox) {
         LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Output 'localBBox' pointer is NULL.\n");
-        return -1;
+        return PETSC_ERR_ARG_NULL;
     }
 
     // Get MPI rank
@@ -591,7 +600,7 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
 
     if (!coordinates) {
         LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Coordinates vector is NULL.\n");
-        return -1;
+        return PETSC_ERR_ARG_NULL;
     }
 
     // Access the coordinate array for reading
@@ -686,11 +695,11 @@ PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
     // Validate input pointers
     if (!user) {
         LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Input 'user' pointer is NULL.\n");
-        return -1;
+        return PETSC_ERR_ARG_NULL;
     }
     if (!allBBoxes) {
         LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Output 'allBBoxes' pointer is NULL.\n");
-        return -1;
+        return PETSC_ERR_ARG_NULL;
     }
 
     // Get the rank and size of the MPI communicator
@@ -721,7 +730,7 @@ PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
         bboxArray = (BoundingBox *)malloc(size * sizeof(BoundingBox));
         if (!bboxArray) {
             LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Memory allocation failed for bounding box array.\n");
-            return -1;
+            return PETSC_ERR_MEM;
         }
         LOG_ALLOW(LOCAL, LOG_DEBUG, "GatherAllBoundingBoxes: Allocated memory for bounding box array on rank 0.\n");
     }

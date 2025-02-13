@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <math.h>
 
+#define INTERPOLATION_DISTANCE_TOLERANCE 1.0e-14
 /**
  * @brief Initializes the DMSwarm object within the UserCtx structure.
  *
@@ -495,6 +496,14 @@ PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles, PetscIn
     // Note: L_x could be retrieved similarly if needed. Here we assume L_x=1.0 if not retrieved.
     ierr = PetscOptionsGetReal(NULL, NULL, "-L_y", &domainLengthY, NULL); CHKERRQ(ierr);
     ierr = PetscOptionsGetReal(NULL, NULL, "-L_z", &domainLengthZ, NULL); CHKERRQ(ierr);
+    if (domainLengthY <= 0.0 || domainLengthZ <= 0.0) {
+        LOG_ALLOW(GLOBAL, LOG_ERROR,
+           "CreateParticleSwarm - Domain lengths must be positive. L_y=%.3f, L_z=%.3f\n",
+           (double)domainLengthY, (double)domainLengthZ);
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_OUTOFRANGE,
+           "Domain lengths must be positive. Check -L_y and -L_z in control.dat");
+    }
+    
     LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG, "CreateParticleSwarm - Domain dimensions: Lx=%.2f, Ly=%.2f, Lz=%.2f\n", 
                 1.0, domainLengthY, domainLengthZ);
 
@@ -964,11 +973,15 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
                 "UpdateParticleWeights - Null pointer argument (d or particle).");
     }
 
+
     // Validate distances
     for (PetscInt i = LEFT; i < NUM_FACES; i++) {
-        if (d[i] <= 0) {
-            SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_OUTOFRANGE,
-                    "UpdateParticleWeights - Distances must be positive values.");
+        if (d[i] <= INTERPOLATION_DISTANCE_TOLERANCE) {
+            LOG_ALLOW_SYNC(GLOBAL, LOG_WARNING,
+                "UpdateParticleWeights - face distance d[%d] = %f <= %f; "
+                "clamping to 1e-14 to avoid zero/negative.\n",
+                (int)i, (double)d[i], INTERPOLATION_DISTANCE_TOLERANCE);
+            d[i] = INTERPOLATION_DISTANCE_TOLERANCE;
         }
     }
 
