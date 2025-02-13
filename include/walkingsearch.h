@@ -21,6 +21,18 @@
 // --------------------- Function Declarations ---------------------
 
 /**
+ * @brief Estimates a characteristic length of the cell for threshold scaling.
+ *
+ * For a hexahedral cell with vertices cell->vertices[0..7], we approximate
+ * the cell size by some measure—e.g. average edge length or diagonal.
+ * @param[in]  cell A pointer to the Cell structure
+ * @param[out] cellSize A pointer to a PetscReal where the characteristic size is stored.
+ *
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+ PetscErrorCode GetCellCharacteristicSize(const Cell *cell, PetscReal *cellSize);
+
+/**
  * @brief Computes the signed distance from a point to the plane defined by four other points.
  *
  * This function calculates the signed distance from a given point `p` to the plane defined by points
@@ -36,7 +48,7 @@
  *
  * @return void
  */
-void ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts p3, const Cmpnts p4, const Cmpnts p, PetscReal *d, const PetscReal threshold);
+PetscErrorCode ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts p3, const Cmpnts p4, const Cmpnts p, PetscReal *d, const PetscReal threshold);
 
 /**
  * @brief Computes the signed distances from a point to each face of a cubic cell.
@@ -55,22 +67,22 @@ void ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts
 PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, PetscReal *d, const PetscReal threshold);
 
 /**
- * @brief Determines whether a point is inside, on the boundary, or outside a cell.
+ * @brief Classifies a point based on precomputed face distances.
  *
- * This function calculates the signed distances from a point `p` to each face of the cell
- * and determines the point's position relative to the cell.
+ * Given an array of six distances d[NUM_FACES] from the point to each face
+ * of a hexahedral cell, this function determines:
+ *    0 => inside
+ *    1 => on a single face
+ *    2 => on an edge (2 faces = 0)
+ *    3 => on a corner (3+ faces = 0)
+ *   -1 => outside
  *
- * @param[in]  p         The point in 3D space to be tested.
- * @param[in]  cell      Pointer to a `Cell` structure representing the cell.
- * @param[out] result    A pointer to an integer that will be set based on the point's position:
- *                        - `0`: Inside the cell
- *                        - `1`: On the boundary of the cell
- *                        - `-1`: Outside the cell
- * @param[in]  threshold The threshold below which the distance is considered zero.
+ * @param[in]  d        Array of six face distances.
+ * @param[out] result   Pointer to an integer classification: {0,1,2,3,-1}.
  *
- * @return PetscErrorCode  Returns 0 on success, non-zero on failure.
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode DeterminePointPosition(const Cmpnts p, const Cell *cell, int *result, const PetscReal threshold);
+ PetscErrorCode DeterminePointPosition(PetscReal *d, int *result);
 
 /**
  * @brief Retrieves the coordinates of the eight vertices of a cell based on grid indices.

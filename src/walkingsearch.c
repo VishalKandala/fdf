@@ -11,6 +11,52 @@
 #define DISTANCE_THRESHOLD 1e-14
 
 /**
+ * @brief Estimates a characteristic length of the cell for threshold scaling.
+ *
+ * For a hexahedral cell with vertices cell->vertices[0..7], we approximate
+ * the cell size by some measure—e.g. average edge length or diagonal.
+ * @param[in]  cell A pointer to the Cell structure
+ * @param[out] cellSize A pointer to a PetscReal where the characteristic size is stored.
+ *
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode GetCellCharacteristicSize(const Cell *cell, PetscReal *cellSize)
+{
+    PetscErrorCode ierr = 0;
+    if (!cell || !cellSize) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, 
+        "GetCellCharacteristicSize: Null pointer(s).");
+
+    // A simple approach: compute the average of the distances between
+    // all pairs of adjacent vertices that share an edge. That gives
+    // a typical measure of cell dimension. For a uniform grid, you
+    // could do something simpler.
+
+    PetscInt edges[12][2] = {
+        {0,1},{1,2},{2,3},{3,0},  // bottom face edges
+        {4,5},{5,6},{6,7},{7,4},  // top face edges
+        {0,7},{1,6},{2,5},{3,4}   // vertical edges
+    };
+
+    PetscReal totalEdgeLen = 0.0;
+    for (PetscInt i=0; i<12; i++) {
+        PetscInt vA = edges[i][0];
+        PetscInt vB = edges[i][1];
+        Cmpnts A = cell->vertices[vA];
+        Cmpnts B = cell->vertices[vB];
+        PetscReal dx = B.x - A.x;
+        PetscReal dy = B.y - A.y;
+        PetscReal dz = B.z - A.z;
+        PetscReal edgeLen = sqrt(dx*dx + dy*dy + dz*dz);
+        totalEdgeLen += edgeLen;
+    }
+
+    // Average edge length
+    *cellSize = totalEdgeLen / 12.0;
+
+    return ierr;
+}
+
+/**
  * @brief Computes the signed distance from a point to the plane defined by four other points.
  *
  * This function calculates the signed distance from a given point `p` to the plane defined by points
@@ -34,9 +80,9 @@
  * - Ensure that the four points (`p1`, `p2`, `p3`, `p4`) are not colinear and indeed define a valid plane.
  * - The `threshold` parameter allows flexibility in handling floating-point precision based on application needs.
  *
- * @return void
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-void ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts p3, const Cmpnts p4, const Cmpnts p, PetscReal *d, const PetscReal threshold)
+PetscErrorCode ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts p3, const Cmpnts p4, const Cmpnts p, PetscReal *d, const PetscReal threshold)
 {
   
    PetscMPIInt rank;
@@ -44,7 +90,7 @@ void ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts
     // Validate output pointer
     if (d == NULL) {
       LOG_ALLOW(LOCAL,LOG_ERROR, "ComputeSignedDistanceToPlane - Output pointer 'd' is NULL on rank %d \n",rank);
-        return;
+        return PETSC_ERR_ARG_NULL;
     }
 
     // Debug: Print points defining the plane and the point p
@@ -74,8 +120,10 @@ void ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts
     // Check for degenerate plane
     if (normal_magnitude == 0.0) {
       LOG_ALLOW(LOCAL,LOG_ERROR, "ComputeSignedDistanceToPlane - Degenerate plane detected (zero normal vector) on rank %d \n",rank);
-        *d = 0.0;
-        return;
+
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_USER,
+                "Degenerate plane detected (normal vector is zero).");
+        return PETSC_ERR_USER;
     }
 
     // Normalize the normal vector
@@ -98,6 +146,8 @@ void ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts
 
     // Debug: Print the computed distance
     LOG_ALLOW(LOCAL,LOG_DEBUG, "ComputeSignedDistanceToPlane - Signed distance: %.6f\n", *d);
+
+    return 0;
 }
 
 /**
@@ -124,7 +174,7 @@ void ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts
  *                       - d[TOP]: Distance to the Top Face of the cell.
  *                       - d[FRONT]: Distance to the Front Face of the cell.
  *                       - d[BACK]: Distance to the Back Face of the cell.
- * @param[in]  threshold A `PetscReal` value that specifies the minimum distance below which
+ * @param[in] threshold A `PetscReal` value that specifies the minimum distance below which
  *                       a computed distance is considered to be zero. This helps in
  *                       mitigating issues arising from floating-point arithmetic inaccuracies.
  *
@@ -143,6 +193,7 @@ void ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts
  */
 PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, PetscReal *d, const PetscReal threshold)
 {
+    PetscErrorCode ierr;
     // Validate that the 'cell' pointer is not NULL to prevent dereferencing a null pointer.
     if (cell == NULL) {
       LOG_ALLOW(LOCAL,LOG_ERROR, "CalculateDistancesToCellFaces - 'cell' is NULL.\n");
@@ -157,7 +208,7 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
 
     // Compute the signed distance from point 'p' to the BACK face of the cell.
     // The BACK face is defined by vertices 0, 3, 2, and 1, with its normal vector pointing in the -z direction.
-    ComputeSignedDistanceToPlane(
+    ierr = ComputeSignedDistanceToPlane(
         cell->vertices[0], // Vertex 0
         cell->vertices[3], // Vertex 3
         cell->vertices[2], // Vertex 2
@@ -165,11 +216,11 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
         p,                  // Target point
         &d[BACK],           // Storage location for the BACK face distance
         threshold           // Threshold for zero distance
-    );
+    );  CHKERRQ(ierr);
 
     // Compute the signed distance from point 'p' to the FRONT face of the cell.
     // The FRONT face is defined by vertices 4, 7, 6, and 5, with its normal vector pointing in the +z direction.
-    ComputeSignedDistanceToPlane(
+    ierr = ComputeSignedDistanceToPlane(
         cell->vertices[4], // Vertex 4
         cell->vertices[7], // Vertex 7
         cell->vertices[6], // Vertex 6
@@ -177,11 +228,11 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
         p,                  // Target point
         &d[FRONT],          // Storage location for the FRONT face distance
         threshold           // Threshold for zero distance
-    );
+    );  CHKERRQ(ierr);
 
     // Compute the signed distance from point 'p' to the BOTTOM face of the cell.
     // The BOTTOM face is defined by vertices 0, 1, 6, and 7, with its normal vector pointing in the -y direction.
-    ComputeSignedDistanceToPlane(
+    ierr = ComputeSignedDistanceToPlane(
         cell->vertices[0], // Vertex 0
         cell->vertices[1], // Vertex 1
         cell->vertices[6], // Vertex 6
@@ -189,11 +240,11 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
         p,                  // Target point
         &d[BOTTOM],         // Storage location for the BOTTOM face distance
         threshold           // Threshold for zero distance
-    );
+    );  CHKERRQ(ierr);
 
     // Compute the signed distance from point 'p' to the TOP face of the cell.
     // The TOP face is defined by vertices 3, 4, 5, and 2, with its normal vector pointing in the +y direction.
-    ComputeSignedDistanceToPlane(
+    ierr = ComputeSignedDistanceToPlane(
         cell->vertices[3], // Vertex 3
         cell->vertices[4], // Vertex 4
         cell->vertices[5], // Vertex 5
@@ -201,11 +252,11 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
         p,                  // Target point
         &d[TOP],            // Storage location for the TOP face distance
         threshold           // Threshold for zero distance
-    );
+    );  CHKERRQ(ierr);
 
     // Compute the signed distance from point 'p' to the LEFT face of the cell.
     // The LEFT face is defined by vertices 0, 7, 4, and 3, with its normal vector pointing in the -x direction.
-    ComputeSignedDistanceToPlane(
+    ierr = ComputeSignedDistanceToPlane(
         cell->vertices[0], // Vertex 0
         cell->vertices[7], // Vertex 7
         cell->vertices[4], // Vertex 4
@@ -213,11 +264,11 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
         p,                  // Target point
         &d[LEFT],           // Storage location for the LEFT face distance
         threshold           // Threshold for zero distance
-    );
+    );  CHKERRQ(ierr);
 
     // Compute the signed distance from point 'p' to the RIGHT face of the cell.
     // The RIGHT face is defined by vertices 1, 2, 5, and 6, with its normal vector pointing in the +x direction.
-    ComputeSignedDistanceToPlane(
+    ierr = ComputeSignedDistanceToPlane(
         cell->vertices[1], // Vertex 1
         cell->vertices[2], // Vertex 2
         cell->vertices[5], // Vertex 5
@@ -225,53 +276,45 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
         p,                  // Target point
         &d[RIGHT],          // Storage location for the RIGHT face distance
         threshold           // Threshold for zero distance
-    );
+    );  CHKERRQ(ierr);
 
     return 0; // Indicate successful execution of the function.
 }
 
 /**
- * @brief Determines whether a point is inside, on the boundary, or outside a cell.
+ * @brief Classifies a point based on precomputed face distances.
  *
- * This function calculates the signed distances from a point `p` to each face of the cell
- * and determines the point's position relative to the cell.
+ * Given an array of six distances d[NUM_FACES] from the point to each face
+ * of a hexahedral cell, this function determines:
+ *    0 => inside
+ *    1 => on a single face
+ *    2 => on an edge (2 faces = 0)
+ *    3 => on a corner (3+ faces = 0)
+ *   -1 => outside
  *
- * @param[in]  p         The point in 3D space to be tested.
- * @param[in]  cell      Pointer to a `Cell` structure representing the cell, containing its vertices.
- * @param[out] result    A pointer to an integer that will be set based on the point's position:
- *                        - `0`: Inside the cell
- *                        - `1`: On the boundary of the cell
- *                        - `-1`: Outside the cell
- * @param[in]  threshold The threshold below which the distance is considered zero.
+ * @param[in]  d        Array of six face distances.
+ * @param[out] result   Pointer to an integer classification: {0,1,2,3,-1}.
  *
- * @return PetscErrorCode  Returns 0 on success, non-zero on failure.
- *
- * @note
- * - Ensure that the `threshold` parameter is consistently defined and used across all relevant functions
- *   to handle floating-point precision.
- * - The `Cell` structure must be properly initialized with accurate vertex coordinates.
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode DeterminePointPosition(const Cmpnts p, const Cell *cell, int *result, const PetscReal threshold)
+PetscErrorCode DeterminePointPosition(PetscReal *d, int *result)
 {
-    PetscReal d[NUM_FACES];
-    PetscErrorCode ierr;
+    
 
     // Validate input pointers
-    if (cell == NULL) {
-      LOG_ALLOW(LOCAL,LOG_ERROR, "DeterminePointPosition - 'cell' is NULL.\n");
-        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "DeterminePointPosition - Input parameter 'cell' is NULL.");
+    if (d == NULL) {
+      LOG_ALLOW(LOCAL,LOG_ERROR, "DeterminePointPosition - 'd' is NULL.\n");
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "DeterminePointPosition - Input parameter 'd' is NULL.");
     }
     if (result == NULL) {
       LOG_ALLOW(LOCAL,LOG_ERROR, "DeterminePointPosition - 'result' is NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "DeterminePointPosition - Output parameter 'result' is NULL.");
     }
 
-    // Calculate distances to each face of the cell
-    ierr = CalculateDistancesToCellFaces(p, cell, d, threshold); CHKERRQ(ierr);
-
     // Initialize flags
     PetscBool isInside = PETSC_TRUE;
     PetscBool isOnBoundary = PETSC_FALSE;
+    PetscInt IntersectionCount = 0; // Counts the number of intersections of the point with various planes of the cell.
 
     // Analyze distances to determine position
     for(int i = 0; i < NUM_FACES; i++) {
@@ -279,7 +322,8 @@ PetscErrorCode DeterminePointPosition(const Cmpnts p, const Cell *cell, int *res
             isInside = PETSC_FALSE; // Point is outside in at least one direction
         }
         if(d[i] == 0.0) {
-            isOnBoundary = PETSC_TRUE; // Point is exactly on at least one face
+            isOnBoundary = PETSC_TRUE; // Point is exactly at least one face
+            IntersectionCount++; 
         }
     }
 
@@ -289,8 +333,18 @@ PetscErrorCode DeterminePointPosition(const Cmpnts p, const Cell *cell, int *res
         LOG_ALLOW(LOCAL,LOG_DEBUG, "DeterminePointPosition - Particle is inside the cell.\n");
     }
     else if(isOnBoundary) {
-        *result = 1; // On the boundary of the cell
-        LOG_ALLOW(LOCAL,LOG_DEBUG, "DeterminePointPosition - Particle is on the boundary of the cell.\n");
+      if(IntersectionCount == 1){ 
+          *result = 1; // on face
+          LOG_ALLOW(LOCAL,LOG_DEBUG, "DeterminePointPosition - Particle is on a face of the cell.\n");
+      }
+      else if(IntersectionCount == 2){ 
+          *result = 2; // on edge
+          LOG_ALLOW(LOCAL,LOG_DEBUG, "DeterminePointPosition - Particle is on an edge of the cell.\n");
+      }
+      else if(IntersectionCount >= 3){ 
+          *result = 3; // on corner
+          LOG_ALLOW(LOCAL,LOG_DEBUG, "DeterminePointPosition - Particle is on a corner of the cell.\n");
+      }
     }
     else {
         *result = -1; // Outside the cell
@@ -570,17 +624,38 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
 PetscErrorCode EvaluateParticlePosition(const Cell *cell, PetscReal *d, const Cmpnts p, int *position, const PetscReal threshold)
 {
     PetscErrorCode ierr;
+    PetscReal cellSize;
+    PetscReal cellThreshold;
 
     // Validate input pointers to ensure they are not NULL, preventing potential segmentation faults.
     if (cell == NULL || position == NULL) {
       LOG_ALLOW(LOCAL,LOG_ERROR, "EvaluateParticlePosition - One or more input pointers are NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "EvaluateParticlePosition - One or more input pointers are NULL.");
     }
+  
+    // Compute a local cell size
+    ierr = GetCellCharacteristicSize(cell, &cellSize); CHKERRQ(ierr);
+
+    // scale base threshold by cell size (ex: if threshold = 1e-6 and cell size = 0.01, cellThreshold = 1e-8)
+    cellThreshold = threshold*cellSize; 
 
     // Invoke the function to calculate signed distances from the particle to each face of the cell.
     // The distances are stored in the array pointed to by 'd'.
-    ierr = CalculateDistancesToCellFaces(p, cell, d, threshold); 
+    ierr = CalculateDistancesToCellFaces(p, cell, d, cellThreshold); CHKERRQ(ierr);
     CHKERRQ(ierr); // Check for errors in distance calculation.
+
+
+    // Catch degenerate-plane error manually:
+    if (ierr == PETSC_ERR_USER) {
+        LOG_ALLOW(GLOBAL, LOG_WARNING,
+                  "EvaluateParticlePosition - Skipping cell due to degenerate face.\n");
+        // We can set *position = -1 here
+        *position = -1; // treat as outside
+        return 0; // not a fatal error, just skip
+    } else {
+        CHKERRQ(ierr);
+    }
+
 
     // Debugging output: Print the computed distances to each face for verification purposes.
     LOG_ALLOW(LOCAL,LOG_DEBUG, "EvaluateParticlePosition - Face Distances:\n");
@@ -589,8 +664,8 @@ PetscErrorCode EvaluateParticlePosition(const Cell *cell, PetscReal *d, const Cm
 
     // Determine the particle's position relative to the cell based on the computed distances.
     // The function sets the value pointed to by 'position' accordingly:
-    // 0 for inside, 1 for on the boundary, and -1 for outside.
-    ierr = DeterminePointPosition(p, cell, position, threshold); 
+    // 0 for inside, 1 (2 or 3) for on the boundary, and -1 for outside.
+    ierr = DeterminePointPosition(d,position); 
     CHKERRQ(ierr); // Check for errors in position determination.
 
     return 0; // Indicate successful execution of the function.
@@ -751,6 +826,8 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
     Cell current_cell;
     const PetscReal threshold = DISTANCE_THRESHOLD ;
     DMDALocalInfo info;
+    PetscInt repeatedIndexCount = 0;
+    PetscInt prevIdx = PETSC_MIN_INT, prevIdy = PETSC_MIN_INT, prevIdz = PETSC_MIN_INT;
     
     //   LOG_FUNC_TIMER_BEGIN_EVENT(EVENT_Individualwalkingsearch,LOCAL);    
 
@@ -764,11 +841,29 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
     while (!Cell_found && traversal_steps < MAX_TRAVERSAL) {
         traversal_steps++;
 
+        // Detect if we haven't changed indices from the last iteration
+        if (idx == prevIdx && idy == prevIdy && idz == prevIdz) {
+            repeatedIndexCount++;
+            if (repeatedIndexCount > 3) {
+                // We toggled or got stuck in the same cell multiple times
+                LOG_ALLOW(LOCAL, LOG_WARNING,
+                "LocateParticleInGrid - Toggling or repeated index detected at cell (%d,%d,%d); breaking.\n",
+                    idx, idy, idz);
+                break;
+            }
+        } else {
+            // We moved to a new cell index, so reset the counter
+            repeatedIndexCount = 0;
+            prevIdx = idx;
+            prevIdy = idy;
+            prevIdz = idz;
+        }
+
         // Check if current cell is within the local grid
         PetscBool is_within;
         ierr = CheckCellWithinLocalGrid(user, idx, idy, idz, &is_within); CHKERRQ(ierr);
         if (!is_within) {
-	  LOG_ALLOW(LOCAL,LOG_WARNING, "LocateParticleInGrid - Particle is outside the local grid boundaries at cell (%d, %d, %d).\n", idx, idy, idz);
+	        LOG_ALLOW(LOCAL,LOG_WARNING, "LocateParticleInGrid - Particle is outside the local grid boundaries at cell (%d, %d, %d).\n", idx, idy, idz);
             break;
         }
 
@@ -793,16 +888,16 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
             LOG_ALLOW(LOCAL,LOG_INFO, "LocateParticleInGrid - Particle found in cell (%d, %d, %d).\n", idx, idy, idz);
             break;
         }
-        //else if (position == 1) { // On boundary
-            // Depending on application, decide whether to consider it inside or check neighbors
-            // Here, we treat it as inside
-        //    Cell_found = PETSC_TRUE;
-        //   particle->cell[0] = idx;
-        //    particle->cell[1] = idy;
-        //    particle->cell[2] = idz;
-        //    LOG_ALLOW(LOCAL,LOG_INFO, "LocateParticleInGrid - Particle is on the boundary of cell (%d, %d, %d).\n", idx, idy, idz);
-        //    break;
-        //}
+        else if (position >= 1) { // On boundary (face,edge or corner) [ can be expanded for specific cases if necessary by having conditions position==1,2 or 3]
+           // Depending on application, decide whether to consider it inside or check neighbors
+           // Here, we treat it as inside
+           Cell_found = PETSC_TRUE;
+           particle->cell[0] = idx;
+           particle->cell[1] = idy;
+           particle->cell[2] = idz;
+           LOG_ALLOW(LOCAL,LOG_INFO, "LocateParticleInGrid - Particle is on the boundary of cell (%d, %d, %d).\n", idx, idy, idz);
+           break;
+        }
         else { // Outside the cell
             // Update cell indices based on positive distances
 	  ierr = UpdateCellIndicesBasedOnDistances(d, &idx, &idy, &idz,&info); CHKERRQ(ierr);
