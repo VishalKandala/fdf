@@ -517,25 +517,28 @@ static PetscErrorCode SetAnalyticalSolution(Vec positionVec)
  {
      PetscErrorCode ierr;
      DM swarm = user->swarm;
-     Vec positionVec, velocityVec;
+     Vec positionVec, velocityVec, errorVec;
      PetscReal Interpolation_error = 0.0;
  
      LOG_ALLOW(GLOBAL, LOG_DEBUG, "LOG_INTERPOLATION_ERROR - Creating global vectors for 'position' and 'velocity'.\n");
      ierr = DMSwarmCreateGlobalVectorFromField(swarm, "position", &positionVec); CHKERRQ(ierr);
      ierr = DMSwarmCreateGlobalVectorFromField(swarm, "velocity", &velocityVec); CHKERRQ(ierr);
+     ierr = VecDuplicate(positionVec, &errorVec); CHKERRQ(ierr);
+     ierr = VecCopy(positionVec, errorVec); CHKERRQ(ierr);
  
      LOG_ALLOW(GLOBAL, LOG_DEBUG, "LOG_INTERPOLATION_ERROR - Applying analytical solution to position vector.\n");
      ierr = SetAnalyticalSolution(positionVec); CHKERRQ(ierr);
  
      LOG_ALLOW(GLOBAL, LOG_DEBUG, "LOG_INTERPOLATION_ERROR - Computing difference between velocity and analytical solution.\n");
-     ierr = VecAXPY(velocityVec, -1.0, positionVec); CHKERRQ(ierr);
+     ierr = VecAXPY(errorVec, -1.0, velocityVec); CHKERRQ(ierr);
  
      LOG_ALLOW(GLOBAL, LOG_DEBUG, "LOG_INTERPOLATION_ERROR - Calculating L2 norm of the difference.\n");
-     ierr = VecNorm(positionVec, NORM_2, &Interpolation_error); CHKERRQ(ierr);
+     ierr = VecNorm(errorVec, NORM_2, &Interpolation_error); CHKERRQ(ierr);
      LOG_ALLOW(GLOBAL, LOG_INFO, "LOG_INTERPOLATION_ERROR - Interpolation error (L2 norm): %g.\n", Interpolation_error);
  
      PetscPrintf(PETSC_COMM_WORLD, "Interpolation error (L2 norm): %g\n", Interpolation_error);
 
+     ierr = VecDestroy(&errorVec); CHKERRQ(ierr);
      ierr = DMSwarmDestroyGlobalVectorFromField(swarm, "position", &positionVec); CHKERRQ(ierr);
      ierr = DMSwarmDestroyGlobalVectorFromField(swarm, "velocity", &velocityVec); CHKERRQ(ierr);
  

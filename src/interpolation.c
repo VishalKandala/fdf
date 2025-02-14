@@ -327,12 +327,14 @@ PetscErrorCode InitializeSimulation(UserCtx **user, PetscInt *rank, PetscInt *si
     }
     ierr = PetscOptionsGetInt(NULL, NULL, "-nblk", nblk, NULL); CHKERRQ(ierr);
     ierr = PetscOptionsGetInt(NULL, NULL, "-pinit", &((*user)->ParticleInitialization), NULL);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-dt", &((*user)->dt), NULL);
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeSimulation Runtime Options:\n");
     LOG_ALLOW(GLOBAL, LOG_INFO, "rstart = %d\n", *rstart);
     if((*rstart) == 1) LOG_ALLOW(GLOBAL, LOG_INFO, "Restarting from time: %d\n", *ti);
     LOG_ALLOW(GLOBAL, LOG_INFO, "No. of Particles: %d\n", *np);
     LOG_ALLOW(GLOBAL, LOG_INFO, "No. of Grid blocks: %d\n", *nblk);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Time-step size : %f\n", (*user)->dt);
 
     LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "InitializeSimulation: Completed setup across all ranks.\n");
 
@@ -437,19 +439,27 @@ PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, Boundi
    LOG_ALLOW(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing particle fields after velocity interpolation.\n");
     ierr = LOG_PARTICLE_FIELDS(user,10); CHKERRQ(ierr);
 
-   // Write the particle positions to file.
-   LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the particle positions to file.\n");
-   ierr = WriteSwarmField(user,"position",0,"dat");
-
-   // Write the interpolated velocity to file.
-   LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the interpolated velocities to file.\n");
-   ierr = WriteSwarmField(user,"velocity",0,"dat");
-
-   // Ensure all ranks complete before proceeding
-   LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle data writing completed across all ranks.\n");
-
     // Print out the interpolation error
     ierr = LOG_INTERPOLATION_ERROR(user); CHKERRQ(ierr);
+
+    // Update the particle positions based on the interpolated velocities.
+    ierr = UpdateAllParticlePositions(user); CHKERRQ(ierr);
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle positions updated after velocity interpolation.\n");
+
+    // Print particle fields again after position update (optional)
+    LOG_PARTICLE_FIELDS(user,10); CHKERRQ(ierr);
+
+   // Write the particle positions to file.
+   // LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the particle positions to file.\n");
+   // ierr = WriteSwarmField(user,"position",0,"dat");
+
+   // Write the interpolated velocity to file.
+   // LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the interpolated velocities to file.\n");
+   // ierr = WriteSwarmField(user,"velocity",0,"dat");
+
+   // Ensure all ranks complete before proceeding
+   // LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle data writing completed across all ranks.\n");
 
     return 0;
 }
