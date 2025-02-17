@@ -109,8 +109,8 @@ $(DATA_EXE): $(OBJDIR)/variables.o $(OBJDIR)/compgeom.o $(OBJDIR)/data_ibm.o \
 inttest: dirs $(INTTEST_EXE)
 
 $(INTTEST_EXE): $(OBJDIR)/inttest.o $(OBJDIR)/interpolation.o $(OBJDIR)/walkingsearch.o \
-                $(OBJDIR)/ParticleSwarm.o $(OBJDIR)/logging.o \
-                $(OBJDIR)/grid.o  $(OBJDIR)/io.o $(OBJDIR)/ParticleMotion.o
+                $(OBJDIR)/ParticleSwarm.o $(OBJDIR)/logging.o  $(OBJDIR)/setup.o \
+				$(OBJDIR)/AnalyticalSolution.o $(OBJDIR)/grid.o  $(OBJDIR)/io.o $(OBJDIR)/ParticleMotion.o
 	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB)
 
 # -----------------------------------------------------
@@ -164,7 +164,9 @@ postprocess: dirs $(POSTPROCESS_EXE)
 
 # If postprocess.c needs other object files, list them here.
 # We link postprocess.o, plus logging.o, io.o, etc.
-$(POSTPROCESS_EXE): $(OBJDIR)/postprocess.o $(OBJDIR)/interpolation.o $(OBJDIR)/walkingsearch.o $(OBJDIR)/grid.o $(OBJDIR)/ParticleSwarm.o $(OBJDIR)/logging.o $(OBJDIR)/io.o
+$(POSTPROCESS_EXE): $(OBJDIR)/postprocess.o $(OBJDIR)/interpolation.o \
+			$(OBJDIR)/walkingsearch.o $(OBJDIR)/grid.o $(OBJDIR)/ParticleSwarm.o \
+			$(OBJDIR)/logging.o $(OBJDIR)/io.o $(OBJDIR)/setup.o 
 	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(LIBS)
 
 # -----------------------------------------------------
