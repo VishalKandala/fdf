@@ -26,6 +26,312 @@
 #define NUM_WEIGHTS 8 // Number of weights in trilinear interpolation
 
 /**
+ * @brief Safely interpolate a scalar field from corners to centers, including boundary checks.
+ *
+ * For each cell center at (i,j,k), we consider up to eight corners around it:
+ * (i-1..i, j-1..j, k-1..k). We check each candidate corner to ensure
+ * 0 <= ci < mx, 0 <= cj < my, 0 <= ck < mz, where mx,my,mz are the global array dimensions
+ * obtained from the DMDA. If a corner index is out of range, we skip it.
+ *
+ * This prevents out-of-bounds reads when xs=0 or near domain edges.
+ * On boundaries, fewer corners are used, resulting in a partial average.
+ *
+ * @param[in]  field     3D array (PetscReal ***) containing corner values
+ *                       (allocated with dimension [mz][my][mx])
+ * @param[out] centfield 3D array (PetscReal ***) to store the interpolated cell-center values
+ *                       (allocated with dimension [mz][my][mx])
+ * @param[in]  info      DMDALocalInfo for the cell-center DMDA, containing local indices xs..xe, ys..ye, zs..ze
+ *
+ * @return PetscErrorCode
+ */
+PetscErrorCode InterpolateFieldFromCornerToCenter_Scalar(PetscReal ***field,
+                                                                  PetscReal ***centfield,
+                                                                  DMDALocalInfo *info)
+{
+  PetscErrorCode ierr;
+  PetscInt       mx, my, mz;             /* Global grid sizes in x,y,z   */
+  PetscInt       xs, xe, ys, ye, zs, ze; /* Local cell-center range      */
+  PetscInt       i, j, k, di, dj, dk;
+
+  xs = info->xs; xe = info->xs + info->xm; /* i in [xs, xe) */
+  ys = info->ys; ye = info->ys + info->ym; /* j in [ys, ye) */
+  zs = info->zs; ze = info->zs + info->zm; /* k in [zs, ze) */
+  mx = info->mx; 
+  my = info->my; 
+  mz = info->mz;
+
+  /* Loop over all cell centers in the local patch. */
+  for (k = zs; k < ze; k++) {
+    for (j = ys; j < ye; j++) {
+      for (i = xs; i < xe; i++) {
+
+        /* We'll average up to eight corners around (i,j,k). */
+        PetscReal sum   = 0.0;
+        PetscInt  count = 0;
+
+        /* Each corner is offset by di, dj, dk in {0,1}, but we subtract 1 from i, j, k first. */
+        for (dk = 0; dk < 2; dk++) {
+          for (dj = 0; dj < 2; dj++) {
+            for (di = 0; di < 2; di++) {
+              PetscInt ci = i - 1 + di; /* corner index in x */
+              PetscInt cj = j - 1 + dj; /* corner index in y */
+              PetscInt ck = k - 1 + dk; /* corner index in z */
+
+              /* Check if this corner index is within valid bounds: 0 <= ci < mx, etc. */
+              if (ci >= 0 && ci < mx &&
+                  cj >= 0 && cj < my &&
+                  ck >= 0 && ck < mz)
+              {
+                sum += field[ck][cj][ci];
+                count++;
+              }
+            }
+          }
+        }
+
+        /* Average the sum over however many corners were valid. */
+        if (count > 0) {
+          centfield[k][j][i] = sum / (PetscReal)count;
+        } else {
+          /* For corner cases with no valid neighbor, set 0 or apply a boundary condition. */
+          centfield[k][j][i] = 0.0;
+        }
+      }
+    }
+  }
+
+  return 0;
+}
+
+/**
+ * @brief Safely interpolate a vector field (Cmpnts) from corners to centers, including boundary checks.
+ *
+ * Similar to the scalar version, but each corner contributes three components (x,y,z).
+ * On boundaries, fewer than eight corners may be valid. The code checks each candidate
+ * corner index before reading field[ck][cj][ci].
+ *
+ * @param[in]  field     3D array (Cmpnts ***) of corner vectors
+ * @param[out] centfield 3D array (Cmpnts ***) for interpolated cell-center vectors
+ * @param[in]  info      DMDALocalInfo for the cell-center DMDA
+ *
+ * @return PetscErrorCode
+ */
+PetscErrorCode InterpolateFieldFromCornerToCenter_Vector(Cmpnts ***field,
+                                                         Cmpnts ***centfield,
+                                                         DMDALocalInfo *info)
+{
+  PetscErrorCode ierr;
+  PetscInt       mx, my, mz;
+  PetscInt       xs, xe, ys, ye, zs, ze;
+  PetscInt       i, j, k, di, dj, dk;
+
+  xs = info->xs; xe = info->xs + info->xm;
+  ys = info->ys; ye = info->ys + info->ym;
+  zs = info->zs; ze = info->zs + info->zm;
+  mx = info->mx; my = info->my; mz = info->mz;
+
+  for (k = zs; k < ze; k++) {
+    for (j = ys; j < ye; j++) {
+      for (i = xs; i < xe; i++) {
+
+        Cmpnts sum = {0.0, 0.0, 0.0};
+        PetscInt count = 0;
+
+        for (dk = 0; dk < 2; dk++) {
+          for (dj = 0; dj < 2; dj++) {
+            for (di = 0; di < 2; di++) {
+              PetscInt ci = i - 1 + di;
+              PetscInt cj = j - 1 + dj;
+              PetscInt ck = k - 1 + dk;
+              if (ci >= 0 && ci < mx &&
+                  cj >= 0 && cj < my &&
+                  ck >= 0 && ck < mz)
+              {
+                sum.x += field[ck][cj][ci].x;
+                sum.y += field[ck][cj][ci].y;
+                sum.z += field[ck][cj][ci].z;
+                count++;
+              }
+            }
+          }
+        }
+
+        if (count > 0) {
+          centfield[k][j][i].x = sum.x / (PetscReal)count;
+          centfield[k][j][i].y = sum.y / (PetscReal)count;
+          centfield[k][j][i].z = sum.z / (PetscReal)count;
+        } else {
+          centfield[k][j][i].x = 0.0;
+          centfield[k][j][i].y = 0.0;
+          centfield[k][j][i].z = 0.0;
+        }
+      }
+    }
+  }
+
+  return 0;
+}
+
+/**
+ * @brief Safely interpolate a scalar field from cell centers to corners, including boundary checks.
+ *
+ * For each corner at (i,j,k), we consider up to eight adjacent cell centers
+ * at indices (i..i-1, j..j-1, k..k-1). If a center is out of valid [xs..xe), [ys..ye), etc.,
+ * we skip it. This ensures no out-of-bounds read when i=0 or i=mx-1, etc.
+ *
+ * @param[in]  centfield 3D array (PetscReal ***) of cell-center values
+ * @param[out] field     3D array (PetscReal ***) to store interpolated corner values
+ * @param[in]  info      DMDALocalInfo for the cell-center DMDA
+ *
+ * @return PetscErrorCode
+ */
+PetscErrorCode InterpolateFieldFromCenterToCorner_Scalar(PetscReal ***centfield,
+                                                                  PetscReal ***field,
+                                                                  DMDALocalInfo *info)
+{
+  PetscErrorCode ierr;
+  PetscInt       mx, my, mz;
+  PetscInt       xs, xe, ys, ye, zs, ze;
+  PetscInt       i, j, k, di, dj, dk;
+
+  xs = info->xs; xe = info->xs + info->xm;
+  ys = info->ys; ye = info->ys + info->ym;
+  zs = info->zs; ze = info->zs + info->zm;
+  mx = info->mx; my = info->my; mz = info->mz;
+
+  /*
+    The corner array is typically 1 cell larger in each dimension.
+    We loop over corner indices.
+    Here, we'll assume the local corner domain can be [xs-1..xe], etc.
+    We'll just do a naive approach: let i go from (xs-1) to xe (not inclusive).
+    We'll still do boundary checks inside the loop.
+  */
+
+  PetscInt xs_corner = xs - 1;
+  PetscInt ys_corner = ys - 1;
+  PetscInt zs_corner = zs - 1;
+  PetscInt xe_corner = xe; 
+  PetscInt ye_corner = ye; 
+  PetscInt ze_corner = ze; 
+
+  for (k = zs_corner; k < ze_corner; k++) {
+    for (j = ys_corner; j < ye_corner; j++) {
+      for (i = xs_corner; i < xe_corner; i++) {
+
+        PetscReal sum   = 0.0;
+        PetscInt  count = 0;
+
+        /* The adjacent cell centers are (i + di, j + dj, k + dk) for di,dj,dk in {0,1}. */
+        for (dk = 0; dk < 2; dk++) {
+          for (dj = 0; dj < 2; dj++) {
+            for (di = 0; di < 2; di++) {
+              PetscInt ic = i + di;
+              PetscInt jc = j + dj;
+              PetscInt kc = k + dk;
+              /* Check if (ic, jc, kc) is within the local cell-center domain. */
+              if (ic >= xs && ic < xe &&
+                  jc >= ys && jc < ye &&
+                  kc >= zs && kc < ze)
+              {
+                sum += centfield[kc][jc][ic];
+                count++;
+              }
+            }
+          }
+        }
+
+        if (count > 0) {
+          field[k][j][i] = sum / (PetscReal)count;
+        } else {
+          /* If no cell center is valid, set to 0 or apply boundary condition. */
+          field[k][j][i] = 0.0;
+        }
+      }
+    }
+  }
+
+  return 0;
+}
+
+/**
+ * @brief Safely interpolate a vector field (Cmpnts) from cell centers to corners, including boundary checks.
+ *
+ * We loop over each corner (i,j,k) and consider up to eight cell centers
+ * (i+di, j+dj, k+dk) in {0,1}. Each valid center is averaged.
+ * On boundaries, partial stencils are used (skipping out-of-range indices).
+ *
+ * @param[in]  centfield 3D array (Cmpnts ***) of cell-center vectors
+ * @param[out] field     3D array (Cmpnts ***) for corner vectors
+ * @param[in]  info      DMDALocalInfo for the cell-center DMDA
+ *
+ * @return PetscErrorCode
+ */
+PetscErrorCode InterpolateFieldFromCenterToCorner_Vector(Cmpnts ***centfield,
+                                                         Cmpnts ***field,
+                                                         DMDALocalInfo *info)
+{
+  PetscErrorCode ierr;
+  PetscInt       mx, my, mz;
+  PetscInt       xs, xe, ys, ye, zs, ze;
+  PetscInt       i, j, k, di, dj, dk;
+
+  xs = info->xs; xe = info->xs + info->xm;
+  ys = info->ys; ye = info->ys + info->ym;
+  zs = info->zs; ze = info->zs + info->zm;
+  mx = info->mx; my = info->my; mz = info->mz;
+
+  /* We assume the corner domain is slightly bigger: [xs-1..xe], etc., with boundary checks. */
+  PetscInt xs_corner = xs - 1;
+  PetscInt xe_corner = xe;
+  PetscInt ys_corner = ys - 1;
+  PetscInt ye_corner = ye;
+  PetscInt zs_corner = zs - 1;
+  PetscInt ze_corner = ze;
+
+  for (k = zs_corner; k < ze_corner; k++) {
+    for (j = ys_corner; j < ye_corner; j++) {
+      for (i = xs_corner; i < xe_corner; i++) {
+
+        Cmpnts sum  = {0.0, 0.0, 0.0};
+        PetscInt count = 0;
+
+        for (dk = 0; dk < 2; dk++) {
+          for (dj = 0; dj < 2; dj++) {
+            for (di = 0; di < 2; di++) {
+              PetscInt ic = i + di;
+              PetscInt jc = j + dj;
+              PetscInt kc = k + dk;
+              if (ic >= xs && ic < xe &&
+                  jc >= ys && jc < ye &&
+                  kc >= zs && kc < ze)
+              {
+                sum.x += centfield[kc][jc][ic].x;
+                sum.y += centfield[kc][jc][ic].y;
+                sum.z += centfield[kc][jc][ic].z;
+                count++;
+              }
+            }
+          }
+        }
+
+        if (count > 0) {
+          field[k][j][i].x = sum.x / (PetscReal)count;
+          field[k][j][i].y = sum.y / (PetscReal)count;
+          field[k][j][i].z = sum.z / (PetscReal)count;
+        } else {
+          field[k][j][i].x = 0.0;
+          field[k][j][i].y = 0.0;
+          field[k][j][i].z = 0.0;
+        }
+      }
+    }
+  }
+
+  return 0;
+}
+
+
+/**
  * @brief Computes the trilinear interpolation weights from the interpolation coefficients.
  *
  * This function computes the weights for trilinear interpolation at the eight corners of a cell

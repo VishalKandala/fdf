@@ -186,3 +186,173 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
     ierr = PetscFinalize(); CHKERRQ(ierr);
     return 0;
 }
+
+/**
+ * @brief Allocates a 3D array of PetscReal values using PetscCalloc.
+ *
+ * This function dynamically allocates memory for a 3D array of PetscReal values
+ * with dimensions nz (layers) x ny (rows) x nx (columns). It uses PetscCalloc1
+ * to ensure the memory is zero-initialized.
+ *
+ * The allocation is done in three steps:
+ *  1. Allocate an array of nz pointers (one for each layer).
+ *  2. Allocate a contiguous block for nz*ny row pointers and assign each layer’s row pointers.
+ *  3. Allocate a contiguous block for all nz*ny*nx PetscReal values.
+ *
+ * This setup allows the array to be accessed as array[k][j][i], and the memory
+ * for the data is contiguous, which improves cache efficiency.
+ *
+ * @param[out] array Pointer to the 3D array to be allocated.
+ * @param[in]  nz    Number of layers (z-direction).
+ * @param[in]  ny    Number of rows (y-direction).
+ * @param[in]  nx    Number of columns (x-direction).
+ *
+ * @return PetscErrorCode 0 on success, nonzero on failure.
+ */
+PetscErrorCode Allocate3DArrayScalar(PetscReal ****array, PetscInt nz, PetscInt ny, PetscInt nx)
+{
+  PetscErrorCode ierr;
+  PetscReal      ***data;
+  PetscReal      *dataContiguous;
+  PetscInt       k, j;
+
+  PetscFunctionBegin;
+  /* Step 1: Allocate memory for an array of nz layer pointers (zero-initialized) */
+  ierr = PetscCalloc1(nz, &data); CHKERRQ(ierr);
+
+  /* Step 2: Allocate memory for all row pointers (nz * ny pointers) */
+  ierr = PetscCalloc1(nz * ny, &data[0]); CHKERRQ(ierr);
+  for (k = 1; k < nz; k++) {
+    data[k] = data[0] + k * ny;
+  }
+
+  /* Step 3: Allocate one contiguous block for all data elements (nz*ny*nx) */
+  ierr = PetscCalloc1(nz * ny * nx, &dataContiguous); CHKERRQ(ierr);
+
+  /* Build the 3D pointer structure: each row pointer gets the correct segment of data */
+  for (k = 0; k < nz; k++) {
+    for (j = 0; j < ny; j++) {
+      data[k][j] = dataContiguous + (k * ny + j) * nx;
+      /* Memory is already zeroed by PetscCalloc1, so no manual initialization is needed */
+    }
+  }
+  *array = data;
+  PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Deallocates a 3D array of PetscReal values allocated by Allocate3DArrayScalar.
+ *
+ * This function frees the memory allocated for a 3D array of PetscReal values.
+ * It assumes the memory was allocated using Allocate3DArrayScalar, which allocated
+ * three separate memory blocks: one for the contiguous data, one for the row pointers,
+ * and one for the layer pointers.
+ *
+ * @param[in] array Pointer to the 3D array to be deallocated.
+ * @param[in] nz    Number of layers (z-direction).
+ * @param[in] ny    Number of rows (y-direction).
+ *
+ * @return PetscErrorCode 0 on success, nonzero on failure.
+ */
+PetscErrorCode Deallocate3DArrayScalar(PetscReal ***array, PetscInt nz, PetscInt ny)
+{
+  PetscErrorCode ierr;
+
+  PetscFunctionBegin;
+  if (!array) PetscFunctionReturn(0);
+
+  /* The contiguous data block is stored in array[0] */
+  ierr = PetscFree(array[0]); CHKERRQ(ierr);
+  
+  /* The row pointer block was allocated as a contiguous block in array[0] */
+  ierr = PetscFree(array[0]); CHKERRQ(ierr);
+  
+  /* Finally, free the array of layer pointers */
+  ierr = PetscFree(array); CHKERRQ(ierr);
+  PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Allocates a 3D array of Cmpnts structures using PetscCalloc.
+ *
+ * This function dynamically allocates memory for a 3D array of Cmpnts (vector) structures
+ * with dimensions nz (layers) x ny (rows) x nx (columns). It uses PetscCalloc1 to ensure
+ * that all allocated memory is zero-initialized.
+ *
+ * The allocation procedure is similar to Allocate3DArrayScalar:
+ *  1. Allocate an array of nz pointers (one for each layer).
+ *  2. Allocate a contiguous block for nz*ny row pointers.
+ *  3. Allocate one contiguous block for nz*ny*nx Cmpnts structures.
+ *
+ * After allocation, the array can be accessed as array[k][j][i] and each element
+ * (a Cmpnts structure) will have its x, y, and z fields initialized to 0.0.
+ *
+ * @param[out] array Pointer to the 3D array to be allocated.
+ * @param[in]  nz    Number of layers in the z-direction.
+ * @param[in]  ny    Number of rows in the y-direction.
+ * @param[in]  nx    Number of columns in the x-direction.
+ *
+ * @return PetscErrorCode 0 on success, nonzero on failure.
+ */
+PetscErrorCode Allocate3DArrayVector(Cmpnts ****array, PetscInt nz, PetscInt ny, PetscInt nx)
+{
+  PetscErrorCode ierr;
+  Cmpnts         ***data;
+  Cmpnts         *dataContiguous;
+  PetscInt       k, j;
+
+  PetscFunctionBegin;
+  /* Step 1: Allocate memory for nz layer pointers (zeroed) */
+  ierr = PetscCalloc1(nz, &data); CHKERRQ(ierr);
+
+  /* Step 2: Allocate memory for all row pointers (nz * ny pointers) */
+  ierr = PetscCalloc1(nz * ny, &data[0]); CHKERRQ(ierr);
+  for (k = 1; k < nz; k++) {
+    data[k] = data[0] + k * ny;
+  }
+
+  /* Step 3: Allocate one contiguous block for nz*ny*nx Cmpnts structures (zeroed) */
+  ierr = PetscCalloc1(nz * ny * nx, &dataContiguous); CHKERRQ(ierr);
+
+  /* Build the 3D pointer structure for vector data */
+  for (k = 0; k < nz; k++) {
+    for (j = 0; j < ny; j++) {
+      data[k][j] = dataContiguous + (k * ny + j) * nx;
+      /* The PetscCalloc1 call has already initialized each Cmpnts to zero. */
+    }
+  }
+  *array = data;
+  PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Deallocates a 3D array of Cmpnts structures allocated by Allocate3DArrayVector.
+ *
+ * This function frees the memory allocated for a 3D array of Cmpnts structures.
+ * It assumes the memory was allocated using Allocate3DArrayVector, which created three
+ * separate memory blocks: one for the contiguous vector data, one for the row pointers,
+ * and one for the layer pointers.
+ *
+ * @param[in] array Pointer to the 3D array to be deallocated.
+ * @param[in] nz    Number of layers in the z-direction.
+ * @param[in] ny    Number of rows in the y-direction.
+ *
+ * @return PetscErrorCode 0 on success, nonzero on failure.
+ */
+PetscErrorCode Deallocate3DArrayVector(Cmpnts ***array, PetscInt nz, PetscInt ny)
+{
+  PetscErrorCode ierr;
+
+  PetscFunctionBegin;
+  if (!array) PetscFunctionReturn(0);
+
+  /* Free the contiguous block of Cmpnts structures stored in array[0] */
+  ierr = PetscFree(array[0]); CHKERRQ(ierr);
+
+  /* Free the contiguous block of row pointers */
+  ierr = PetscFree(array[0]); CHKERRQ(ierr);
+
+  /* Free the layer pointer array */
+  ierr = PetscFree(array); CHKERRQ(ierr);
+  PetscFunctionReturn(0);
+}

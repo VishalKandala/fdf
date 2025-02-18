@@ -16,55 +16,8 @@
 #include "grid.h"           // Grid functions
 #include "logging.h"        // Logging macros
 #include "io.h"             // Data Input and Output functions
-
-/**
- * @brief Interpolates a vector field from cell corners to cell centers using simple averaging.
- *
- * This version loops only up to `xe-1, ye-1, ze-1`, ensuring `i+1, j+1, k+1` are in range.
- * The result is stored in `centfield[k][j][i]` at the same (k,j,i) offsets
- * (assuming the caller knows to shift or match indexing carefully).
- *
- * @param[in]  field     A 3D array of `Cmpnts` at cell corners (size at least [info->ze][info->ye][info->xe]).
- * @param[out] centfield A 3D array of `Cmpnts` into which cell-center data is written.
- *                       Must be allocated by the caller with same local extents or an offset approach.
- * @param[in]  info      DMDALocalInfo with local domain indices [xs..xe), etc.
- *
- * @return PetscErrorCode
- */
-
- PetscErrorCode InterpolateFieldFromCornerToCenter(Cmpnts ***field,
-    Cmpnts ***centfield,
-    DMDALocalInfo *info);
-
-
-/**
- * @brief Allocates a 3D array of `Cmpnts` structures.
- *
- * This function dynamically allocates memory for a 3D array of `Cmpnts` structures.
- * Each component of the array (x, y, z) is initialized to 0.
- *
- * @param[out] array Pointer to the 3D array to be allocated.
- * @param[in]  nz    Number of layers in the z-direction.
- * @param[in]  ny    Number of rows in the y-direction.
- * @param[in]  nx    Number of columns in the x-direction.
- *
- * @return PetscErrorCode Returns 0 on successful allocation, non-zero on failure.
- */
- PetscErrorCode Allocate3DArray(Cmpnts ****array, PetscInt nz, PetscInt ny, PetscInt nx);
-
-
-/**
- * @brief Deallocates a 3D array of `Cmpnts` structures.
- *
- * This function frees the memory allocated for a 3D array of `Cmpnts` structures.
- *
- * @param[in]  array Pointer to the 3D array to be deallocated.
- * @param[in]  nz    Number of layers in the z-direction.
- * @param[in]  ny    Number of rows in the y-direction.
- *
- * @return PetscErrorCode Returns 0 on successful deallocation, non-zero on failure.
- */
-PetscErrorCode Deallocate3DArray(Cmpnts ***array, PetscInt nz, PetscInt ny);
+#include "setup.h"          // Setup Module required for array allocation and deallocation
+#include "interpolation.h"  // All the different interpolation routines required 
 
 /**
  * @brief Updates the local Cartesian velocity field based on interpolated coordinates.

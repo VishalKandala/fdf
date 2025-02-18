@@ -296,7 +296,7 @@ static PetscErrorCode UpdateSwarmFieldValue(const char *fieldName, PetscInt p, P
  *
  * @return PetscErrorCode    Returns 0 on success, non-zero on failure.
  */
-static PetscErrorCode AssignInitialEulerFieldToSwarm(UserCtx *user, const char *fieldName, PetscInt fieldDim)
+static PetscErrorCode AssignInitialFieldToSwarm(UserCtx *user, const char *fieldName, PetscInt fieldDim)
 {
     PetscErrorCode ierr;
     DM             swarm = user->swarm;
@@ -307,17 +307,17 @@ static PetscErrorCode AssignInitialEulerFieldToSwarm(UserCtx *user, const char *
     
     // Get the number of local particles
     ierr = DMSwarmGetLocalSize(swarm, &nLocal); CHKERRQ(ierr);
-    LOG_ALLOW(LOG_INFO, LOCAL, "AssignInitialEulerFieldToSwarm - %d local particles found.\n", nLocal);
+    LOG_ALLOW(LOG_INFO, LOCAL, "AssignInitialFieldToSwarm - %d local particles found.\n", nLocal);
 
     // Retrieve the swarm field pointer for the specified fieldName
     ierr = DMSwarmGetField(swarm, fieldName, NULL, NULL, (void**)&fieldData); CHKERRQ(ierr);
-    LOG_ALLOW(LOG_DEBUG, LOCAL, "AssignInitialEulerFieldToSwarm - Retrieved field '%s'.\n", fieldName);
+    LOG_ALLOW(LOG_DEBUG, LOCAL, "AssignInitialFieldToSwarm - Retrieved field '%s'.\n", fieldName);
 
     // Loop over all particles and update the field using the helper function
     for (PetscInt p = 0; p < nLocal; p++) {
         ierr = UpdateSwarmFieldValue(fieldName, p, fieldDim, fieldData); CHKERRQ(ierr);
         LOG_LOOP_ALLOW(LOG_DEBUG, LOCAL, p, 100,
-            "AssignInitialEulerFieldToSwarm - Particle %d: %s = [", p, fieldName);
+            "AssignInitialFieldToSwarm - Particle %d: %s = [", p, fieldName);
         for (PetscInt d = 0; d < fieldDim; d++) {
             LOG_ALLOW(LOG_DEBUG, LOCAL, "%.6f ", fieldData[fieldDim * p + d]);
         }
@@ -326,7 +326,7 @@ static PetscErrorCode AssignInitialEulerFieldToSwarm(UserCtx *user, const char *
     
     // Restore the swarm field pointer
     ierr = DMSwarmRestoreField(swarm, fieldName, NULL, NULL, (void**)&fieldData); CHKERRQ(ierr);
-    LOG_ALLOW(LOG_INFO, LOCAL, "AssignInitialEulerFieldToSwarm - Initialization of field '%s' complete.\n", fieldName);
+    LOG_ALLOW(LOG_INFO, LOCAL, "AssignInitialFieldToSwarm - Initialization of field '%s' complete.\n", fieldName);
     
     PetscFunctionReturn(0);
 }
@@ -335,7 +335,7 @@ static PetscErrorCode AssignInitialEulerFieldToSwarm(UserCtx *user, const char *
  * @brief Initializes all particle properties in the swarm, using a field-agnostic pipeline.
  *
  * This function first initializes the basic particle properties (position, particle ID, cell ID)
- * by calling InitializeParticleBasicProperties. Then it calls the field-agnostic Euler field
+ * by calling InitializeParticleBasicProperties. Then it calls the field-agnostic
  * initializer for additional fields such as "velocity", "weight", and "temperature".
  *
  * @param[in,out] user               Pointer to the UserCtx structure containing simulation context.
@@ -370,16 +370,16 @@ PetscErrorCode AssignInitialPropertiesToSwarm(UserCtx* user,
     CHKERRQ(ierr);
     LOG_ALLOW(LOCAL, LOG_INFO, "AssignInitialPropertiesToSwarm - Successfully initialized basic particle properties.\n");
 
-    /*--- Step 2: Initialize Euler fields using the generic pipeline ---*/
+    /*--- Step 2: Initialize fields using the generic pipeline ---*/
     /* Initialize velocity (3 components) */
     LOG_ALLOW(LOCAL, LOG_DEBUG, "AssignInitialPropertiesToSwarm - Initializing velocity field.\n");
-    ierr = AssignInitialEulerFieldToSwarm(user, "velocity", 3);
+    ierr = AssignInitialFieldToSwarm(user, "velocity", 3);
     CHKERRQ(ierr);
     LOG_ALLOW(LOCAL, LOG_INFO, "AssignInitialPropertiesToSwarm - Velocity field initialization complete.\n");
 
     /* Initialize interpolation weights (3 components) */
     LOG_ALLOW(LOCAL, LOG_DEBUG, "AssignInitialPropertiesToSwarm - Initializing weight field.\n");
-    ierr = AssignInitialEulerFieldToSwarm(user, "weight", 3);
+    ierr = AssignInitialFieldToSwarm(user, "weight", 3);
     CHKERRQ(ierr);
     LOG_ALLOW(LOCAL, LOG_INFO, "AssignInitialPropertiesToSwarm - Weight field initialization complete.\n");
 

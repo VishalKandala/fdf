@@ -20,17 +20,20 @@
 // Macros and constants
 #define NUM_WEIGHTS 8 // Number of weights in trilinear interpolation
 
-// Function declarations
+#define InterpolateFieldFromCornerToCenter(field, centfield, info)          \
+  _Generic((field),                                                        \
+    PetscReal ***: InterpolateFieldFromCornerToCenter_Scalar,                \
+    Cmpnts ***:    InterpolateFieldFromCornerToCenter_Vector                  \
+  )(field, centfield, info)
 
-/**
- * @brief Computes the trilinear interpolation weights from the interpolation coefficients.
- *
- * @param[in]  a1 Interpolation coefficient along the x-direction.
- * @param[in]  a2 Interpolation coefficient along the y-direction.
- * @param[in]  a3 Interpolation coefficient along the z-direction.
- * @param[out] w  Array of 8 weights to be computed.
- * void ComputeTrilinearWeights(PetscReal a1, PetscReal a2, PetscReal a3, PetscReal *w);
- */
+
+#define InterpolateFieldFromCenterToCorner(centfield, field, info)         \
+  _Generic((centfield),                                                    \
+    PetscReal ***: InterpolateFieldFromCenterToCorner_Scalar,                \
+    Cmpnts ***:    InterpolateFieldFromCenterToCorner_Vector                  \
+  )(centfield, field, info)
+
+// Function declarations
 
 /**
  * @brief Interpolates particle velocities using trilinear interpolation.
@@ -41,61 +44,80 @@
 PetscErrorCode InterpolateParticleVelocities(UserCtx *user);
 
 /**
- * @brief Initializes the simulation context and reads runtime options.
+ * @brief Safely interpolate a scalar field from corners to centers, including boundary checks.
  *
- * @param[out] user Pointer to the allocated UserCtx structure.
- * @param[out] rank MPI rank of the process.
- * @param[out] size Number of MPI processes.
- * @param[out] np Number of particles.
- * @param[out] rstart Flag to restart(1) or start from t = 0 (0).
- * @param[out] ti The timestep to start from if restarting.
- * @param[out] nblk Number of grid blocks.
- * @param[in] help message required by 'PetscInitialize'
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ * For each cell center at (i,j,k), we consider up to eight corners around it:
+ * (i-1..i, j-1..j, k-1..k). We check each candidate corner to ensure
+ * 0 <= ci < mx, 0 <= cj < my, 0 <= ck < mz, where mx,my,mz are the global array dimensions
+ * obtained from the DMDA. If a corner index is out of range, we skip it.
+ *
+ * This prevents out-of-bounds reads when xs=0 or near domain edges.
+ * On boundaries, fewer corners are used, resulting in a partial average.
+ *
+ * @param[in]  field     3D array (PetscReal ***) containing corner values
+ *                       (allocated with dimension [mz][my][mx])
+ * @param[out] centfield 3D array (PetscReal ***) to store the interpolated cell-center values
+ *                       (allocated with dimension [mz][my][mx])
+ * @param[in]  info      DMDALocalInfo for the cell-center DMDA, containing local indices xs..xe, ys..ye, zs..ze
+ *
+ * @return PetscErrorCode
  */
-PetscErrorCode InitializeSimulation(UserCtx **user, PetscInt *rank, PetscInt *size, PetscInt *np, PetscInt *rstart, PetscInt *ti, PetscInt *nblk);
+PetscErrorCode InterpolateFieldFromCornerToCenter_Scalar(PetscReal ***field,
+                                                  PetscReal ***centfield,
+                                                  DMDALocalInfo *info);
 
 /**
- * @brief Sets up the simulation grid and initializes vectors.
+ * @brief Safely interpolate a vector field (Cmpnts) from corners to centers, including boundary checks.
  *
- * @param[in,out] user Pointer to the UserCtx structure.
- * @param[in] block_number Number of grid blocks.
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ * Similar to the scalar version, but each corner contributes three components (x,y,z).
+ * On boundaries, fewer than eight corners may be valid. The code checks each candidate
+ * corner index before reading field[ck][cj][ci].
+ *
+ * @param[in]  field     3D array (Cmpnts ***) of corner vectors
+ * @param[out] centfield 3D array (Cmpnts ***) for interpolated cell-center vectors
+ * @param[in]  info      DMDALocalInfo for the cell-center DMDA
+ *
+ * @return PetscErrorCode
  */
-PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number);
-
-/**
- * @brief Perform particle swarm initialization, particle-grid interaction, and related operations.
- *
- * This function handles the following tasks:
- * 1. Initializes the particle swarm using the provided bounding box list (bboxlist) to determine initial placement
- *    if ParticleInitialization is 0.
- * 2. Locates particles within the computational grid.
- * 3. Updates particle positions based on grid interactions (if such logic exists elsewhere in the code).
- * 4. Interpolates particle velocities from grid points using trilinear interpolation.
- *
- * @param[in,out] user     Pointer to the UserCtx structure containing grid and particle swarm information.
- * @param[in]     np       Number of particles to initialize in the swarm.
- * @param[in]     bboxlist Pointer to an array of BoundingBox structures, one per MPI rank.
- *
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
- *
- * @note
- * - Ensure that `np` (number of particles) is positive.
- * - The `bboxlist` array must be correctly computed and passed in before calling this function.
- * - If ParticleInitialization == 0, particles will be placed at the midpoint of the local bounding box.
- */
-PetscErrorCode PerformParticleSwarmOperations(UserCtx *user, PetscInt np, BoundingBox *bboxlist);
+PetscErrorCode InterpolateFieldFromCornerToCenter_Vector(Cmpnts ***field,
+                                                  Cmpnts ***centfield,
+                                                  DMDALocalInfo *info);
 
 
 /**
- * @brief Cleans up resources and finalizes the simulation.
+ * @brief Safely interpolate a scalar field from cell centers to corners, including boundary checks.
  *
- * @param[in,out] user Pointer to the UserCtx structure.
- * @param[in] block_number Number of grid blocks.
- * @param[in]     bboxlist Pointer to an array of BoundingBox structures, one per MPI rank.
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ * For each corner at (i,j,k), we consider up to eight adjacent cell centers
+ * at indices (i..i-1, j..j-1, k..k-1). If a center is out of valid [xs..xe), [ys..ye), etc.,
+ * we skip it. This ensures no out-of-bounds read when i=0 or i=mx-1, etc.
+ *
+ * @param[in]  centfield 3D array (PetscReal ***) of cell-center values
+ * @param[out] field     3D array (PetscReal ***) to store interpolated corner values
+ * @param[in]  info      DMDALocalInfo for the cell-center DMDA
+ *
+ * @return PetscErrorCode
  */
-PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, BoundingBox* bboxlist);
+PetscErrorCode InterpolateFieldFromCenterToCorner_Scalar(PetscReal ***field,
+                                                  PetscReal ***centfield,
+                                                  DMDALocalInfo *info);
+
+/**
+ * @brief Safely interpolate a vector field (Cmpnts) from cell centers to corners, including boundary checks.
+ *
+ * We loop over each corner (i,j,k) and consider up to eight cell centers
+ * (i+di, j+dj, k+dk) in {0,1}. Each valid center is averaged.
+ * On boundaries, partial stencils are used (skipping out-of-range indices).
+ *
+ * @param[in]  centfield 3D array (Cmpnts ***) of cell-center vectors
+ * @param[out] field     3D array (Cmpnts ***) for corner vectors
+ * @param[in]  info      DMDALocalInfo for the cell-center DMDA
+ *
+ * @return PetscErrorCode
+ */
+PetscErrorCode InterpolateFieldFromCenterToCorner_Vector(Cmpnts ***field,
+                                                  Cmpnts ***centfield,
+                                                  DMDALocalInfo *info);
+
+
 
 #endif // INTERPOLATION_H
