@@ -132,9 +132,9 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
         // Create global vectors (Destroyed in FinalizeSimulation)
 	ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Ucat); CHKERRQ(ierr);
 	ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Ucont); CHKERRQ(ierr);
-	ierr = DMCreateGlobalVector(user[bi].da, &user[bi].P); CHKERRQ(ierr);
-	ierr = DMCreateGlobalVector(user[bi].da, &user[bi].Nvert); CHKERRQ(ierr);
-	ierr = DMCreateGlobalVector(user[bi].da, &user[bi].Nvert_o); CHKERRQ(ierr);
+	ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].P); CHKERRQ(ierr);
+	ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Nvert); CHKERRQ(ierr);
+	ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Nvert_o); CHKERRQ(ierr);
       } //bi 
 
     LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "SetupGridAndVectors - Grid and vectors setup completed on all ranks. \n");
@@ -237,6 +237,9 @@ PetscErrorCode Allocate3DArrayScalar(PetscReal ****array, PetscInt nz, PetscInt 
     }
   }
   *array = data;
+ 
+  LOG_ALLOW(GLOBAL,LOG_DEBUG," 3D Array Allocation complete. \n");
+ 
   PetscFunctionReturn(0);
 }
 
@@ -267,6 +270,8 @@ PetscErrorCode Deallocate3DArrayScalar(PetscReal ***array, PetscInt nz, PetscInt
   /* The row pointer block was allocated as a contiguous block in array[0] */
   ierr = PetscFree(array[0]); CHKERRQ(ierr);
   
+  LOG_ALLOW(GLOBAL,LOG_DEBUG," 3D Array Deallocation complete. \n");
+
   /* Finally, free the array of layer pointers */
   ierr = PetscFree(array); CHKERRQ(ierr);
   PetscFunctionReturn(0);
@@ -322,6 +327,7 @@ PetscErrorCode Allocate3DArrayVector(Cmpnts ****array, PetscInt nz, PetscInt ny,
     }
   }
   *array = data;
+  LOG_ALLOW(GLOBAL,LOG_DEBUG," 3D Array Allocation complete. \n");
   PetscFunctionReturn(0);
 }
 
@@ -354,5 +360,7 @@ PetscErrorCode Deallocate3DArrayVector(Cmpnts ***array, PetscInt nz, PetscInt ny
 
   /* Free the layer pointer array */
   ierr = PetscFree(array); CHKERRQ(ierr);
+
+  LOG_ALLOW(GLOBAL,LOG_DEBUG," 3D Array Allocation complete. \n");
   PetscFunctionReturn(0);
 }

@@ -471,37 +471,6 @@ PetscErrorCode LOG_PARTICLE_FIELDS(UserCtx* user, PetscInt printInterval)
     LOG_ALLOW(LOCAL,LOG_DEBUG, "PrintParticleFields - Restored all particle fields.\n");
     return 0;
 }
-
-
-/**
- * @brief Applies the analytical solution to the position vector.
- *
- * This function updates each entry in the provided PETSc vector by computing its sine,
- * thereby replacing each position with sin(position).
- *
- * @param positionVec The PETSc Vec containing particle positions.
- * @return PetscErrorCode Returns 0 on success.
- */
-static PetscErrorCode SetAnalyticalSolution(Vec positionVec)
- {
-     PetscErrorCode ierr;
-     PetscInt nParticles;
-     PetscReal *positions;
- 
-     LOG_ALLOW(GLOBAL, LOG_DEBUG, "SetAnalyticalSolution - Starting analytical solution computation.\n");
- 
-     ierr = VecGetLocalSize(positionVec, &nParticles); CHKERRQ(ierr);
-     LOG_ALLOW(GLOBAL, LOG_DEBUG, "SetAnalyticalSolution - Number of local particles: %d.\n", nParticles);
- 
-     ierr = VecGetArray(positionVec, &positions); CHKERRQ(ierr);
-     for (PetscInt i = 0; i < nParticles; i++) {
-         positions[i] = sin(positions[i]);
-     }
-     ierr = VecRestoreArray(positionVec, &positions); CHKERRQ(ierr);
- 
-     LOG_ALLOW(GLOBAL, LOG_DEBUG, "SetAnalyticalSolution - Completed analytical solution computation.\n");
-     return 0;
- }
  
  /**
   * @brief Logs the interpolation error between the analytical and computed solutions.
@@ -517,26 +486,40 @@ static PetscErrorCode SetAnalyticalSolution(Vec positionVec)
  {
      PetscErrorCode ierr;
      DM swarm = user->swarm;
-     Vec positionVec, velocityVec, errorVec;
+     Vec positionVec,analyticalvelocityVec,velocityVec, errorVec;
      PetscReal Interpolation_error = 0.0;
+     PetscReal AnalyticalSolution_magnitude = 0.0;
+     PetscReal ErrorPercentage = 0.0;
  
      LOG_ALLOW(GLOBAL, LOG_DEBUG, "LOG_INTERPOLATION_ERROR - Creating global vectors for 'position' and 'velocity'.\n");
      ierr = DMSwarmCreateGlobalVectorFromField(swarm, "position", &positionVec); CHKERRQ(ierr);
      ierr = DMSwarmCreateGlobalVectorFromField(swarm, "velocity", &velocityVec); CHKERRQ(ierr);
-     ierr = VecDuplicate(positionVec, &errorVec); CHKERRQ(ierr);
-     ierr = VecCopy(positionVec, errorVec); CHKERRQ(ierr);
  
+     ierr = VecDuplicate(positionVec, &analyticalvelocityVec); CHKERRQ(ierr);
+     ierr = VecCopy(positionVec, analyticalvelocityVec); CHKERRQ(ierr);
+
      LOG_ALLOW(GLOBAL, LOG_DEBUG, "LOG_INTERPOLATION_ERROR - Applying analytical solution to position vector.\n");
-     ierr = SetAnalyticalSolution(positionVec); CHKERRQ(ierr);
+     ierr = SetAnalyticalSolution(analyticalvelocityVec); CHKERRQ(ierr);
+
+     ierr = VecDuplicate(analyticalvelocityVec, &errorVec); CHKERRQ(ierr);
+     ierr = VecCopy(analyticalvelocityVec, errorVec); CHKERRQ(ierr);
+     
+     // Get the magnitude of analytical solution
+     ierr = VecNorm(analyticalvelocityVec,NORM_2,&AnalyticalSolution_magnitude); CHKERRQ(ierr);
  
      LOG_ALLOW(GLOBAL, LOG_DEBUG, "LOG_INTERPOLATION_ERROR - Computing difference between velocity and analytical solution.\n");
      ierr = VecAXPY(errorVec, -1.0, velocityVec); CHKERRQ(ierr);
  
      LOG_ALLOW(GLOBAL, LOG_DEBUG, "LOG_INTERPOLATION_ERROR - Calculating L2 norm of the difference.\n");
      ierr = VecNorm(errorVec, NORM_2, &Interpolation_error); CHKERRQ(ierr);
-     LOG_ALLOW(GLOBAL, LOG_INFO, "LOG_INTERPOLATION_ERROR - Interpolation error (L2 norm): %g.\n", Interpolation_error);
+
+     ErrorPercentage = Interpolation_error/AnalyticalSolution_magnitude;
+     
+     ErrorPercentage = ErrorPercentage*100;
+     
+     LOG_ALLOW(GLOBAL, LOG_INFO, "LOG_INTERPOLATION_ERROR - Interpolation error (%): %g\n", ErrorPercentage);
  
-     PetscPrintf(PETSC_COMM_WORLD, "Interpolation error (L2 norm): %g\n", Interpolation_error);
+     PetscPrintf(PETSC_COMM_WORLD, "Interpolation error (%): %g\n", ErrorPercentage);
 
      ierr = VecDestroy(&errorVec); CHKERRQ(ierr);
      ierr = DMSwarmDestroyGlobalVectorFromField(swarm, "position", &positionVec); CHKERRQ(ierr);

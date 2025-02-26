@@ -534,3 +534,187 @@ PetscErrorCode PrintParticleFields(UserCtx* user) {
 
     return 0;
 }
+
+
+
+/**
+ * @brief Safely interpolate a vector field (Cmpnts) from cell centers to corners, including boundary checks.
+ *
+ * We loop over each corner (i,j,k) and consider up to eight cell centers
+ * (i+di, j+dj, k+dk) in {0,1}. Each valid center is averaged.
+ * On boundaries, partial stencils are used (skipping out-of-range indices).
+ *
+ * @param[in]  centfield 3D array (Cmpnts ***) of cell-center vectors
+ * @param[out] field     3D array (Cmpnts ***) for corner vectors
+ * @param[in]  info      DMDALocalInfo for the cell-center DMDA
+ *
+ * @return PetscErrorCode
+ */
+PetscErrorCode InterpolateFieldFromCenterToCorner_Vector(Cmpnts ***centfield,
+                                                         Cmpnts ***field,
+                                                         DMDALocalInfo *info)
+{
+  PetscErrorCode ierr;
+  PetscMPIInt    rank;
+  ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+  LOG_ALLOW(GLOBAL, LOG_DEBUG, "InterpolateFieldFromCenterToCorner_Vector - Rank %d starting vector center-to-corner interpolation.\n", rank);
+
+  PetscInt       mx, my, mz;
+  PetscInt       xs, xe, ys, ye, zs, ze;
+  PetscInt       i, j, k, di, dj, dk;
+
+  xs = info->xs; xe = info->xs + info->xm;
+  ys = info->ys; ye = info->ys + info->ym;
+  zs = info->zs; ze = info->zs + info->zm;
+  mx = info->mx; my = info->my; mz = info->mz;
+
+  /* We assume the corner domain is slightly bigger: [xs-1..xe], etc., with boundary checks. */
+  PetscInt xs_corner = xs - 1;
+  PetscInt xe_corner = xe;
+  PetscInt ys_corner = ys - 1;
+  PetscInt ye_corner = ye;
+  PetscInt zs_corner = zs - 1;
+  PetscInt ze_corner = ze;
+
+  for (k = zs_corner; k < ze_corner; k++) {
+    for (j = ys_corner; j < ye_corner; j++) {
+      for (i = xs_corner; i < xe_corner; i++) {
+
+        Cmpnts sum  = {0.0, 0.0, 0.0};
+        PetscInt count = 0;
+
+        for (dk = 0; dk < 2; dk++) {
+          for (dj = 0; dj < 2; dj++) {
+            for (di = 0; di < 2; di++) {
+              PetscInt ic = i + di;
+              PetscInt jc = j + dj;
+              PetscInt kc = k + dk;
+              if (ic >= xs && ic < xe &&
+                  jc >= ys && jc < ye &&
+                  kc >= zs && kc < ze)
+              {
+                sum.x += centfield[kc][jc][ic].x;
+                sum.y += centfield[kc][jc][ic].y;
+                sum.z += centfield[kc][jc][ic].z;
+                count++;
+              }
+            }
+          }
+        }
+
+        if (count > 0) {
+          field[k][j][i].x = sum.x / (PetscReal)count;
+          field[k][j][i].y = sum.y / (PetscReal)count;
+          field[k][j][i].z = sum.z / (PetscReal)count;
+        } else {
+          field[k][j][i].x = 0.0;
+          field[k][j][i].y = 0.0;
+          field[k][j][i].z = 0.0;
+        }
+      }
+    }
+  }
+  
+  LOG_ALLOW(GLOBAL, LOG_DEBUG, "InterpolateFieldFromCenterToCorner_Vector - Rank %d completed vector center-to-corner interpolation.\n", rank);
+  return 0;
+}
+
+
+
+PetscErrorCode InterpolateFieldFromCornerToCenter_Vector(
+    Cmpnts ***field,         /* coordinate DM array (da, including ghost cells) */
+    Cmpnts ***centfield,     /* output: interpolated interior cell–center values for fda */
+    UserCtx *user)
+{
+  PetscErrorCode ierr;
+  PetscMPIInt    rank;
+  ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+  LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
+    "InterpolateFieldFromCornerToCenter_Vector - Rank %d starting interpolation.\n", rank);
+
+  /* Obtain local info for fda and da */
+  DMDALocalInfo info_fda, info_da;
+  ierr = DMDAGetLocalInfo(user->fda, &info_fda); CHKERRQ(ierr);
+  ierr = DMDAGetLocalInfo(user->da, &info_da); CHKERRQ(ierr);
+
+  /* Obtain global domain dimensions from fda */
+  PetscInt gNx, gNy, gNz;
+  ierr = DMDAGetInfo(user->fda, NULL, &gNx, &gNy, &gNz, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL); CHKERRQ(ierr);
+
+  /* Compute interior bounds for fda:
+     If the local start equals the global minimum then skip that boundary cell,
+     and similarly for the upper boundary.
+  */
+  PetscInt lxs = (info_fda.xs == 0) ? info_fda.xs + 1 : info_fda.xs;
+  PetscInt lxe = ((info_fda.xs + info_fda.xm) == gNx) ? info_fda.xs + info_fda.xm - 1 : info_fda.xs + info_fda.xm;
+  PetscInt lys = (info_fda.ys == 0) ? info_fda.ys + 1 : info_fda.ys;
+  PetscInt lye = ((info_fda.ys + info_fda.ym) == gNy) ? info_fda.ys + info_fda.ym - 1 : info_fda.ys + info_fda.ym;
+  PetscInt lzs = (info_fda.zs == 0) ? info_fda.zs + 1 : info_fda.zs;
+  PetscInt lze = ((info_fda.zs + info_fda.zm) == gNz) ? info_fda.zs + info_fda.zm - 1 : info_fda.zs + info_fda.zm;
+
+  LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
+            "Rank %d: fda interior bounds: lxs=%d, lxe=%d, lys=%d, lye=%d, lzs=%d, lze=%d (global dims: %d,%d,%d)\n",
+            rank, lxs, lxe, lys, lye, lzs, lze, gNx, gNy, gNz);
+  
+  /* Loop over the interior cells of fda */
+  for (PetscInt k = lzs; k < lze; k++) {
+    for (PetscInt j = lys; j < lye; j++) {
+      for (PetscInt i = lxs; i < lxe; i++) {
+
+        Cmpnts sum = {0.0, 0.0, 0.0};
+        PetscInt count = 0;
+        PetscInt iterVar = 0;
+
+        /* For cell center (i,j,k) in fda, its 8 surrounding corners in da have global indices
+           from (i-1,j-1,k-1) to (i,j,k). Here we assume that the global indices match between fda and da.
+           We then subtract info_da.xs, etc., to index into da's local array.
+         */
+        for (PetscInt dk = 0; dk < 2; dk++) {
+          for (PetscInt dj = 0; dj < 2; dj++) {
+            for (PetscInt di = 0; di < 2; di++) {
+              PetscInt ci = i - 1 + di;
+              PetscInt cj = j - 1 + dj;
+              PetscInt ck = k - 1 + dk;
+              /* No clamping needed here if ghost cells exist; assume indices are valid.
+                 (You may add an assertion if desired.) */
+              if ((ci >= info_da.xs) && (ci < info_da.xs + info_da.xm) &&
+                  (cj >= info_da.ys) && (cj < info_da.ys + info_da.ym) &&
+                  (ck >= info_da.zs) && (ck < info_da.zs + info_da.zm))
+              {
+                sum.x += field[ck - info_da.zs][cj - info_da.ys][ci - info_da.xs].x;
+                sum.y += field[ck - info_da.zs][cj - info_da.ys][ci - info_da.xs].y;
+                sum.z += field[ck - info_da.zs][cj - info_da.ys][ci - info_da.xs].z;
+                count++;
+                iterVar = ci*cj*ck;
+		  LOG_LOOP_ALLOW(GLOBAL, LOG_DEBUG,iterVar,10,
+                    "Rank %d: Interior cell (i=%d,j=%d,k=%d):corner (ci=%d,cj=%d,ck=%d) da range [%d,%d) [%d,%d) [%d,%d)\n",
+                    rank, i, j, k, ci, cj, ck, info_da.xs, info_da.xs+info_da.xm, info_da.ys, info_da.ys+info_da.ym, info_da.zs, info_da.zs+info_da.zm);
+              } else {
+                iterVar = ci*cj*ck;
+		  LOG_LOOP_ALLOW(GLOBAL, LOG_DEBUG,iterVar,1,
+                    "Rank %d: Interior cell (i=%d,j=%d,k=%d): skipping corner (ci=%d,cj=%d,ck=%d) outside da range [%d,%d) [%d,%d) [%d,%d)\n",
+                    rank, i, j, k, ci, cj, ck, info_da.xs, info_da.xs+info_da.xm, info_da.ys, info_da.ys+info_da.ym, info_da.zs, info_da.zs+info_da.zm);
+              }
+            }
+          }
+        }
+        if (count > 0) {
+          centfield[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs].x = sum.x / count;
+          centfield[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs].y = sum.y / count;
+          centfield[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs].z = sum.z / count;
+        } else {
+          centfield[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs].x = 0.0;
+          centfield[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs].y = 0.0;
+          centfield[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs].z = 0.0;
+          LOG_ALLOW(GLOBAL, LOG_DEBUG,
+                    "Rank %d: Interior cell (i=%d,j=%d,k=%d) got no valid corner data.\n",
+                    rank, i, j, k);
+        }
+      }
+    }
+  }
+
+  LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
+            "InterpolateFieldFromCornerToCenter_Vector - Rank %d completed interpolation.\n", rank);
+  return 0;
+}

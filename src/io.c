@@ -311,8 +311,8 @@ PetscErrorCode ReadLESFields(UserCtx *user,PetscInt ti)
 
     VecDuplicate(user->P, &Cs);
     ierr = ReadFieldData(user, "cs", Cs, ti, "dat"); CHKERRQ(ierr);
-    DMGlobalToLocalBegin(user->da, Cs, INSERT_VALUES, user->lCs);
-    DMGlobalToLocalEnd(user->da, Cs, INSERT_VALUES, user->lCs);
+    DMGlobalToLocalBegin(user->fda, Cs, INSERT_VALUES, user->lCs);
+    DMGlobalToLocalEnd(user->fda, Cs, INSERT_VALUES, user->lCs);
     VecDestroy(&Cs);
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "ReadLESFields - Finished reading LES fields.\n");

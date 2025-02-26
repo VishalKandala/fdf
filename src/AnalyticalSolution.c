@@ -15,122 +15,260 @@
 #include "AnalyticalSolution.h"
 
 /**
- * @brief Sets the local Cartesian velocity components based on coordinates.
+ * @brief Sets the local Cartesian vector field based on input coordinates.
  *
- * This function computes the velocity components by applying the sine function to the 
+ * This function computes the vector components by applying the sine function to the
  * input coordinate values along the x, y, and z directions.
  *
- * @param[in,out] ucont Pointer to the `Cmpnts` structure where the velocity components will be stored.
- * @param[in]     coor  Pointer to the `Cmpnts` structure containing the input coordinate values.
+ * @param[in]     fieldName Pointer to a string representing the field name (for logging purposes).
+ * @param[in,out] vecField  Pointer to the `Cmpnts` structure where the computed vector field will be stored.
+ * @param[in]     coor      Pointer to the `Cmpnts` structure containing the input coordinate values.
  *
  * @return PetscErrorCode Returns 0 on successful execution, non-zero on failure.
  */
- static inline PetscErrorCode SetLocalCartesianVelocity(Cmpnts *ucat, Cmpnts *coor) {
-    // Log input coordinate values for debugging purposes
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "SetLocalCartesianVelocity: Input Coordinates - x: %f, y: %f, z: %f \n", coor->x, coor->y, coor->z);
+PetscErrorCode SetLocalCartesianField_Vector(const char *fieldName, Cmpnts *vecField, Cmpnts *coor) {
+    // Log input coordinate values for debugging purposes.
+    LOG_ALLOW(GLOBAL, LOG_DEBUG,
+        "SetLocalCartesianField_Vector: Input Coordinates - x: %f, y: %f, z: %f\n",
+        coor->x, coor->y, coor->z);
 
-    // Compute velocity components as the sine of the coordinates
-    ucat->x = sin(coor->x);
-    ucat->y = sin(coor->y);
-    ucat->z = sin(coor->z);
+    // Compute vector components as the sine of the coordinate values.
+    vecField->x = sin(coor->x);
+    vecField->y = sin(coor->y);
+    vecField->z = sin(coor->z);
 
-    // Log computed velocity components
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "SetLocalCartesianVelocity: Computed Velocity - x: %f, y: %f, z: %f \n", ucat->x, ucat->y, ucat->z);
+    // Log computed vector field values along with the field name.
+    LOG_ALLOW(GLOBAL, LOG_DEBUG,
+        "SetLocalCartesianField_Vector: Computed Vector %s - x: %f, y: %f, z: %f\n",
+        fieldName, vecField->x, vecField->y, vecField->z);
 
     return 0;
 }
 
 /**
- * @brief Updates the local Cartesian velocity field based on interpolated coordinates.
+ * @brief Sets the local Cartesian scalar field based on input coordinates.
  *
- * This function performs the following operations:
- * 1. Retrieves the local grid information from the DMDA associated with the user context.
- * 2. Accesses the local coordinate vector and retrieves a read-only array representation.
- * 3. Allocates memory for a temporary 3D array (`centcoor`) to store interpolated coordinate values at cell centers.
- * 4. Accesses the Cartesian velocity vector and obtains a writable array representation.
- * 5. Interpolates the coordinate values from cell corners to cell centers using `InterpolateFieldFromCornerToCenter`.
- * 6. Updates the Cartesian velocity values at each cell center based on the interpolated coordinates using `SetLocalCartesianVelocity`.
- * 7. Deallocates the temporary array (`centcoor`) and restores the arrays to maintain PETSc's internal state.
+ * This function computes the scalar field value by combining the sine of the input
+ * coordinate values. In this example, the scalar field is computed as the sum of the
+ * sine functions of the x, y, and z coordinates.
  *
- * @param[in,out] user Pointer to a `UserCtx` structure containing:
- *                     - `user->da`: DMDA for the grid.
- *                     - `user->fda`: DMDA for the Cartesian velocity field.
- *                     - `user->Ucat`: Cartesian velocity vector.
- *                     - `user->Coor`: Coordinate vector.
- *                     - `user->info`: Local DMDA grid information.
+ * @param[in]     fieldName   Pointer to a string representing the field name (for logging purposes).
+ * @param[in,out] scalarField Pointer to the PetscReal where the computed scalar field value will be stored.
+ * @param[in]     coor        Pointer to the `Cmpnts` structure containing the input coordinate values.
  *
- * @return PetscErrorCode 
- *         - Returns 0 on successful execution.
- *         - Non-zero error code on failure.
- *
- * @note 
- * - Assumes that the coordinate vector (`user->Coor`) has been properly initialized and populated before this function is called.
- * - The function is grid-aware and handles memory allocation and interpolation for local subdomains only.
+ * @return PetscErrorCode Returns 0 on successful execution, non-zero on failure.
  */
+PetscErrorCode SetLocalCartesianField_Scalar(const char *fieldName, PetscReal *scalarField, Cmpnts *coor) {
+    // Log input coordinate values for debugging purposes.
+    LOG_ALLOW(LOCAL, LOG_DEBUG,
+        "SetLocalCartesianField_Scalar: Input Coordinates - x: %f, y: %f, z: %f\n",
+        coor->x, coor->y, coor->z);
 
-PetscErrorCode UpdateCartesianVelocity(UserCtx *user)
+    // Compute scalar field value as the sum of the sine functions of the coordinates.
+    *scalarField = sin(coor->x) + sin(coor->y) + sin(coor->z);
+
+    // Log computed scalar field value along with the field name.
+    LOG_ALLOW(LOCAL, LOG_DEBUG,
+        "SetLocalCartesianField_Scalar: Computed Scalar %s - value: %f\n",
+        fieldName, *scalarField);
+
+    return 0;
+}
+
+/**
+ * @brief Sets an analytical Cartesian field (scalar or vector) for cell centers based on a field name.
+ *
+ * This function looks up the field within the user context by comparing the provided field name
+ * against the supported names:
+ *   - Vector fields: "Ucat" and "Ucont"
+ *   - Scalar fields: "P" and "nvert"
+ *
+ * If the field is found, the function verifies that the DM block size matches the expected value
+ * (3 for vector fields and 1 for scalar fields), retrieves local DM information for both the coordinate DM (da)
+ * and the cell-centered DM (fda), interpolates the corner-based coordinates (from da) to cell centers,
+ * and then updates the field using the generic helper macro SetLocalCartesianField. Interior cells are
+ * updated with the interpolated coordinates, and boundary cells are updated using the original coordinate data.
+ *
+ * If the field name is not found in the user context, the function throws an error.
+ *
+ * @param[in]  user      Pointer to the UserCtx structure containing:
+ *                         - da: DM for coordinate (corner) data.
+ *                         - fda: DM for cell-centered data.
+ *                         - Ucat: vector field (Cmpnts ***)
+ *                         - Ucont: vector field (Cmpnts ***)
+ *                         - P: scalar field (PetscReal ***)
+ *                         - nvert: scalar field (PetscReal ***)
+ * @param[in]  fieldName Name of the field to update.
+ *
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode SetAnalyticalCartesianField(UserCtx *user, const char *fieldName)
 {
-    PetscErrorCode ierr;
-    DMDALocalInfo info = user->info;
-    Vec Coor;
-    Cmpnts ***coor = NULL, ***centcoor = NULL, ***ucat = NULL;
-    PetscInt rank;
+  PetscErrorCode ierr;
+  PetscMPIInt    rank;
+  ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+  LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
+       "SetAnalyticalCartesianField: Starting for field '%s' on rank %d.\n", fieldName, rank);
 
-    PetscInt xs = info.xs, xe = info.xs + info.xm;
-    PetscInt ys = info.ys, ye = info.ys + info.ym;
-    PetscInt zs = info.zs, ze = info.zs + info.zm;
- 
-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+  /* Look up the field Vec in user context. */
+  Vec fieldVec = NULL;
+  int fieldIsVector = -1;
+  if (strcmp(fieldName, "Ucat") == 0) {
+    fieldVec = user->Ucat;
+    fieldIsVector = 1;
+  } else if (strcmp(fieldName, "Ucont") == 0) {
+    fieldVec = user->Ucont;
+    fieldIsVector = 1;
+  } else if (strcmp(fieldName, "P") == 0) {
+    fieldVec = user->P;
+    fieldIsVector = 0;
+  } else if (strcmp(fieldName, "Nvert") == 0) {
+    fieldVec = user->Nvert;
+    fieldIsVector = 0;
+  } else {
+    SETERRQ1(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG,
+             "Field '%s' not found in user context", fieldName);
+  }
 
-    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "UpdateCartesianVelocity: Starting on rank : %d \n",rank);
+  /* Verify DM block size. */
+  PetscInt expected_bs = fieldIsVector ? 3 : 1;
+  PetscInt bs;
+  ierr = DMGetBlockSize(user->fda, &bs); CHKERRQ(ierr);
+  if (bs != expected_bs) {
+    SETERRQ3(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG,
+             "Expected block size %d for field '%s', got %d", expected_bs, fieldName, bs);
+  }
 
-    /* 1) Access local coords (Coor) & velocity array (Ucat) */
-    ierr = DMGetCoordinatesLocal(user->da, &Coor); CHKERRQ(ierr);
-    ierr = DMDAVecGetArrayRead(user->fda, Coor, &coor); CHKERRQ(ierr);
+  /* Get local DM info for fda and da. */
+  DMDALocalInfo info_fda, info_da;
+  ierr = DMDAGetLocalInfo(user->fda, &info_fda); CHKERRQ(ierr);
+  ierr = DMDAGetLocalInfo(user->da, &info_da); CHKERRQ(ierr);
 
-    ierr = DMDAVecGetArray(user->fda, user->Ucat, &ucat); CHKERRQ(ierr);
+  /* Get coordinate array from da (read-only). */
+  Vec Coor;
+  ierr = DMGetCoordinatesLocal(user->da, &Coor); CHKERRQ(ierr);
+  Cmpnts ***coor;
+  ierr = DMDAVecGetArrayRead(user->da, Coor, &coor); CHKERRQ(ierr);
 
-    /* 2) Allocate scratch array 'centcoor' the same local size as [zs..ze, ys..ye, xs..xe]. */
-    ierr = Allocate3DArray(&centcoor, ze, ye, xe); CHKERRQ(ierr);
+  /* Allocate temporary array for interpolated cell-center coordinates.
+     Its dimensions: info_fda.zm x info_fda.ym x info_fda.xm */
+  Cmpnts ***centcoor = NULL;
+  ierr = Allocate3DArray(&centcoor, info_fda.zm, info_fda.ym, info_fda.xm); CHKERRQ(ierr);
 
-    /* 3) Interpolate corner->center coords into centcoor */
-    ierr = InterpolateFieldFromCornerToCenter(coor, centcoor, &info); CHKERRQ(ierr);
+  /* Interpolate corner coordinates (from da) to cell centers. */
+  ierr = InterpolateFieldFromCornerToCenter(coor, centcoor, user); CHKERRQ(ierr);
 
-    /* 4) Fill interior cell velocity using 'SetLocalCartesianVelocity' with the center coords. 
-       (Stop at xe-1, ye-1, ze-1 so i+1 doesn't go out-of-range) */
+  /* Define the physical region of fda. */
+  PetscInt xs = info_fda.xs, xe = info_fda.xs + info_fda.xm;
+  PetscInt ys = info_fda.ys, ye = info_fda.ys + info_fda.ym;
+  PetscInt zs = info_fda.zs, ze = info_fda.zs + info_fda.zm;
+
+  if (fieldIsVector) {
+    Cmpnts ***vecField;
+    ierr = DMDAVecGetArray(user->fda, fieldVec, &vecField); CHKERRQ(ierr);
+    /*--- Update interior cells ---*/
     for (PetscInt k = zs; k < ze - 1; k++) {
       for (PetscInt j = ys; j < ye - 1; j++) {
         for (PetscInt i = xs; i < xe - 1; i++) {
-          ierr = SetLocalCartesianVelocity(&ucat[k][j][i], &centcoor[k][j][i]); CHKERRQ(ierr);
+          ierr = SetLocalCartesianField(fieldName,
+                    &vecField[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs],
+                    &centcoor[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs]); CHKERRQ(ierr);
         }
       }
     }
-
-    /* 5) Set boundary nodes to sine-of-corner-coords 
-       i.e. if i==xe-1 or i==xs or similarly for j,k. 
-       That ensures no boundary node is left zero. */
-    for (PetscInt k = zs; k < ze; k++) {
-      for (PetscInt j = ys; j < ye; j++) {
-        for (PetscInt i = xs; i < xe; i++) {
-          PetscBool isBoundary = PETSC_FALSE;
-          if ((i == xe - 1) || (i == xs) ||
-              (j == ye - 1) || (j == ys)  ||
-              (k == ze - 1) || (k == zs)) {
-            isBoundary = PETSC_TRUE;
-          }
-          if (isBoundary) {
-            ierr = SetLocalCartesianVelocity(&ucat[k][j][i], &coor[k][j][i]); CHKERRQ(ierr);
+    /*--- Update boundary cells ---*/
+    /* Restrict loop to intersection of fda and da local domains */
+    PetscInt bx0 = PetscMax(xs, info_da.xs);
+    PetscInt bx1 = PetscMin(xe, info_da.xs + info_da.xm);
+    PetscInt by0 = PetscMax(ys, info_da.ys);
+    PetscInt by1 = PetscMin(ye, info_da.ys + info_da.ym);
+    PetscInt bz0 = PetscMax(zs, info_da.zs);
+    PetscInt bz1 = PetscMin(ze, info_da.zs + info_da.zm);
+    for (PetscInt k = bz0; k < bz1; k++) {
+      for (PetscInt j = by0; j < by1; j++) {
+        for (PetscInt i = bx0; i < bx1; i++) {
+          /* Check if (i,j,k) is a boundary cell in fda */
+          if ((i == xs) || (i == xe - 1) ||
+              (j == ys) || (j == ye - 1) ||
+              (k == zs) || (k == ze - 1))
+          {
+            ierr = SetLocalCartesianField(fieldName,
+                      &vecField[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs],
+                      &coor[k - info_da.zs][j - info_da.ys][i - info_da.xs]); CHKERRQ(ierr);
           }
         }
       }
     }
+    ierr = DMDAVecRestoreArray(user->fda, fieldVec, &vecField); CHKERRQ(ierr);
+  } else {
+    PetscReal ***scalarField;
+    ierr = DMDAVecGetArray(user->fda, fieldVec, &scalarField); CHKERRQ(ierr);
+    for (PetscInt k = zs; k < ze - 1; k++) {
+      for (PetscInt j = ys; j < ye - 1; j++) {
+        for (PetscInt i = xs; i < xe - 1; i++) {
+          ierr = SetLocalCartesianField(fieldName,
+                    &scalarField[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs],
+                    &centcoor[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs]); CHKERRQ(ierr);
+        }
+      }
+    }
+    PetscInt bx0 = PetscMax(xs, info_da.xs);
+    PetscInt bx1 = PetscMin(xe, info_da.xs + info_da.xm);
+    PetscInt by0 = PetscMax(ys, info_da.ys);
+    PetscInt by1 = PetscMin(ye, info_da.ys + info_da.ym);
+    PetscInt bz0 = PetscMax(zs, info_da.zs);
+    PetscInt bz1 = PetscMin(ze, info_da.zs + info_da.zm);
+    for (PetscInt k = bz0; k < bz1; k++) {
+      for (PetscInt j = by0; j < by1; j++) {
+        for (PetscInt i = bx0; i < bx1; i++) {
+          if ((i == xs) || (i == xe - 1) ||
+              (j == ys) || (j == ye - 1) ||
+              (k == zs) || (k == ze - 1))
+          {
+            ierr = SetLocalCartesianField(fieldName,
+                      &scalarField[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs],
+                      &coor[k - info_da.zs][j - info_da.ys][i - info_da.xs]); CHKERRQ(ierr);
+          }
+        }
+      }
+    }
+    ierr = DMDAVecRestoreArray(user->fda, fieldVec, &scalarField); CHKERRQ(ierr);
+  }
 
-    /* 6) Clean up */
-    ierr = Deallocate3DArray(centcoor, ze, ye); CHKERRQ(ierr);
+  ierr = Deallocate3DArray(centcoor, info_fda.zm, info_fda.ym); CHKERRQ(ierr);
+  ierr = DMDAVecRestoreArrayRead(user->da, Coor, &coor); CHKERRQ(ierr);
 
-    ierr = DMDAVecRestoreArray(user->fda, user->Ucat, &ucat); CHKERRQ(ierr);
-    ierr = DMDAVecRestoreArrayRead(user->fda, Coor, &coor); CHKERRQ(ierr);
-
-    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "UpdateCartesianVelocity: Completed on rank : %d \n",rank);
-    return 0;
+  LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
+       "SetAnalyticalCartesianField: Completed for field '%s' on rank %d.\n", fieldName, rank);
+  return 0;
 }
+
+/**
+ * @brief Applies the analytical solution to the position vector.
+ *
+ * This function updates each entry in the provided PETSc vector by computing its sine,
+ * thereby replacing each position with sin(position).
+ *
+ * @param tempVec The PETSc Vec containing particle positions which will be used to store velocities.
+ * @return PetscErrorCode Returns 0 on success.
+ */
+PetscErrorCode SetAnalyticalSolution(Vec tempVec)
+ {
+     PetscErrorCode ierr;
+     PetscInt nParticles;
+     PetscReal *vels;
+ 
+     LOG_ALLOW(GLOBAL, LOG_DEBUG, "SetAnalyticalSolution - Starting analytical solution computation.\n");
+ 
+     ierr = VecGetLocalSize(tempVec, &nParticles); CHKERRQ(ierr);
+     LOG_ALLOW(GLOBAL, LOG_DEBUG, "SetAnalyticalSolution - Number of local particles: %d.\n", nParticles);
+ 
+     ierr = VecGetArray(tempVec, &vels); CHKERRQ(ierr);
+     for (PetscInt i = 0; i < nParticles; i++) {
+         vels[i] = sin(vels[i]);
+     }
+     ierr = VecRestoreArray(tempVec, &vels); CHKERRQ(ierr);
+ 
+     LOG_ALLOW(GLOBAL, LOG_DEBUG, "SetAnalyticalSolution - Completed analytical solution computation.\n");
+     return 0;
+ }

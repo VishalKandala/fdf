@@ -50,8 +50,10 @@ def plot_performance(time_data_mean, time_data_sum):
     avg_times = [time_data_mean[p] for p in sorted_processors]
     cum_times = [time_data_sum[p] for p in sorted_processors]
     
-    # Identify T(1) for speedup and efficiency calculations
-    T1 = time_data_mean.get(1, min(avg_times))  # Use smallest time if T(1) not available
+    # Identify T(1) using the smallest processor count available
+    min_processors = min(sorted_processors)
+    T1 = time_data_mean[min_processors] * min_processors
+    
     speedup = [T1 / time_data_mean[p] for p in sorted_processors]
     efficiency = [speedup[i] / sorted_processors[i] for i in range(len(sorted_processors))]
     

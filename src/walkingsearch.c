@@ -516,10 +516,19 @@ PetscErrorCode CheckCellWithinLocalGrid(UserCtx *user, PetscInt idx, PetscInt id
     // Get grid information
     ierr = DMDAGetLocalInfo(user->da, &info); CHKERRQ(ierr);
 
-    // Check if indices are within bounds
-    if (idx >= info.xs && idx < (info.xs + info.xm - 1) &&
-        idy >= info.ys && idy < (info.ys + info.ym - 1) &&
-        idz >= info.zs && idz < (info.zs + info.zm - 1)) {
+// The domain for corners is [xs .. xs+xm), but
+    // we want space for (i+1, j+1, k+1). So we define:
+    PetscInt xMin = info.xs;
+    PetscInt xMax = info.xs + info.xm - 2;  // subtract 2
+    PetscInt yMin = info.ys;
+    PetscInt yMax = info.ys + info.ym - 2;
+    PetscInt zMin = info.zs;
+    PetscInt zMax = info.zs + info.zm - 2;
+
+    // Now check if idx,idy,idz is inside [xMin..xMax], etc.
+    if (idx >= xMin && idx <= xMax &&
+        idy >= yMin && idy <= yMax &&
+        idz >= zMin && idz <= zMax){
         *is_within = PETSC_TRUE;
     }
     else {
@@ -558,13 +567,13 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
 
     // Get local coordinates
     ierr = DMGetCoordinatesLocal(user->da, &Coor); CHKERRQ(ierr);
-    ierr = DMDAVecGetArrayRead(user->fda, Coor, &coor_array); CHKERRQ(ierr);
+    ierr = DMDAVecGetArrayRead(user->da, Coor, &coor_array); CHKERRQ(ierr);
 
     // Get the current cell's vertices
     ierr = GetCellVerticesFromGrid(coor_array, idx, idy, idz, cell); CHKERRQ(ierr);
 
     // Restore array
-    ierr = DMDAVecRestoreArrayRead(user->fda, Coor, &coor_array); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArrayRead(user->da, Coor, &coor_array); CHKERRQ(ierr);
 
     // Get MPI rank for debugging
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
