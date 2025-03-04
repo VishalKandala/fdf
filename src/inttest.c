@@ -190,10 +190,10 @@ int main(int argc, char **argv) {
         "InitializeSimulation",                 
         "SetupGridAndVectors",
 	//	"InitializeGridDM",
-        "SetAnalyticalCartesianField",
+	// "SetAnalyticalCartesianField",
 	// "SetLocalCartesianField_Vector",
-	"InterpolateFieldFromCornerToCenter_Vector",
-	  "WriteSimulationFields",
+	//	"InterpolateFieldFromCornerToCenter_Vector",
+	//  "WriteSimulationFields",
 	// "ReadSimulationFields",
 	// "GatherAllBoundingBoxes",
 	// "BroadcastAllBoundingBoxes",
@@ -203,11 +203,12 @@ int main(int argc, char **argv) {
 	//  "InitializeParticleBasicProperties",
 	// "FinalizeSwarmSetup",
 	// "LocateAllParticlesInGrid",
-	// "LocateParticleInGrid",
+		"LocateParticleInGrid",
+	  "ComputeSignedDistanceToPlane",
         "InterpolateAllFieldsToSwarm",
         "InterpolateEulerFieldToSwarm",
 	//  "InterpolateFieldFromCenterToCorner",
-	//  "InterpolateFieldFromCenterToCorner_Vector",
+	//	  "InterpolateFieldFromCenterToCorner_Vector",
 	//  "Allocate3DArrayScalar",
 	// "Allocate3DArrayVector",
 	//   "InterpolateEulerFieldToSwarmForParticle",
@@ -216,7 +217,7 @@ int main(int argc, char **argv) {
            //"ComputeTrilinearWeights",
        "FinalizeSimulation"
     };
-    set_allowed_functions(allowedFuncs, 10);
+    set_allowed_functions(allowedFuncs, 9);
     // Enable PETSc default logging
     ierr = PetscLogDefaultBegin(); CHKERRQ(ierr);
 

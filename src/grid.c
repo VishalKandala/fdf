@@ -30,7 +30,6 @@ PetscErrorCode InitializeGridDM(UserCtx *user, PetscReal L_x, PetscReal L_y, Pet
 {
     PetscErrorCode ierr;
     PetscInt       Nx, Ny, Nz;
-    PetscInt       NxCoord, NyCoord, NzCoord;
 
     if (L_x <= 0.0 || L_y <= 0.0 || L_z <= 0.0) {
         LOG_ALLOW(GLOBAL, LOG_ERROR,
@@ -44,16 +43,17 @@ PetscErrorCode InitializeGridDM(UserCtx *user, PetscReal L_x, PetscReal L_y, Pet
                 "InitializeGridDM - Grid dimensions (IM, JM, KM) must be positive.");
     }
 
+    Nx = user->IM + 1;
+    Ny = user->JM + 1;
+    Nz = user->KM + 1;
+
     LOG_ALLOW(GLOBAL, LOG_INFO,
-              "InitializeGridDM - Initializing DM for IM=%d, JM=%d, KM=%d\n",
-              user->IM, user->JM, user->KM);
+              "InitializeGridDM - Initializing DM with %d,%d,%d grid points & %d,%d,%d cell\n",
+              user->IM, user->JM, user->KM,user->IM-1,user->JM-1,user->KM-1);
 
     // -------------------------------------------------------------------------
-    // 1) Create the cell-centered DM (fda) with ghost boundaries and +2 in each dimension.
+    // 1) Create the DM (da) with +2 in each dimension.
     // -------------------------------------------------------------------------
-    Nx = user->IM + 2;
-    Ny = user->JM + 2;
-    Nz = user->KM + 2;
 
     ierr = DMDACreate3d(
                 PETSC_COMM_WORLD,
@@ -61,36 +61,16 @@ PetscErrorCode InitializeGridDM(UserCtx *user, PetscReal L_x, PetscReal L_y, Pet
                 DMDA_STENCIL_BOX,
                 Nx, Ny, Nz,
                 PETSC_DECIDE, PETSC_DECIDE, PETSC_DECIDE,
-                3, // 3 dof
+                1, // 1 dof
                 1, // stencil width
-                NULL, NULL, NULL,
-                &user->fda);
-    CHKERRQ(ierr);
-
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Created cell-centered DM (fda) with ghost boundaries.\n");
-
-    ierr = DMSetUp(user->fda); CHKERRQ(ierr);
-
-    // -------------------------------------------------------------------------
-    // 2) Create a separate DM (da) for coordinates, sized (IM+1, JM+1, KM+1).
-    // -------------------------------------------------------------------------
-    NxCoord = user->IM + 1;
-    NyCoord = user->JM + 1;
-    NzCoord = user->KM + 1;
-
-    ierr = DMDACreate3d(
-                PETSC_COMM_WORLD,
-                DM_BOUNDARY_GHOSTED, DM_BOUNDARY_GHOSTED, DM_BOUNDARY_GHOSTED,
-                DMDA_STENCIL_BOX,
-                NxCoord, NyCoord, NzCoord,
-                PETSC_DECIDE, PETSC_DECIDE, PETSC_DECIDE,
-                3, // 3 dof for x,y,z
-                0, // no extra stencil
                 NULL, NULL, NULL,
                 &user->da);
     CHKERRQ(ierr);
 
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Created coordinate DM (da) with ghost boundaries.\n");
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Created DM (da) with ghost boundaries.\n");
+
+    ierr = DMSetCoordinateDim(user->da, 3); CHKERRQ(ierr);
+
 
     ierr = DMSetUp(user->da); CHKERRQ(ierr);
 
@@ -100,15 +80,12 @@ PetscErrorCode InitializeGridDM(UserCtx *user, PetscReal L_x, PetscReal L_y, Pet
     ierr = DMDASetUniformCoordinates(user->da, 0.0, L_x, 0.0, L_y, 0.0, L_z);
     CHKERRQ(ierr);
 
-    // 4) Attach the coordinate DM to the cell-centered DM
-    ierr = DMSetCoordinateDM(user->fda, user->da); CHKERRQ(ierr);
+    // 4) Retrieve the coordinte(field) DM created 
+    ierr = DMGetCoordinateDM(user->da, &user->fda); CHKERRQ(ierr);
 
     if (get_log_level() == LOG_DEBUG && is_function_allowed(__func__)) {
-        LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - Viewing fda (cell-centered DM):\n");
+        LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - Viewing Coordinate DM(da/fda):\n");
         ierr = DMView(user->fda, PETSC_VIEWER_STDOUT_WORLD); CHKERRQ(ierr);
-
-        LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - Viewing da (coordinate DM):\n");
-        ierr = DMView(user->da, PETSC_VIEWER_STDOUT_WORLD); CHKERRQ(ierr);
     }
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - Completed DM setup.\n");
@@ -231,7 +208,7 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user,
     // CHANGED: Retrieve the local coordinate vector from user->da directly
     ierr = DMGetCoordinatesLocal(user->da, &Coor); CHKERRQ(ierr);
     // CHANGED: Then get the array from user->da
-    ierr = DMDAVecGetArray(user->da, Coor, &coorArray); CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(user->fda, Coor, &coorArray); CHKERRQ(ierr);
 
     // On rank 0, read/generate
     if (rank == 0) {
@@ -295,7 +272,7 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user,
     LOG_ALLOW(GLOBAL, LOG_DEBUG, "AssignGridCoordinates - Assigned local coords rank %d.\n", rank);
 
     ierr = PetscFree(gc); CHKERRQ(ierr);
-    ierr = DMDAVecRestoreArray(user->da, Coor, &coorArray); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArray(user->fda, Coor, &coorArray); CHKERRQ(ierr);
 
     // Sync local->global
     Vec globalCoor, localCoor;
@@ -525,7 +502,7 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
         return PETSC_ERR_ARG_NULL;
     }
 
-    ierr = DMDAVecGetArrayRead(user->da, coordinates, &coordArray); CHKERRQ(ierr);
+    ierr = DMDAVecGetArrayRead(user->fda, coordinates, &coordArray); CHKERRQ(ierr);
 
     minCoords.x = minCoords.y = minCoords.z = PETSC_MAX_REAL;
     maxCoords.x = maxCoords.y = maxCoords.z = PETSC_MIN_REAL;
@@ -545,7 +522,7 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
         }
     }
 
-    ierr = DMDAVecRestoreArrayRead(user->da, coordinates, &coordArray); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArrayRead(user->fda, coordinates, &coordArray); CHKERRQ(ierr);
 
     localBBox->min_coords = minCoords;
     localBBox->max_coords = maxCoords;

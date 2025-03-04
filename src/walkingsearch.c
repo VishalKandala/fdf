@@ -120,6 +120,10 @@ PetscErrorCode ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, co
     // Check for degenerate plane
     if (normal_magnitude == 0.0) {
       LOG_ALLOW(LOCAL,LOG_ERROR, "ComputeSignedDistanceToPlane - Degenerate plane detected (zero normal vector) on rank %d \n",rank);
+            LOG_ALLOW(LOCAL,LOG_DEBUG, "  p1: (%.3f, %.3f, %.3f)\n", p1.x, p1.y, p1.z);
+            LOG_ALLOW(LOCAL,LOG_DEBUG, "  p2: (%.3f, %.3f, %.3f)\n", p2.x, p2.y, p2.z);
+            LOG_ALLOW(LOCAL,LOG_DEBUG, "  p3: (%.3f, %.3f, %.3f)\n", p3.x, p3.y, p3.z);
+            LOG_ALLOW(LOCAL,LOG_DEBUG, "  p4: (%.3f, %.3f, %.3f)\n", p4.x, p4.y, p4.z);
 
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_USER,
                 "Degenerate plane detected (normal vector is zero).");
@@ -519,11 +523,11 @@ PetscErrorCode CheckCellWithinLocalGrid(UserCtx *user, PetscInt idx, PetscInt id
 // The domain for corners is [xs .. xs+xm), but
     // we want space for (i+1, j+1, k+1). So we define:
     PetscInt xMin = info.xs;
-    PetscInt xMax = info.xs + info.xm - 2;  // subtract 2
+    PetscInt xMax = info.xs + info.xm - 3;  // subtract 2
     PetscInt yMin = info.ys;
-    PetscInt yMax = info.ys + info.ym - 2;
+    PetscInt yMax = info.ys + info.ym - 3;
     PetscInt zMin = info.zs;
-    PetscInt zMax = info.zs + info.zm - 2;
+    PetscInt zMax = info.zs + info.zm - 3;
 
     // Now check if idx,idy,idz is inside [xMin..xMax], etc.
     if (idx >= xMin && idx <= xMax &&
@@ -566,17 +570,18 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
     }
 
     // Get local coordinates
+    ierr = DMGetCoordinateDM(user->da,&(user->fda)); 
     ierr = DMGetCoordinatesLocal(user->da, &Coor); CHKERRQ(ierr);
-    ierr = DMDAVecGetArrayRead(user->da, Coor, &coor_array); CHKERRQ(ierr);
+    ierr = DMDAVecGetArrayRead(user->fda, Coor, &coor_array); CHKERRQ(ierr);
 
     // Get the current cell's vertices
     ierr = GetCellVerticesFromGrid(coor_array, idx, idy, idz, cell); CHKERRQ(ierr);
 
     // Restore array
-    ierr = DMDAVecRestoreArrayRead(user->da, Coor, &coor_array); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArrayRead(user->fda, Coor, &coor_array); CHKERRQ(ierr);
 
     // Get MPI rank for debugging
-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+   ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
 
     // Debug: Print cell vertices
     LOG_ALLOW(LOCAL,LOG_DEBUG, "RetrieveCurrentCell - Cell (%d, %d, %d) vertices \n", idx, idy, idz);
@@ -707,9 +712,9 @@ PetscErrorCode UpdateCellIndicesBasedOnDistances( PetscReal d[NUM_FACES], PetscI
     PetscInt cym,cys;  // maximum & minimum cell ID in y
     PetscInt czm,czs;  // maximum & minimum cell ID in z
 
-    cxs = info->xs; cxm = cxs + info->xm - 2;
-    cys = info->ys; cym = cys + info->ym - 2;
-    czs = info->zs; czm = czs + info->zm - 2; 
+    cxs = info->xs; cxm = cxs + info->xm - 3;
+    cys = info->ys; cym = cys + info->ym - 3;
+    czs = info->zs; czm = czs + info->zm - 3; 
     
     // Validate input pointers
     if (d == NULL) {

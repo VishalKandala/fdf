@@ -139,104 +139,78 @@ PetscErrorCode SetAnalyticalCartesianField(UserCtx *user, const char *fieldName)
              "Expected block size %d for field '%s', got %d", expected_bs, fieldName, bs);
   }
 
-  /* Get local DM info for fda and da. */
-  DMDALocalInfo info_fda, info_da;
-  ierr = DMDAGetLocalInfo(user->fda, &info_fda); CHKERRQ(ierr);
-  ierr = DMDAGetLocalInfo(user->da, &info_da); CHKERRQ(ierr);
+  /* Get local DM info for da. */
+  DMDALocalInfo info;
+  ierr = DMDAGetLocalInfo(user->da,&info);
 
   /* Get coordinate array from da (read-only). */
   Vec Coor;
   ierr = DMGetCoordinatesLocal(user->da, &Coor); CHKERRQ(ierr);
   Cmpnts ***coor;
-  ierr = DMDAVecGetArrayRead(user->da, Coor, &coor); CHKERRQ(ierr);
+  ierr = DMDAVecGetArrayRead(user->fda, Coor, &coor); CHKERRQ(ierr);
 
-  /* Allocate temporary array for interpolated cell-center coordinates.
-     Its dimensions: info_fda.zm x info_fda.ym x info_fda.xm */
+  /* Allocate temporary array for interpolated cell-center coordinates.*/  
+
+  /* Define the physical region of da. */
+  PetscInt xs = info.xs, xe = info.xs + info.xm;
+  PetscInt ys = info.ys, ye = info.ys + info.ym;
+  PetscInt zs = info.zs, ze = info.zs + info.zm;
+  PetscInt mx = info.mx, my = info.my, mz = info.mz;
+
+  PetscInt lxs = xs,lxe = xe;
+  PetscInt lys = ys,lye = ye;
+  PetscInt lzs = zs,lze = ze;
+  
+  if (xs==0) lxs = xs+1;
+  if (ys==0) lys = ys+1;
+  if (zs==0) lzs = zs+1;
+  
+  if (xe==mx) lxe = xe-1;
+  if (ye==my) lye = ye-1;
+  if (ze==mz) lze = ze-1;
+
   Cmpnts ***centcoor = NULL;
-  ierr = Allocate3DArray(&centcoor, info_fda.zm, info_fda.ym, info_fda.xm); CHKERRQ(ierr);
+  ierr = Allocate3DArray(&centcoor, info.zm, info.ym, info.xm); CHKERRQ(ierr);
 
   /* Interpolate corner coordinates (from da) to cell centers. */
   ierr = InterpolateFieldFromCornerToCenter(coor, centcoor, user); CHKERRQ(ierr);
-
-  /* Define the physical region of fda. */
-  PetscInt xs = info_fda.xs, xe = info_fda.xs + info_fda.xm;
-  PetscInt ys = info_fda.ys, ye = info_fda.ys + info_fda.ym;
-  PetscInt zs = info_fda.zs, ze = info_fda.zs + info_fda.zm;
 
   if (fieldIsVector) {
     Cmpnts ***vecField;
     ierr = DMDAVecGetArray(user->fda, fieldVec, &vecField); CHKERRQ(ierr);
     /*--- Update interior cells ---*/
-    for (PetscInt k = zs; k < ze - 1; k++) {
-      for (PetscInt j = ys; j < ye - 1; j++) {
-        for (PetscInt i = xs; i < xe - 1; i++) {
+    for (PetscInt k = lzs; k < lze ; k++) {
+      for (PetscInt j = lys; j < lye; j++) {
+        for (PetscInt i = lxs; i < lxe; i++) {
           ierr = SetLocalCartesianField(fieldName,
-                    &vecField[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs],
-                    &centcoor[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs]); CHKERRQ(ierr);
+                    &vecField[k][j][i],
+                    &centcoor[k - lzs][j - lys][i - lxs]); CHKERRQ(ierr);
         }
       }
     }
-    /*--- Update boundary cells ---*/
-    /* Restrict loop to intersection of fda and da local domains */
-    PetscInt bx0 = PetscMax(xs, info_da.xs);
-    PetscInt bx1 = PetscMin(xe, info_da.xs + info_da.xm);
-    PetscInt by0 = PetscMax(ys, info_da.ys);
-    PetscInt by1 = PetscMin(ye, info_da.ys + info_da.ym);
-    PetscInt bz0 = PetscMax(zs, info_da.zs);
-    PetscInt bz1 = PetscMin(ze, info_da.zs + info_da.zm);
-    for (PetscInt k = bz0; k < bz1; k++) {
-      for (PetscInt j = by0; j < by1; j++) {
-        for (PetscInt i = bx0; i < bx1; i++) {
-          /* Check if (i,j,k) is a boundary cell in fda */
-          if ((i == xs) || (i == xe - 1) ||
-              (j == ys) || (j == ye - 1) ||
-              (k == zs) || (k == ze - 1))
-          {
-            ierr = SetLocalCartesianField(fieldName,
-                      &vecField[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs],
-                      &coor[k - info_da.zs][j - info_da.ys][i - info_da.xs]); CHKERRQ(ierr);
-          }
-        }
-      }
-    }
+    /*--- Update ghost cells ---*/
+    
+
     ierr = DMDAVecRestoreArray(user->fda, fieldVec, &vecField); CHKERRQ(ierr);
   } else {
     PetscReal ***scalarField;
     ierr = DMDAVecGetArray(user->fda, fieldVec, &scalarField); CHKERRQ(ierr);
-    for (PetscInt k = zs; k < ze - 1; k++) {
-      for (PetscInt j = ys; j < ye - 1; j++) {
-        for (PetscInt i = xs; i < xe - 1; i++) {
+    for (PetscInt k = lzs; k < lze - 1; k++) {
+      for (PetscInt j = lys; j < lye - 1; j++) {
+        for (PetscInt i = lxs; i < lxe - 1; i++) {
           ierr = SetLocalCartesianField(fieldName,
-                    &scalarField[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs],
-                    &centcoor[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs]); CHKERRQ(ierr);
+                    &scalarField[k][j][i],
+                    &centcoor[k - zs][j - ys][i - xs]); CHKERRQ(ierr);
         }
       }
     }
-    PetscInt bx0 = PetscMax(xs, info_da.xs);
-    PetscInt bx1 = PetscMin(xe, info_da.xs + info_da.xm);
-    PetscInt by0 = PetscMax(ys, info_da.ys);
-    PetscInt by1 = PetscMin(ye, info_da.ys + info_da.ym);
-    PetscInt bz0 = PetscMax(zs, info_da.zs);
-    PetscInt bz1 = PetscMin(ze, info_da.zs + info_da.zm);
-    for (PetscInt k = bz0; k < bz1; k++) {
-      for (PetscInt j = by0; j < by1; j++) {
-        for (PetscInt i = bx0; i < bx1; i++) {
-          if ((i == xs) || (i == xe - 1) ||
-              (j == ys) || (j == ye - 1) ||
-              (k == zs) || (k == ze - 1))
-          {
-            ierr = SetLocalCartesianField(fieldName,
-                      &scalarField[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs],
-                      &coor[k - info_da.zs][j - info_da.ys][i - info_da.xs]); CHKERRQ(ierr);
-          }
-        }
-      }
-    }
+    /*-- Update ghost cells --*/
+
     ierr = DMDAVecRestoreArray(user->fda, fieldVec, &scalarField); CHKERRQ(ierr);
   }
 
-  ierr = Deallocate3DArray(centcoor, info_fda.zm, info_fda.ym); CHKERRQ(ierr);
-  ierr = DMDAVecRestoreArrayRead(user->da, Coor, &coor); CHKERRQ(ierr);
+  ierr = Deallocate3DArray(centcoor, info.zm, info.ym); CHKERRQ(ierr);
+  ierr = DMDAVecRestoreArrayRead(user->fda, Coor, &coor); CHKERRQ(ierr);
 
   LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
        "SetAnalyticalCartesianField: Completed for field '%s' on rank %d.\n", fieldName, rank);

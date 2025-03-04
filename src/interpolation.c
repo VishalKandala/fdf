@@ -50,30 +50,38 @@ PetscErrorCode InterpolateFieldFromCornerToCenter_Vector(
   LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
     "InterpolateFieldFromCornerToCenter_Vector - Rank %d starting interpolation.\n", rank);
 
-  /* Get local info for fda (owned cells) */
-  DMDALocalInfo info_fda;
-  ierr = DMDAGetLocalInfo(user->fda, &info_fda); CHKERRQ(ierr);
+  /* Get local info for da (owned cells) */
+  DMDALocalInfo info;
+  ierr = DMDAGetLocalInfo(user->da, &info); CHKERRQ(ierr);
 
   /* For da, get ghost region info instead of owned-only info */
   PetscInt gxs, gys, gzs, gxm, gym, gzm;
   ierr = DMDAGetGhostCorners(user->da, &gxs, &gys, &gzs, &gxm, &gym, &gzm); CHKERRQ(ierr);
-  LOG_ALLOW(GLOBAL, LOG_DEBUG,
-    "Rank %d: da ghost corners: gxs=%d, gxm=%d, gys=%d, gym=%d, gzs=%d, gzm=%d\n",
+  LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
+    "Rank %d -> DM-da Ghost Corners: gxs=%d, gxm=%d, gys=%d, gym=%d, gzs=%d, gzm=%d\n",
     rank, gxs, gxm, gys, gym, gzs, gzm);
 
   /* Compute physical region for fda */
-  PetscInt xs = info_fda.xs, xe = info_fda.xs + info_fda.xm;
-  PetscInt ys = info_fda.ys, ye = info_fda.ys + info_fda.ym;
-  PetscInt zs = info_fda.zs, ze = info_fda.zs + info_fda.zm;
+  PetscInt xs = info.xs, xe = info.xs + info.xm;
+  PetscInt ys = info.ys, ye = info.ys + info.ym;
+  PetscInt zs = info.zs, ze = info.zs + info.zm;
+  PetscInt mx = info.mx, my = info.my, mz = info.mz;
+  
+  PetscInt lxs = xs,lxe = xe;
+  PetscInt lys = ys,lye = ye;
+  PetscInt lzs = zs,lze = ze;
+  
+  if (xs==0) lxs = xs+1;
+  if (ys==0) lys = ys+1;
+  if (zs==0) lzs = zs+1;
+  
+  if (xe==mx) lxe = xe-1;
+  if (ye==my) lye = ye-1;
+  if (ze==mz) lze = ze-1;
 
-  /* Loop over each interior cell in fda (you can choose to skip physical boundaries) */
-  for (PetscInt k = xs; k < xe; k++) {} /* Example: iterate over owned cells */
-  /* Here we assume you already have computed interior bounds externally;
-     for clarity we use all owned cells for this example. */
-
-  for (PetscInt k = zs; k < ze; k++) {
-    for (PetscInt j = ys; j < ye; j++) {
-      for (PetscInt i = xs; i < xe; i++) {
+  for (PetscInt k = lzs; k < lze; k++) {
+    for (PetscInt j = lys; j < lye; j++) {
+      for (PetscInt i = lxs; i < lxe; i++) {
 
         Cmpnts sum = {0.0, 0.0, 0.0};
         PetscInt count = 0;
@@ -84,40 +92,30 @@ PetscErrorCode InterpolateFieldFromCornerToCenter_Vector(
         for (PetscInt dk = 0; dk < 2; dk++) {
           for (PetscInt dj = 0; dj < 2; dj++) {
             for (PetscInt di = 0; di < 2; di++) {
-              PetscInt raw_ci = i - 1 + di;
-              PetscInt raw_cj = j - 1 + dj;
-              PetscInt raw_ck = k - 1 + dk;
+             
+              PetscInt ci = i - 1 + di;
+              PetscInt cj = j - 1 + dj;
+              PetscInt ck = k - 1 + dk;
+              
+	      sum.x += field[ck][cj][ci].x; 
+              sum.y += field[ck][cj][ci].y;
+              sum.z += field[ck][cj][ci].z;
 
-              /* Check that the computed index falls in the ghost region of da */
-              if ((raw_ci >= gxs) && (raw_ci < gxs + gxm) &&
-                  (raw_cj >= gys) && (raw_cj < gys + gym) &&
-                  (raw_ck >= gzs) && (raw_ck < gzs + gzm))
-              {
-                /* Compute local index into da's ghost array */
-                PetscInt li = raw_ci - gxs;
-                PetscInt lj = raw_cj - gys;
-                PetscInt lk = raw_ck - gzs;
-                sum.x += field[lk][lj][li].x;
-                sum.y += field[lk][lj][li].y;
-                sum.z += field[lk][lj][li].z;
-                count++;
-              } else {
-                LOG_ALLOW(GLOBAL, LOG_DEBUG,
-                    "Rank %d: Skipping corner (raw: %d,%d,%d) for cell (i=%d,j=%d,k=%d) - outside da ghost range [%d,%d) [%d,%d) [%d,%d)\n",
-                    rank, raw_ci, raw_cj, raw_ck, i, j, k,
-                    gxs, gxs+gxm, gys, gys+gym, gzs, gzs+gzm);
-              }
-            }
-          }
-        }
+	      LOG_LOOP_ALLOW(GLOBAL,LOG_DEBUG,i*j*k,1000," Rank %d| i,j,k - %d,%d,%d |ci,cj,ck - %d,%d,%d| \n",rank,i,j,k,ci,cj,ck);
+              count = count+1 ;
+
+	    }
+	  }
+	}
         if (count > 0) {
-          centfield[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs].x = sum.x / count;
-          centfield[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs].y = sum.y / count;
-          centfield[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs].z = sum.z / count;
+          // As centfield is a local array with index 0 at xs,xy,xz.
+          centfield[k-info.zs][j-info.ys][i-info.xs].x = sum.x / count;
+          centfield[k-info.zs][j-info.ys][i-info.xs].y = sum.y / count;
+          centfield[k-info.zs][j-info.ys][i-info.xs].z = sum.z / count;
         } else {
-          centfield[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs].x = 0.0;
-          centfield[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs].y = 0.0;
-          centfield[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs].z = 0.0;
+          centfield[k-zs][j-ys][i-xs].x = 0.0;
+          centfield[k-zs][j-ys][i-xs].y = 0.0;
+          centfield[k-zs][j-ys][i-xs].z = 0.0;
           LOG_ALLOW(GLOBAL, LOG_DEBUG,
                     "Rank %d: Cell (i=%d,j=%d,k=%d) got no valid corner data.\n", rank, i, j, k);
         }
@@ -162,19 +160,31 @@ PetscErrorCode InterpolateFieldFromCornerToCenter_Scalar(
               "InterpolateFieldFromCornerToCenter_Scalar - Rank %d starting interpolation.\n", rank);
 
     /* Obtain local DM information from the cell-centered DM (fda) and the coordinate DM (da). */
-    DMDALocalInfo info_fda, info_da;
-    ierr = DMDAGetLocalInfo(user->fda, &info_fda); CHKERRQ(ierr);
-    ierr = DMDAGetLocalInfo(user->da,  &info_da);  CHKERRQ(ierr);
+    DMDALocalInfo info;
+    ierr = DMDAGetLocalInfo(user->da,  &info);  CHKERRQ(ierr);
 
-    /* Define the physical region of the cell-centered DM. */
-    PetscInt xs = info_fda.xs, xe = info_fda.xs + info_fda.xm;
-    PetscInt ys = info_fda.ys, ye = info_fda.ys + info_fda.ym;
-    PetscInt zs = info_fda.zs, ze = info_fda.zs + info_fda.zm;
+    PetscInt xs = info.xs, xe = info.xs + info.xm;
+    PetscInt ys = info.ys, ye = info.ys + info.ym;
+    PetscInt zs = info.zs, ze = info.zs + info.zm;
+    PetscInt mx = info.mx, my = info.my, mz = info.mz;
+
+    PetscInt lxs = xs, lxe = xe;
+    PetscInt lys = ys, lye = ye;
+    PetscInt lzs = zs, lze = ze;
+  
+    if (xs==0) lxs = xs+1;
+    if (ys==0) lys = ys+1;
+    if (zs==0) lzs = zs+1;
+  
+    if (xe==mx) lxe = xe-1;
+    if (ye==my) lye = ye-1;
+    if (ze==mz) lze = ze-1;
+
 
     /* Loop over each cell center. */
-    for (PetscInt k = zs; k < ze; k++) {
-        for (PetscInt j = ys; j < ye; j++) {
-            for (PetscInt i = xs; i < xe; i++) {
+    for (PetscInt k = lzs; k < lze; k++) {
+        for (PetscInt j = lys; j < lye; j++) {
+            for (PetscInt i = lxs; i < lxe; i++) {
 
                 PetscReal sum = 0.0;
                 PetscInt count = 0;
@@ -188,24 +198,17 @@ PetscErrorCode InterpolateFieldFromCornerToCenter_Scalar(
                             PetscInt cj = j - 1 + dj;  // global index in y for corner
                             PetscInt ck = k - 1 + dk;  // global index in z for corner
 
-                            /* Correct bounds check: assume the coordinate DM's local array has size info_da.xm in x,
-                               etc. */
-                            if ((ci >= info_da.xs) && (ci < info_da.xs + info_da.xm) &&
-                                (cj >= info_da.ys) && (cj < info_da.ys + info_da.ym) &&
-                                (ck >= info_da.zs) && (ck < info_da.zs + info_da.zm))
-                            {
-                                sum += field[ck - info_da.zs][cj - info_da.ys][ci - info_da.xs];
-                                count++;
-                            }
+                                sum += field[ck][cj][ci];
+                                count++;   
                         }
                     }
                 }
 
                 /* Compute and store the average into the cell-centered array. */
                 if (count > 0) {
-                    centfield[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs] = sum / count;
+                    centfield[k-zs][j-ys][i-xs] = sum / count;
                 } else {
-                    centfield[k - info_fda.zs][j - info_fda.ys][i - info_fda.xs] = 0.0;
+                    centfield[k-zs][j-ys][i-xs] = 0.0;
                 }
             }
         }
@@ -332,16 +335,26 @@ PetscErrorCode InterpolateFieldFromCenterToCorner_Vector(
   PetscInt zs = info->zs; 
   PetscInt ze = zs + info->zm;
 
-  PetscInt xs_corner = xs;
-  PetscInt ys_corner = ys;
-  PetscInt zs_corner = zs;
-  PetscInt xe_corner = xe; 
-  PetscInt ye_corner = ye; 
-  PetscInt ze_corner = ze;
+  LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG," Rank, %d, bounds: x - (%d,%d),y - (%d,%d), z - (%d,%d) \n",rank,xs,xe,ys,ye,zs,ze);
 
-  for (PetscInt k = zs_corner; k < ze_corner; k++) {
-    for (PetscInt j = ys_corner; j < ye_corner; j++) {
-      for (PetscInt i = xs_corner; i < xe_corner; i++) {
+  PetscInt lxs = xs,lxe = xe;
+  PetscInt lys = ys,lye = ye;
+  PetscInt lzs = zs,lze = ze;
+  
+ 
+  lxs = xs+1;
+  lys = ys+1;
+  lzs = zs+1; 
+  
+  if (xe==mx) lxe = xe-1;
+  if (ye==my) lye = ye-1;
+  if (ze==mz) lze = ze-1;
+  
+
+    /* Loop over each corner. */
+    for (PetscInt k = lzs; k < lze; k++) {
+        for (PetscInt j = lys; j < lye; j++) {
+            for (PetscInt i = lxs; i < lxe; i++) {
 
         Cmpnts sum = {0.0, 0.0, 0.0};
         PetscInt count = 0;
@@ -357,23 +370,28 @@ PetscErrorCode InterpolateFieldFromCenterToCorner_Vector(
                   (jc >= ys && jc < ye) &&
                   (kc >= zs && kc < ze))
               {
-                sum.x += centfield[kc][jc][ic].x;
-                sum.y += centfield[kc][jc][ic].y;
-                sum.z += centfield[kc][jc][ic].z;
+                sum.x += centfield[kc-zs][jc-ys][ic-xs].x;
+                sum.y += centfield[kc-zs][jc-ys][ic-xs].y;
+                sum.z += centfield[kc-zs][jc-ys][ic-xs].z;
                 count++;
+
+		LOG_LOOP_ALLOW(GLOBAL,LOG_DEBUG,i*j*k,500," Rank %d| i,j,k - %d,%d,%d |ci,cj,ck - %d,%d,%d| \n",rank,i,j,k,ic,jc,kc);
               }
             }
           }
         }
 
         if (count > 0) {
-          field[k][j][i].x = sum.x / count;
-          field[k][j][i].y = sum.y / count;
-          field[k][j][i].z = sum.z / count;
+          field[k-zs][j-ys][i-xs].x = sum.x / count;
+          field[k-zs][j-ys][i-xs].y = sum.y / count;
+          field[k-zs][j-ys][i-xs].z = sum.z / count;
         } else {
-          field[k][j][i].x = 0.0;
-          field[k][j][i].y = 0.0;
-          field[k][j][i].z = 0.0;
+          field[k-zs][j-ys][i-xs].x = 0.0;
+          field[k-zs][j-ys][i-xs].y = 0.0;
+          field[k-zs][j-ys][i-xs].z = 0.0;
+          LOG_ALLOW(GLOBAL, LOG_DEBUG,
+                    "Rank %d: Cell (i=%d,j=%d,k=%d) got no valid corner data.\n", rank, i, j, k);
+
         }
       }
     }
@@ -846,7 +864,7 @@ PetscErrorCode InterpolateEulerFieldToSwarm(
     SETERRQ1(PETSC_COMM_SELF, PETSC_ERR_SUP,
              "InterpolateEulerFieldToSwarm: blockSize must be 1 or 3, got %d.", (int)bs);
   }
-  ierr = DMDAGetLocalInfo(da, &info); CHKERRQ(ierr);
+  ierr = DMDAGetLocalInfo(fda, &info); CHKERRQ(ierr);
   LOG_ALLOW(GLOBAL, LOG_INFO,
     "InterpolateEulerFieldToSwarm: Starting with field='%s', blockSize=%d, local domain: (%d x %d x %d)\n",
     fieldName, bs, info.xm, info.ym, info.zm);
@@ -854,19 +872,13 @@ PetscErrorCode InterpolateEulerFieldToSwarm(
   /* (B) Map the cell-centered Vec to a local array using the DM attached to fieldGlobal */
   ierr = DMDAVecGetArray(fda, fieldGlobal, &localPtr); CHKERRQ(ierr);
 
-  /* (C) Allocate a corner array.
-       Here we define the corner array dimensions based on the cell-center domain.
-       Since ghost cells make the cell-center DM the same size as the corner DM,
-       we use: nz = info.zm, ny = info.ym, nx = info.xm.
-       (Adjust these if your intended corner domain should be larger.)
-  */
-  {
-    PetscInt nz = info.zm;
-    PetscInt ny = info.ym;
-    PetscInt nx = info.xm;
+    // Corner domain is larger than cell center domain 
+    PetscInt nz = info.zm + 1; 
+    PetscInt ny = info.ym + 1;
+    PetscInt nx = info.xm + 1;
     LOG_ALLOW(LOCAL, LOG_DEBUG,
-      "InterpolateEulerFieldToSwarm: Allocating corner array of size (%d x %d x %d), blockSize=%d\n",
-      nz, ny, nx, bs);
+      "InterpolateEulerFieldToSwarm: Allocating corner array of size (%d x %d x %d), blockSize = %d\n",
+      nx, ny, nz, bs);
     if (bs == 1) {
       /* Declare a typed pointer for scalar corners */
       PetscReal ***cornerScal = NULL;
@@ -891,7 +903,6 @@ PetscErrorCode InterpolateEulerFieldToSwarm(
     LOG_ALLOW(LOCAL, LOG_INFO,
       "InterpolateEulerFieldToSwarm: Completed center-to-corner interpolation for field='%s'.\n",
       fieldName);
-  }
 
   /* (E) Restore the cell-centered array since we now have corner data */
   ierr = DMDAVecRestoreArray(fda, fieldGlobal, &localPtr); CHKERRQ(ierr);
