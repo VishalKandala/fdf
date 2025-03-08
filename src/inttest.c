@@ -82,7 +82,8 @@
     // Interpolate particle velocities using trilinear interpolation
     // This requires that particles have valid cell indices and weights from the previous step.
     LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Interpolating particle velocities using trilinear interpolation.\n");
-    ierr = InterpolateParticleVelocities(user); CHKERRQ(ierr);
+    //  ierr = InterpolateParticleVelocities(user); CHKERRQ(ierr);
+    ierr = InterpolateAllFieldsToSwarm(user); CHKERRQ(ierr);
     LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle velocities interpolated successfully.\n");
 
     // Print particle fields again after velocity interpolation (optional)
@@ -95,40 +96,43 @@
     LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle positions updated after velocity interpolation.\n");
 
    // Write the particle positions to file.
-    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the particle positions to file.\n");
-    ierr = WriteSwarmField(user,"position",0,"dat");
+    //  LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the particle positions to file.\n");
+    //  ierr = WriteSwarmField(user,"position",0,"dat");
 
    // Write the interpolated velocity to file.
-    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the interpolated velocities to file.\n");
-    ierr = WriteSwarmField(user,"velocity",0,"dat");
+   // LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the interpolated velocities to file.\n");
+   // ierr = WriteSwarmField(user,"velocity",0,"dat");
 
     // Update the particle positions based on the interpolated velocities.
-    ierr = UpdateAllParticlePositions(user); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle positions updated after velocity interpolation.\n");
+    //  ierr = UpdateAllParticlePositions(user); CHKERRQ(ierr);
+    //  LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle positions updated after velocity interpolation.\n");
    
     // Step 3: Locate particles within the computational grid
     // This updates each particle's cell indices and interpolation weights as needed.
-    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Locating particles within the grid.\n");
-    ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle positions updated after grid search.\n");
+    //  LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Locating particles within the grid.\n");
+    //  ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
+    //   LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle positions updated after grid search.\n");
 
     // Interpolate particle velocities using trilinear interpolation
     // This requires that particles have valid cell indices and weights from the previous step.
-    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Interpolating particle velocities using trilinear interpolation.\n");
-    ierr = InterpolateParticleVelocities(user); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle velocities interpolated successfully.\n");
+    //  LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Interpolating particle velocities using trilinear interpolation.\n");
+    //  ierr = InterpolateParticleVelocities(user); CHKERRQ(ierr);
+    //  LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle velocities interpolated successfully.\n");
 
     // Print particle fields again after velocity interpolation (optional)
-   LOG_ALLOW(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing particle fields after velocity interpolation.\n");
-    ierr = LOG_PARTICLE_FIELDS(user,10); CHKERRQ(ierr);
+    //  LOG_ALLOW(GLOBAL, LOG_DEBUG, "PerformParticleSwarmOperations - Printing particle fields after velocity interpolation.\n");
+    //   ierr = LOG_PARTICLE_FIELDS(user,10); CHKERRQ(ierr);
+
+    // Print out the interpolation error
+    // ierr = LOG_INTERPOLATION_ERROR(user); CHKERRQ(ierr);
 
     // Write the particle positions to file.
-    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the particle positions to file.\n");
-    ierr = WriteSwarmField(user,"position",1,"dat");
+    //  LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the particle positions to file.\n");
+    //  ierr = WriteSwarmField(user,"position",1,"dat");
 
    // Write the interpolated velocity to file.
-    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the interpolated velocities to file.\n");
-    ierr = WriteSwarmField(user,"velocity",1,"dat");   
+    //  LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Writing the interpolated velocities to file.\n");
+    // ierr = WriteSwarmField(user,"velocity",1,"dat");   
 
     // Ensure all ranks complete before proceeding
     LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Particle data writing completed across all ranks.\n");
@@ -228,7 +232,7 @@ int main(int argc, char **argv) {
 
     // Either update and write fields, or read fields from file
     if (!readFields) {
-        ierr = UpdateCartesianVelocity(user); CHKERRQ(ierr);
+        ierr = SetAnalyticalCartesianField(user,"Ucat"); CHKERRQ(ierr);
         ierr = WriteSimulationFields(user); CHKERRQ(ierr);
     } else {
         ierr = ReadSimulationFields(user, ti); CHKERRQ(ierr);
