@@ -115,7 +115,7 @@ typedef struct {
 
     // Particle-related fields
     DM swarm;               ///< Particle data structure using DMSwarm.
-    PetscInt *miglist;      ///< List of ranks for particle migration.
+    PetscMPIInt *miglist;      ///< List of ranks for particle migration.
     PetscInt ParticleInitialization;
 
     // Simulation parameters
@@ -177,28 +177,28 @@ typedef struct _n_VTKMetaData {
     VTKFileType  fileType;
  
     /* 2) For VTK_STRUCTURED => .vts */
-    int          mx, my, mz;   /* Grid dimensions */
-    int          nnodes;       /* Total number of structured grid nodes */
+    PetscInt          mx, my, mz;   /* Grid dimensions */
+    PetscInt          nnodes;       /* Total number of structured grid nodes */
 
     /* 3) For VTK_POLYDATA => .vtp */
-    int          npoints;      /* Number of particle points */
+    PetscInt          npoints;      /* Number of particle points */
 
     /* 4) Coordinate and field data (shared) */
-    double      *coords;       /* Coordinates array (3 components per point/node) */
+    PetscScalar      *coords;       /* Coordinates array (3 components per point/node) */
 
     /* Scalar field metadata */
-    double      *scalarField;
+    PetscScalar      *scalarField;
     const char  *scalarFieldName;
-    int          numScalarFields;
+    PetscInt          numScalarFields;
 
     /* Vector field metadata */
-    double      *vectorField;       /* Interleaved x,y,z vector field */
+    PetscScalar      *vectorField;       /* Interleaved x,y,z vector field */
     const char  *vectorFieldName;   /* Name of the vector field (e.g., "Velocity") */
-    int          numVectorFields;   /* Number of vector fields (0 or 1) */
+    PetscInt          numVectorFields;   /* Number of vector fields (0 or 1) */
 
     /* 5) For polydata connectivity */
-    int         *connectivity; 
-    int         *offsets;
+    PetscInt         *connectivity; 
+    PetscInt         *offsets;
 } VTKMetaData;
 
 

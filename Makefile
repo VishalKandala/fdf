@@ -16,7 +16,11 @@ SCRIPTDIR = scripts
 # -----------------------------------------------------
 CC        = mpicc
 CFLAGS    = -Wall -g -I$(INCDIR)
-LDFLAGS   =
+# Update LDFLAGS with correct rpath and rpath-link flags based on module paths
+LDFLAGS   = -Wl,-rpath,/sw/eb/sw/Hypre/2.28.0-foss-2022b \
+            -Wl,-rpath,/sw/eb/sw/SuperLU_DIST/8.1.2-foss-2022b \
+            -Wl,-rpath-link,/sw/eb/sw/Hypre/2.28.0-foss-2022b \
+            -Wl,-rpath-link,/sw/eb/sw/SuperLU_DIST/8.1.2-foss-2022b
 LIBS      =
 CLINKER   = $(CC)
 PETSC_LIB =
@@ -91,7 +95,7 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
 testt: dirs $(TESTT_EXE)
 
 $(TESTT_EXE): $(OBJSC)
-	$(CLINKER) $(CFLAGS) -o $@ $(OBJSC) $(PETSC_LIB)
+	$(CLINKER) $(CFLAGS) -o $@ $(OBJSC) $(PETSC_LIB) $(LDFLAGS) $(LIBS)
 
 # -----------------------------------------------------
 # 2. data executable
@@ -101,7 +105,7 @@ data: dirs $(DATA_EXE)
 $(DATA_EXE): $(OBJDIR)/variables.o $(OBJDIR)/compgeom.o $(OBJDIR)/data_ibm.o \
              $(OBJDIR)/ibm_io.o $(OBJDIR)/fsi.o $(OBJDIR)/fsi_move.o \
              $(OBJDIR)/fish.o $(OBJDIR)/data.o
-	$(CLINKER) -o $@ $^ $(PETSC_LIB) $(PETSC_SNES_LIB) $(PETSC_TS_LIB) $(LIBS)
+	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(PETSC_SNES_LIB) $(PETSC_TS_LIB) $(LDFLAGS) $(LIBS)
 
 # -----------------------------------------------------
 # 3. inttest (swarm_interp) executable
@@ -109,9 +113,9 @@ $(DATA_EXE): $(OBJDIR)/variables.o $(OBJDIR)/compgeom.o $(OBJDIR)/data_ibm.o \
 inttest: dirs $(INTTEST_EXE)
 
 $(INTTEST_EXE): $(OBJDIR)/inttest.o $(OBJDIR)/interpolation.o $(OBJDIR)/walkingsearch.o \
-                $(OBJDIR)/ParticleSwarm.o $(OBJDIR)/logging.o  $(OBJDIR)/setup.o \
-				$(OBJDIR)/AnalyticalSolution.o $(OBJDIR)/grid.o  $(OBJDIR)/io.o $(OBJDIR)/ParticleMotion.o
-	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB)
+                $(OBJDIR)/ParticleSwarm.o $(OBJDIR)/logging.o $(OBJDIR)/setup.o \
+                $(OBJDIR)/AnalyticalSolution.o $(OBJDIR)/grid.o $(OBJDIR)/io.o $(OBJDIR)/ParticleMotion.o
+	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(LDFLAGS) $(LIBS)
 
 # -----------------------------------------------------
 # 4. itfcsearch
@@ -120,8 +124,8 @@ itfcsearch: dirs $(ITFCSEARCH_EXE)
 
 $(ITFCSEARCH_EXE): $(OBJDIR)/itfcsearch.o \
                    $(OBJDIR)/walkingsearch.o $(OBJDIR)/logging.o \
-                   $(OBJDIR)/grid.o  $(OBJDIR)/io.o
-	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB)
+                   $(OBJDIR)/grid.o $(OBJDIR)/io.o
+	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(LDFLAGS) $(LIBS)
 
 # -----------------------------------------------------
 # 5. data_vtk
@@ -130,7 +134,7 @@ data_vtk: dirs $(DATA_VTK_EXE)
 
 $(DATA_VTK_EXE): $(OBJDIR)/data_vtk.o $(OBJDIR)/logging.o \
                  $(OBJDIR)/io.o $(OBJDIR)/grid.o
-	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB)
+	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(LDFLAGS) $(LIBS)
 
 # -----------------------------------------------------
 # 6. datalis
@@ -138,7 +142,7 @@ $(DATA_VTK_EXE): $(OBJDIR)/data_vtk.o $(OBJDIR)/logging.o \
 datalis: dirs $(DATALIS_EXE)
 
 $(DATALIS_EXE): $(OBJDIR)/datalis.o $(OBJDIR)/logging.o $(OBJDIR)/io.o
-	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB)
+	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(LDFLAGS) $(LIBS)
 
 # -----------------------------------------------------
 # 7. datafile
@@ -146,7 +150,7 @@ $(DATALIS_EXE): $(OBJDIR)/datalis.o $(OBJDIR)/logging.o $(OBJDIR)/io.o
 datafile: dirs $(DATAFILE_EXE)
 
 $(DATAFILE_EXE): $(OBJDIR)/datafile.o $(OBJDIR)/logging.o $(OBJDIR)/io.o
-	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB)
+	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(LDFLAGS) $(LIBS)
 
 # -----------------------------------------------------
 # 8. swarm_test
@@ -154,20 +158,18 @@ $(DATAFILE_EXE): $(OBJDIR)/datafile.o $(OBJDIR)/logging.o $(OBJDIR)/io.o
 swarm_test: dirs $(SWARM_TEST_EXE)
 
 $(SWARM_TEST_EXE): $(OBJDIR)/swarm_test.o $(OBJDIR)/logging.o \
-                   $(OBJDIR)/io.o  $(OBJDIR)/grid.o
-	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB)
+                   $(OBJDIR)/io.o $(OBJDIR)/grid.o
+	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(LDFLAGS) $(LIBS)
 
 # -----------------------------------------------------
 # NEW: 9. postprocess executable
 # -----------------------------------------------------
 postprocess: dirs $(POSTPROCESS_EXE)
 
-# If postprocess.c needs other object files, list them here.
-# We link postprocess.o, plus logging.o, io.o, etc.
 $(POSTPROCESS_EXE): $(OBJDIR)/postprocess.o $(OBJDIR)/interpolation.o \
 			$(OBJDIR)/walkingsearch.o $(OBJDIR)/grid.o $(OBJDIR)/ParticleSwarm.o \
 			$(OBJDIR)/logging.o $(OBJDIR)/io.o $(OBJDIR)/setup.o 
-	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(LIBS)
+	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(LDFLAGS) $(LIBS)
 
 # -----------------------------------------------------
 # Custom Targets

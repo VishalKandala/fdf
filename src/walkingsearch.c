@@ -297,7 +297,7 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode DeterminePointPosition(PetscReal *d, int *result)
+PetscErrorCode DeterminePointPosition(PetscReal *d, PetscInt *result)
 {
     
 
@@ -436,7 +436,7 @@ PetscErrorCode GetCellVerticesFromGrid(Cmpnts ***coor, PetscInt idx, PetscInt id
     cell->vertices[6] = coor[idz+1][idy][idx+1];     // Vertex 6: (i+1, j,   k+1)
     cell->vertices[7] = coor[idz+1][idy][idx];       // Vertex 7: (i,   j,   k+1)
 
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "GetCellVerticesFromGrid - Retrieved vertices for cell (%d, %d, %d).\n", idx, idy, idz);
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "GetCellVerticesFromGrid - Retrieved vertices for cell (%ld, %ld, %ld).\n", idx, idy, idz);
 
     return 0; // Indicate successful execution
 }
@@ -486,7 +486,7 @@ PetscErrorCode InitializeTraversalParameters(UserCtx *user, Particle *particle, 
     // Initialize traversal step counter
     *traversal_steps = 0;
 
-    LOG_ALLOW(LOCAL,LOG_INFO, "InitializeTraversalParameters - Starting traversal at cell (%d, %d, %d).\n", *idx, *idy, *idz);
+    LOG_ALLOW(LOCAL,LOG_INFO, "InitializeTraversalParameters - Starting traversal at cell (%ld, %ld, %ld).\n", *idx, *idy, *idz);
 
     return 0;
 }
@@ -526,7 +526,7 @@ PetscErrorCode CheckCellWithinLocalGrid(UserCtx *user, PetscInt idx, PetscInt id
         *is_within = PETSC_FALSE;
     }
 
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "CheckCellWithinLocalGrid - Cell (%d, %d, %d) is %s the local grid.\n",
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "CheckCellWithinLocalGrid - Cell (%ld, %ld, %ld) is %s the local grid.\n",
         idx, idy, idz, (*is_within) ? "within" : "outside");
 
     return 0;
@@ -548,7 +548,7 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
     PetscErrorCode ierr;
     Vec Coor;
     Cmpnts ***coor_array;
-    PetscInt rank;
+    PetscMPIInt rank;
 
     // Validate input pointers
     if (user == NULL || cell == NULL) {
@@ -570,7 +570,7 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
 
     // Debug: Print cell vertices
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "RetrieveCurrentCell - Cell (%d, %d, %d) vertices \n", idx, idy, idz);
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "RetrieveCurrentCell - Cell (%ld, %ld, %ld) vertices \n", idx, idy, idz);
     ierr = LOG_CELL_VERTICES(cell, rank); CHKERRQ(ierr);
 
     return 0;
@@ -621,7 +621,7 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
  * - The function includes a debug statement that prints the face distances, which can be useful
  *   for verifying the correctness of distance computations during development or troubleshooting.
  */
-PetscErrorCode EvaluateParticlePosition(const Cell *cell, PetscReal *d, const Cmpnts p, int *position, const PetscReal threshold)
+PetscErrorCode EvaluateParticlePosition(const Cell *cell, PetscReal *d, const Cmpnts p, PetscInt *position, const PetscReal threshold)
 {
     PetscErrorCode ierr;
     PetscReal cellSize;
@@ -752,7 +752,7 @@ PetscErrorCode UpdateCellIndicesBasedOnDistances( PetscReal d[NUM_FACES], PetscI
     *idy = PetscMax(cys,               PetscMin(*idy, cym));
     *idz = PetscMax(czs,               PetscMin(*idz, czm));
 
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Updated Indices after clamping (inside domain bounds)  - idx, idy, idz: %d, %d, %d\n", *idx, *idy, *idz);
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Updated Indices after clamping (inside domain bounds)  - idx, idy, idz: %ld, %ld, %ld\n", *idx, *idy, *idz);
 
     return 0; // Indicate successful execution
 }
@@ -782,11 +782,11 @@ PetscErrorCode FinalizeTraversal(UserCtx *user, Particle *particle, PetscInt tra
     }
 
     if (cell_found) {
-      LOG_ALLOW(LOCAL,LOG_INFO, "FinalizeTraversal - Particle located in cell (%d, %d, %d) after %d traversal steps.\n",
+      LOG_ALLOW(LOCAL,LOG_INFO, "FinalizeTraversal - Particle located in cell (%ld, %ld, %ld) after %ld traversal steps.\n",
             idx, idy, idz, traversal_steps);
     }
     else {
-      LOG_ALLOW(LOCAL,LOG_WARNING, "FinalizeTraversal - Particle could not be located within the grid after %d traversal steps.\n", (PetscInt)traversal_steps);
+      LOG_ALLOW(LOCAL,LOG_WARNING, "FinalizeTraversal - Particle could not be located within the grid after %ld traversal steps.\n", (PetscInt)traversal_steps);
         particle->cell[0] = -1;
         particle->cell[1] = -1;
         particle->cell[2] = -1;
@@ -847,7 +847,7 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
             if (repeatedIndexCount > 3) {
                 // We toggled or got stuck in the same cell multiple times
                 LOG_ALLOW(LOCAL, LOG_WARNING,
-                "LocateParticleInGrid - Toggling or repeated index detected at cell (%d,%d,%d); breaking.\n",
+                "LocateParticleInGrid - Toggling or repeated index detected at cell (%ld,%ld,%ld); breaking.\n",
                     idx, idy, idz);
                 break;
             }
@@ -863,7 +863,7 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
         PetscBool is_within;
         ierr = CheckCellWithinLocalGrid(user, idx, idy, idz, &is_within); CHKERRQ(ierr);
         if (!is_within) {
-	        LOG_ALLOW(LOCAL,LOG_WARNING, "LocateParticleInGrid - Particle is outside the local grid boundaries at cell (%d, %d, %d).\n", idx, idy, idz);
+	        LOG_ALLOW(LOCAL,LOG_WARNING, "LocateParticleInGrid - Particle is outside the local grid boundaries at cell (%ld, %ld, %ld).\n", idx, idy, idz);
             break;
         }
 
@@ -871,12 +871,12 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
         ierr = RetrieveCurrentCell(user, idx, idy, idz, &current_cell); CHKERRQ(ierr);
 
         // Evaluate the particle's position relative to the current cell
-        int position;
+        PetscInt position;
         ierr = EvaluateParticlePosition(&current_cell, d, p, &position, threshold); CHKERRQ(ierr);
 	
 	// Log every 10th iteration of evaluation
 	LOG_LOOP_ALLOW(GLOBAL, LOG_DEBUG, traversal_steps, 10,
-		       "LocateParticleInGrid - At traversal step %d, evaluated particle position relative to cell (%d, %d, %d): position=%d.\n",
+		       "LocateParticleInGrid - At traversal step %ld, evaluated particle position relative to cell (%ld, %ld, %ld): position=%ld.\n",
 		       traversal_steps, idx, idy, idz, position);
 
 
@@ -885,7 +885,7 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
             particle->cell[0] = idx;
             particle->cell[1] = idy;
             particle->cell[2] = idz;
-            LOG_ALLOW(LOCAL,LOG_INFO, "LocateParticleInGrid - Particle found in cell (%d, %d, %d).\n", idx, idy, idz);
+            LOG_ALLOW(LOCAL,LOG_INFO, "LocateParticleInGrid - Particle found in cell (%ld, %ld, %ld).\n", idx, idy, idz);
             break;
         }
         else if (position >= 1) { // On boundary (face,edge or corner) [ can be expanded for specific cases if necessary by having conditions position==1,2 or 3]
@@ -895,7 +895,7 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal
            particle->cell[0] = idx;
            particle->cell[1] = idy;
            particle->cell[2] = idz;
-           LOG_ALLOW(LOCAL,LOG_INFO, "LocateParticleInGrid - Particle is on the boundary of cell (%d, %d, %d).\n", idx, idy, idz);
+           LOG_ALLOW(LOCAL,LOG_INFO, "LocateParticleInGrid - Particle is on the boundary of cell (%ld, %ld, %ld).\n", idx, idy, idz);
            break;
         }
         else { // Outside the cell

@@ -20,9 +20,9 @@
  * This function computes the vector components by applying the sine function to the
  * input coordinate values along the x, y, and z directions.
  *
- * @param[in]     fieldName Pointer to a string representing the field name (for logging purposes).
- * @param[in,out] vecField  Pointer to the `Cmpnts` structure where the computed vector field will be stored.
- * @param[in]     coor      Pointer to the `Cmpnts` structure containing the input coordinate values.
+ * @param[in]     fieldName PoPetscInter to a string representing the field name (for logging purposes).
+ * @param[in,out] vecField  PoPetscInter to the `Cmpnts` structure where the computed vector field will be stored.
+ * @param[in]     coor      PoPetscInter to the `Cmpnts` structure containing the input coordinate values.
  *
  * @return PetscErrorCode Returns 0 on successful execution, non-zero on failure.
  */
@@ -52,9 +52,9 @@ PetscErrorCode SetLocalCartesianField_Vector(const char *fieldName, Cmpnts *vecF
  * coordinate values. In this example, the scalar field is computed as the sum of the
  * sine functions of the x, y, and z coordinates.
  *
- * @param[in]     fieldName   Pointer to a string representing the field name (for logging purposes).
- * @param[in,out] scalarField Pointer to the PetscReal where the computed scalar field value will be stored.
- * @param[in]     coor        Pointer to the `Cmpnts` structure containing the input coordinate values.
+ * @param[in]     fieldName   PoPetscInter to a string representing the field name (for logging purposes).
+ * @param[in,out] scalarField PoPetscInter to the PetscReal where the computed scalar field value will be stored.
+ * @param[in]     coor        PoPetscInter to the `Cmpnts` structure containing the input coordinate values.
  *
  * @return PetscErrorCode Returns 0 on successful execution, non-zero on failure.
  */
@@ -85,13 +85,13 @@ PetscErrorCode SetLocalCartesianField_Scalar(const char *fieldName, PetscReal *s
  *
  * If the field is found, the function verifies that the DM block size matches the expected value
  * (3 for vector fields and 1 for scalar fields), retrieves local DM information for both the coordinate DM (da)
- * and the cell-centered DM (fda), interpolates the corner-based coordinates (from da) to cell centers,
+ * and the cell-centered DM (fda), PetscInterpolates the corner-based coordinates (from da) to cell centers,
  * and then updates the field using the generic helper macro SetLocalCartesianField. Interior cells are
- * updated with the interpolated coordinates, and boundary cells are updated using the original coordinate data.
+ * updated with the PetscInterpolated coordinates, and boundary cells are updated using the original coordinate data.
  *
  * If the field name is not found in the user context, the function throws an error.
  *
- * @param[in]  user      Pointer to the UserCtx structure containing:
+ * @param[in]  user      PoPetscInter to the UserCtx structure containing:
  *                         - da: DM for coordinate (corner) data.
  *                         - fda: DM for cell-centered data.
  *                         - Ucat: vector field (Cmpnts ***)
@@ -112,7 +112,7 @@ PetscErrorCode SetAnalyticalCartesianField(UserCtx *user, const char *fieldName)
 
   /* Look up the field Vec in user context. */
   Vec fieldVec = NULL;
-  int fieldIsVector = -1;
+  PetscInt fieldIsVector = -1;
   if (strcmp(fieldName, "Ucat") == 0) {
     fieldVec = user->Ucat;
     fieldIsVector = 1;
@@ -126,7 +126,7 @@ PetscErrorCode SetAnalyticalCartesianField(UserCtx *user, const char *fieldName)
     fieldVec = user->Nvert;
     fieldIsVector = 0;
   } else {
-    SETERRQ1(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG,
+    SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG,
              "Field '%s' not found in user context", fieldName);
   }
 
@@ -135,8 +135,8 @@ PetscErrorCode SetAnalyticalCartesianField(UserCtx *user, const char *fieldName)
   PetscInt bs;
   ierr = DMGetBlockSize(user->fda, &bs); CHKERRQ(ierr);
   if (bs != expected_bs) {
-    SETERRQ3(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG,
-             "Expected block size %d for field '%s', got %d", expected_bs, fieldName, bs);
+    SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG,
+             "Expected block size %ld for field '%s', got %ld", expected_bs, fieldName, bs);
   }
 
   /* Get local DM info for da. */
@@ -149,7 +149,7 @@ PetscErrorCode SetAnalyticalCartesianField(UserCtx *user, const char *fieldName)
   Cmpnts ***coor;
   ierr = DMDAVecGetArrayRead(user->fda, Coor, &coor); CHKERRQ(ierr);
 
-  /* Allocate temporary array for interpolated cell-center coordinates.*/  
+  /* Allocate temporary array for PetscInterpolated cell-center coordinates.*/  
 
   /* Define the physical region of da. */
   PetscInt xs = info.xs, xe = info.xs + info.xm;
@@ -180,7 +180,7 @@ PetscErrorCode SetAnalyticalCartesianField(UserCtx *user, const char *fieldName)
   if (fieldIsVector) {
     Cmpnts ***vecField;
     ierr = DMDAVecGetArray(user->fda, fieldVec, &vecField); CHKERRQ(ierr);
-    /*--- Update interior cells ---*/
+    /*--- Update Interior cells ---*/
     for (PetscInt k = lzs; k < lze ; k++) {
       for (PetscInt j = lys; j < lye; j++) {
         for (PetscInt i = lxs; i < lxe; i++) {
@@ -237,7 +237,7 @@ PetscErrorCode SetAnalyticalSolution(Vec tempVec)
      LOG_ALLOW(GLOBAL, LOG_DEBUG, "SetAnalyticalSolution - Starting analytical solution computation.\n");
  
      ierr = VecGetLocalSize(tempVec, &nParticles); CHKERRQ(ierr);
-     LOG_ALLOW(GLOBAL, LOG_DEBUG, "SetAnalyticalSolution - Number of local particles: %d.\n", nParticles);
+     LOG_ALLOW(GLOBAL, LOG_DEBUG, "SetAnalyticalSolution - Number of local particles: %ld.\n", nParticles);
  
      ierr = VecGetArray(tempVec, &vels); CHKERRQ(ierr);
      for (PetscInt i = 0; i < nParticles; i++) {

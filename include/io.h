@@ -236,9 +236,9 @@ PetscErrorCode WriteSwarmField(UserCtx *user, const char *field_name, PetscInt t
      3) If your file format is more complex (e.g. multiple columns,
         binary, etc.), you can adapt the reading logic here.
 -------------------------------------------------------------------- */
-int ReadDataFileToArray(const char   *filename,
+PetscInt ReadDataFileToArray(const char   *filename,
                         double      **data_out,
-                        int          *Nout,
+                        PetscInt          *Nout,
                         MPI_Comm      comm);
 
 /* --------------------------------------------------------------------
@@ -265,7 +265,7 @@ int ReadDataFileToArray(const char   *filename,
         If fileType=VTK_POLYDATA, coords => length=3*npoints, field=>npoints,
         plus connectivity/offsets => length=npoints each.
 -------------------------------------------------------------------- */
-int CreateVTKFileFromMetadata(const char       *filename,
+PetscInt CreateVTKFileFromMetadata(const char       *filename,
                               const VTKMetaData *meta,
                               MPI_Comm          comm);
 

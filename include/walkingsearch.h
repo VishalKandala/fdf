@@ -82,7 +82,7 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
- PetscErrorCode DeterminePointPosition(PetscReal *d, int *result);
+ PetscErrorCode DeterminePointPosition(PetscReal *d, PetscInt *result);
 
 /**
  * @brief Retrieves the coordinates of the eight vertices of a cell based on grid indices.
@@ -142,6 +142,53 @@ PetscErrorCode CheckCellWithinLocalGrid(UserCtx *user, PetscInt idx, PetscInt id
  * @return PetscErrorCode  Returns 0 on success, non-zero on failure.
  */
 PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, PetscInt idz, Cell *cell);
+
+/**
+ * @brief Determines the spatial relationship of a particle relative to a cubic cell.
+ *
+ * This function evaluates whether a particle located at a specific point `p` in 3D space
+ * is positioned inside the cell, on the boundary of the cell, or outside the cell. The
+ * determination is based on the signed distances from the particle to each of the six
+ * faces of the cell. The function utilizes the computed distances to ascertain the particle's
+ * position with respect to the cell boundaries, considering a threshold to account for
+ * floating-point precision.
+ *
+ * @param[in]  cell      A pointer to a `Cell` structure that defines the cubic cell via its
+ *                       vertices. The cell's geometry is essential for accurately computing
+ *                       the distances to each face.
+ * @param[in]  d         A pointer to an array of six `PetscReal` values that store the
+ *                       signed distances from the particle to each face of the cell. These
+ *                       distances are typically computed using the `CalculateDistancesToCellFaces`
+ *                       function.
+ * @param[in]  p         The location of the particle in 3D space, represented by the `Cmpnts`
+ *                       structure. This point is the reference for distance calculations to the
+ *                       cell's faces.
+ * @param[out] position  A pointer to an integer that will be set based on the particle's position
+ *                       relative to the cell:
+ *                       - `0`: The particle is inside the cell.
+ *                       - `1`: The particle is on the boundary of the cell.
+ *                       - `-1`: The particle is outside the cell.
+ * @param[in]  threshold A `PetscReal` value that defines the minimum distance below which a
+ *                       computed distance is considered to be zero. This threshold helps in
+ *                       mitigating inaccuracies due to floating-point arithmetic, especially
+ *                       when determining if the particle lies exactly on the boundary.
+ *
+ * @return PetscErrorCode Returns `0` if the function executes successfully. If an error occurs,
+ *                        a non-zero error code is returned, indicating the type of failure.
+ *
+ * @note
+ * - It is assumed that the `d` array has been properly allocated and contains valid distance
+ *   measurements before calling this function.
+ * - The function relies on `CalculateDistancesToCellFaces` to accurately compute the signed
+ *   distances to each face. Any inaccuracies in distance calculations can affect the
+ *   determination of the particle's position.
+ * - The `threshold` parameter should be chosen based on the specific precision requirements
+ *   of the application to balance between sensitivity and robustness against floating-point
+ *   errors.
+ * - The function includes a debug statement that prints the face distances, which can be useful
+ *   for verifying the correctness of distance computations during development or troubleshooting.
+ */
+ PetscErrorCode EvaluateParticlePosition(const Cell *cell, PetscReal *d, const Cmpnts p, PetscInt *position, const PetscReal threshold);
 
 /**
  * @brief Locates the cell within the grid that contains the given particle.

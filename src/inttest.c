@@ -52,7 +52,7 @@
     PetscInt particlesPerProcess = 0;         // Number of particles assigned to the loca  l MPI process.
     PetscRandom randx,randy,randz;     // Random number generators[x,y,z]. (used if ParticleInitialization==1).       
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Starting particle swarm operations with %d particles.\n", np);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "PerformParticleSwarmOperations - Starting particle swarm operations with %ld particles.\n", np);
 
     // Step 1: Create and initialize the particle swarm
     // Here we pass in the bboxlist, which will be used by CreateParticleSwarm() and subsequently
@@ -174,7 +174,7 @@ int main(int argc, char **argv) {
     PetscInt rstart = 0;
     PetscInt np = 0;
     PetscInt ti = 0;
-    PetscInt rank, size;
+    PetscMPIInt rank, size;
     BoundingBox *bboxlist;    // Array of bounding boxes
     PetscReal umax;
     PetscBool readFields = PETSC_FALSE;

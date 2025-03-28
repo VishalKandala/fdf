@@ -52,7 +52,7 @@
  *
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  */
- PetscErrorCode InitializeSimulation(UserCtx **user, PetscInt *rank, PetscInt *size, PetscInt *np, PetscInt *rstart, PetscInt *ti, PetscInt *nblk) {
+ PetscErrorCode InitializeSimulation(UserCtx **user, PetscMPIInt *rank, PetscMPIInt *size, PetscInt *np, PetscInt *rstart, PetscInt *ti, PetscInt *nblk) {
     PetscErrorCode ierr;
 
     // Attempt to insert options from "control.dat"
@@ -89,10 +89,10 @@
     ierr = PetscOptionsGetReal(NULL, NULL, "-dt", &((*user)->dt), NULL);
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeSimulation Runtime Options:\n");
-    LOG_ALLOW(GLOBAL, LOG_INFO, "rstart = %d\n", *rstart);
-    if((*rstart) == 1) LOG_ALLOW(GLOBAL, LOG_INFO, "Restarting from time: %d\n", *ti);
-    LOG_ALLOW(GLOBAL, LOG_INFO, "No. of Particles: %d\n", *np);
-    LOG_ALLOW(GLOBAL, LOG_INFO, "No. of Grid blocks: %d\n", *nblk);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "rstart = %ld\n", *rstart);
+    if((*rstart) == 1) LOG_ALLOW(GLOBAL, LOG_INFO, "Restarting from time: %ld\n", *ti);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "No. of Particles: %ld\n", *np);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "No. of Grid blocks: %ld\n", *nblk);
     LOG_ALLOW(GLOBAL, LOG_INFO, "Time-step size : %f\n", (*user)->dt);
 
     LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "InitializeSimulation: Completed setup across all ranks.\n");
@@ -127,7 +127,7 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
            SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "DMs not initialized \n");
      }
 
-        LOG_ALLOW(GLOBAL,LOG_DEBUG,"Creating vectors for block %d: fda=%p, da=%p\n", bi, (void*)user[bi].fda, (void*)user[bi].da);
+        LOG_ALLOW(GLOBAL,LOG_DEBUG,"Creating vectors for block %ld: fda=%p, da=%p\n", bi, (void*)user[bi].fda, (void*)user[bi].da);
 
         // Create global vectors (Destroyed in FinalizeSimulation)
 	ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Ucat); CHKERRQ(ierr);

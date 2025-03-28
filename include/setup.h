@@ -56,7 +56,7 @@ PetscErrorCode registerEvents(void);
  *
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  */
- PetscErrorCode InitializeSimulation(UserCtx **user, PetscInt *rank, PetscInt *size, PetscInt *np, PetscInt *rstart, PetscInt *ti, PetscInt *nblk);
+ PetscErrorCode InitializeSimulation(UserCtx **user, PetscMPIInt *rank, PetscMPIInt *size, PetscInt *np, PetscInt *rstart, PetscInt *ti, PetscInt *nblk);
 
 /** 
  * @brief Setup grid and vectors for the simulation.

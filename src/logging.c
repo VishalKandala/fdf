@@ -172,7 +172,7 @@ PetscBool is_function_allowed(const char* functionName)
  * @note
  * - Ensure that the `cell` pointer is not `NULL` before calling this function..
  */
-PetscErrorCode LOG_CELL_VERTICES(const Cell *cell, PetscInt rank)
+PetscErrorCode LOG_CELL_VERTICES(const Cell *cell, PetscMPIInt rank)
 {
 
     // Validate input pointers
@@ -348,29 +348,29 @@ static PetscErrorCode ComputeMaxColumnWidths(PetscInt nParticles,
  * @param fmtStr  Buffer in which to build the format string.
  * @param bufSize Size of fmtStr.
  */
-static void BuildRowFormatString(int wRank, int wPID, int wCell, int wPos, int wVel, int wWt, char *fmtStr, size_t bufSize)
+static void BuildRowFormatString(PetscMPIInt wRank, PetscInt wPID, PetscInt wCell, PetscInt wPos, PetscInt wVel, PetscInt wWt, char *fmtStr, size_t bufSize)
 {
     // Build a format string using snprintf.
     // We assume that the Rank is an int (%d), PID is a 64-bit int (%ld)
     // and the remaining columns are strings (which have been formatted already).
     snprintf(fmtStr, bufSize,
-             "| %%-%dd | %%-%dld | %%-%ds | %%-%ds | %%-%ds | %%-%ds |\n",
+             "| %%-%dd | %%-%ldld | %%-%lds | %%-%lds | %%-%lds | %%-%lds |\n",
              wRank, wPID, wCell, wPos, wVel, wWt);
 }
 
 /*
  * Helper function: Builds a header string for the table using column titles.
  */
-static void BuildHeaderString(char *headerStr, size_t bufSize, int wRank, int wPID, int wCell, int wPos, int wVel, int wWt)
+static void BuildHeaderString(char *headerStr, size_t bufSize, PetscMPIInt wRank, PetscInt wPID, PetscInt wCell, PetscInt wPos, PetscInt wVel, PetscInt wWt)
 {
     snprintf(headerStr, bufSize,
              "| %-*s | %-*s | %-*s | %-*s | %-*s | %-*s |\n",
-             wRank, "Rank",
-             wPID, "PID",
-             wCell, "Cell (i,j,k)",
-             wPos, "Position (x,y,z)",
-             wVel, "Velocity (x,y,z)",
-             wWt, "Weights (a1,a2,a3)");
+             (int)wRank, "Rank",
+             (int)wPID, "PID",
+             (int)wCell, "Cell (i,j,k)",
+             (int)wPos, "Position (x,y,z)",
+             (int)wVel, "Velocity (x,y,z)",
+             (int)wWt, "Weights (a1,a2,a3)");
 }
 
 /**
@@ -402,7 +402,7 @@ PetscErrorCode LOG_PARTICLE_FIELDS(UserCtx* user, PetscInt printInterval)
     LOG_ALLOW(GLOBAL,LOG_INFO, "PrintParticleFields - Rank %d is retrieving particle data.\n", rank);
 
     ierr = DMSwarmGetLocalSize(swarm, &localNumParticles); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL,LOG_DEBUG,"PrintParticleFields - Rank %d has %d particles.\n", rank, localNumParticles);
+    LOG_ALLOW(GLOBAL,LOG_DEBUG,"PrintParticleFields - Rank %d has %ld particles.\n", rank, localNumParticles);
 
     ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
     ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&particleIDs); CHKERRQ(ierr);
@@ -517,9 +517,9 @@ PetscErrorCode LOG_PARTICLE_FIELDS(UserCtx* user, PetscInt printInterval)
      
      ErrorPercentage = ErrorPercentage*100;
      
-     LOG_ALLOW(GLOBAL, LOG_INFO, "LOG_INTERPOLATION_ERROR - Interpolation error (%): %g\n", ErrorPercentage);
+     LOG_ALLOW(GLOBAL, LOG_INFO, "LOG_INTERPOLATION_ERROR - Interpolation error (%%): %g\n", ErrorPercentage);
  
-     PetscPrintf(PETSC_COMM_WORLD, "Interpolation error (%): %g\n", ErrorPercentage);
+     PetscPrintf(PETSC_COMM_WORLD, "Interpolation error (%%): %g\n", ErrorPercentage);
 
      ierr = VecDestroy(&errorVec); CHKERRQ(ierr);
      ierr = DMSwarmDestroyGlobalVectorFromField(swarm, "position", &positionVec); CHKERRQ(ierr);

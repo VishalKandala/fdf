@@ -43,7 +43,7 @@ PetscErrorCode InitializeGridDM(UserCtx *user, PetscReal L_x, PetscReal L_y, Pet
     }
 
     // Log the start of grid initialization
-    LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - Starting DMDA grid initialization for IM=%d, JM=%d, KM=%d.\n",
+    LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - Starting DMDA grid initialization for IM=%ld, JM=%ld, KM=%ld.\n",
         user->IM, user->JM, user->KM);
 
     // Create a 3D DMDA grid
@@ -106,7 +106,7 @@ PetscErrorCode InitializeGridDM(UserCtx *user, PetscReal L_x, PetscReal L_y, Pet
  * @param[out]    jmm           Pointer to Array to store the j-dimensions for each block.
  * @param[out]    kmm           Pointer to Array to store the k-dimensions for each block.
  * @param[out]    nblk          Pointer to store the number of blocks.
- * @param[out]    fd            File pointer for reading grid data (if applicable).
+ * @param[out]    fd            File Pointer for reading grid data (if applicable).
  *
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  */
@@ -187,7 +187,7 @@ static inline PetscReal ComputeStretchedCoord(PetscInt i, PetscInt N, PetscReal 
         // Geometric stretching
         // r^(fraction) grows (or decays) geometrically depending on r.
         // When i=0, r^(0)=1, so x(0)=0; when i=N, r^(1)=r, so x(N)=L.
-        // This distributes points between 0 and L non-linearly.
+        // This distributes poPetscInts between 0 and L non-linearly.
         PetscReal numerator = PetscPowReal(r, fraction) - 1.0;
         PetscReal denominator = r - 1.0;
         return L * (numerator / denominator);
@@ -207,7 +207,7 @@ static inline PetscReal ComputeStretchedCoord(PetscInt i, PetscInt N, PetscReal 
  * @param[in]     grid1d        Flag indicating if the grid is 1D (1) or 3D (0).
  * @param[in]     IM, JM, KM    Global grid dimensions in the x, y, and z directions, respectively.
  * @param[in]     L_x, L_y, L_z Domain lengths in the x, y, and z directions, respectively.
- * @param[in]     fd            File pointer for reading grid data (if required).
+ * @param[in]     fd            File Pointer for reading grid data (if required).
  *
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  *
@@ -218,7 +218,8 @@ static inline PetscReal ComputeStretchedCoord(PetscInt i, PetscInt N, PetscReal 
 PetscErrorCode AssignGridCoordinates(UserCtx *user, PetscInt generate_grid, PetscInt grid1d, PetscInt IM, PetscInt JM, 
                             PetscInt KM, PetscReal L_x, PetscReal L_y, PetscReal L_z, FILE *fd) {
     PetscErrorCode ierr;          // PETSc error handling
-    PetscInt rank, i, j, k;       // MPI rank and loop counters
+    PetscInt i, j, k;             // loop counters
+    PetscMPIInt rank;             // MPI rank
     Vec Coor, gCoor;              // Local and global coordinate vectors
     Cmpnts ***coor;               // 3D array for node coordinates
     PetscReal *gc;            // Temporary storage for coordinates
@@ -346,7 +347,7 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user, PetscInt generate_grid, Pets
  * @param[in]     bi            Block index to retrieve dimensions for.
  * @param[in,out] user          Pointer to the UserCtx structure containing simulation context.
  * @param[out]    IM, JM, KM    Pointers to store grid dimensions in the x, y, and z directions.
- * @param[in]     fd            File pointer to read grid dimensions (if required).
+ * @param[in]     fd            File Pointer to read grid dimensions (if required).
  * @param[in]     generate_grid Flag indicating whether the grid is programmatically generated (1) or read from a file (0).
  * @param[in]     imm, jmm, kmm Arrays containing grid dimensions for programmatic generation.
  * @param[in]     nblk          Pointer to store the number of blocks.
@@ -356,9 +357,9 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user, PetscInt generate_grid, Pets
 PetscErrorCode DetermineGridSizes(PetscInt bi, UserCtx *user, PetscInt *IM, PetscInt *JM, PetscInt *KM, FILE *fd, 
                                   PetscInt generate_grid, PetscInt *imm, PetscInt *jmm, PetscInt *kmm, PetscInt *nblk) {
     PetscErrorCode ierr;  // PETSc error handling
-    PetscInt rank;        // MPI rank
+    PetscMPIInt rank;        // MPI rank
 
-    // Validate input pointers
+    // Validate input Pointers
     if (generate_grid && (!imm || !jmm || !kmm)) {
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, 
                 "DetermineGridSizes - Input arrays (imm, jmm, kmm) must not be NULL when generating grid programmatically.");
@@ -376,20 +377,20 @@ PetscErrorCode DetermineGridSizes(PetscInt bi, UserCtx *user, PetscInt *IM, Pets
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
 
     // Log the start of the function
-    LOG_ALLOW(GLOBAL, LOG_INFO, "DetermineGridSizes - Starting grid size determination for block %d on rank %d.\n", bi, rank);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "DetermineGridSizes - Starting grid size determination for block %ld on rank %d.\n", bi, rank);
 
     if (rank == 0) {
         if (!generate_grid) {
             // Read grid dimensions from file
             if (!fd) {
                 SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FILE_OPEN, 
-                        "DetermineGridSizes - File pointer (fd) is NULL. Cannot read grid dimensions from file.");
+                        "DetermineGridSizes - File Pointer (fd) is NULL. Cannot read grid dimensions from file.");
             }
-            if (fscanf(fd, "%i %i %i\n", IM, JM, KM) != 3) {
+            if (fscanf(fd, "%li %li %li\n", IM, JM, KM) != 3) {
                 SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FILE_READ, 
                         "DetermineGridSizes - Failed to read grid dimensions from file.");
             }
-            LOG_ALLOW(GLOBAL, LOG_DEBUG, "DetermineGridSizes - Read grid dimensions from file: IM=%d, JM=%d, KM=%d.\n", 
+            LOG_ALLOW(GLOBAL, LOG_DEBUG, "DetermineGridSizes - Read grid dimensions from file: IM=%ld, JM=%ld, KM=%ld.\n", 
                 *IM, *JM, *KM);
         } else {
             // Get grid dimensions from input arrays
@@ -397,7 +398,7 @@ PetscErrorCode DetermineGridSizes(PetscInt bi, UserCtx *user, PetscInt *IM, Pets
             *JM = jmm[bi];
             *KM = kmm[bi];
             LOG_ALLOW(GLOBAL, LOG_DEBUG, 
-                "DetermineGridSizes - Programmatically generated grid dimensions: IM=%d, JM=%d, KM=%d.\n", 
+                "DetermineGridSizes - Programmatically generated grid dimensions: IM=%ld, JM=%ld, KM=%ld.\n", 
                 *IM, *JM, *KM);
         }
     }
@@ -406,7 +407,7 @@ PetscErrorCode DetermineGridSizes(PetscInt bi, UserCtx *user, PetscInt *IM, Pets
     ierr = MPI_Bcast(IM, 1, MPI_INT, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
     ierr = MPI_Bcast(JM, 1, MPI_INT, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
     ierr = MPI_Bcast(KM, 1, MPI_INT, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "DetermineGridSizes - Broadcasted grid dimensions: IM=%d, JM=%d, KM=%d.\n", 
+    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "DetermineGridSizes - Broadcasted grid dimensions: IM=%ld, JM=%ld, KM=%ld.\n", 
         *IM, *JM, *KM);
 
     // Update the user context on all ranks
@@ -414,11 +415,11 @@ PetscErrorCode DetermineGridSizes(PetscInt bi, UserCtx *user, PetscInt *IM, Pets
     user->JM = *JM;
     user->KM = *KM;
     LOG_ALLOW(GLOBAL, LOG_DEBUG, 
-        "DetermineGridSizes - Updated UserCtx: IM=%d, JM=%d, KM=%d on rank %d.\n", 
+        "DetermineGridSizes - Updated UserCtx: IM=%ld, JM=%ld, KM=%ld on rank %d.\n", 
         user->IM, user->JM, user->KM, rank);
 
     // Log the end of the function
-    LOG_ALLOW(GLOBAL, LOG_INFO, "DetermineGridSizes - Completed grid size determination for block %d on rank %d.\n", bi, rank);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "DetermineGridSizes - Completed grid size determination for block %ld on rank %d.\n", bi, rank);
 
     return 0;
 }
@@ -430,7 +431,7 @@ PetscErrorCode DetermineGridSizes(PetscInt bi, UserCtx *user, PetscInt *IM, Pets
  * descriptor if a grid file was read and deallocating memory allocated for grid parameters.
  *
  * @param[in] generate_grid Flag indicating if the grid was generated programmatically (1) or read from a file (0).
- * @param[in] fd            File pointer to the grid file (used if generate_grid is 0).
+ * @param[in] fd            File Pointer to the grid file (used if generate_grid is 0).
  * @param[in,out] imm       Array storing i-dimensions for each block, freed here.
  * @param[in,out] jmm       Array storing j-dimensions for each block, freed here.
  * @param[in,out] kmm       Array storing k-dimensions for each block, freed here.
@@ -438,7 +439,7 @@ PetscErrorCode DetermineGridSizes(PetscInt bi, UserCtx *user, PetscInt *IM, Pets
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  */
 PetscErrorCode FinalizeGridSetup(PetscInt generate_grid, FILE *fd, PetscInt *imm, PetscInt *jmm, PetscInt *kmm) {
-    PetscInt rank;               // MPI rank
+    PetscMPIInt rank;               // MPI rank
     PetscErrorCode ierr;         // PETSc error handling
 
     // Retrieve MPI rank
@@ -453,7 +454,7 @@ PetscErrorCode FinalizeGridSetup(PetscInt generate_grid, FILE *fd, PetscInt *imm
             fclose(fd);
             LOG_ALLOW(GLOBAL, LOG_DEBUG, "FinalizeGridSetup - Closed grid file on rank %d.\n", rank);
         } else {
-            LOG_ALLOW(GLOBAL, LOG_WARNING, "FinalizeGridSetup - File pointer is NULL on rank %d. Nothing to close.\n", rank);
+            LOG_ALLOW(GLOBAL, LOG_WARNING, "FinalizeGridSetup - File Pointer is NULL on rank %d. Nothing to close.\n", rank);
         }
     }
 
@@ -491,17 +492,17 @@ PetscErrorCode FinalizeGridSetup(PetscInt generate_grid, FILE *fd, PetscInt *imm
  */
 PetscErrorCode DefineGridCoordinates(UserCtx *user) {
     PetscErrorCode ierr;         // PETSc error handling
-    PetscInt rank;               // MPI rank
+    PetscMPIInt rank;               // MPI rank
     PetscInt bi;                 // Block index
     PetscInt IM, JM, KM;         // Grid dimensions for a block
-    FILE *fd = NULL;             // File pointer for reading grid input
+    FILE *fd = NULL;             // File Pointer for reading grid input
     PetscInt generate_grid = 0;  // Flag for programmatic grid generation
     PetscInt grid1d = 0;         // Flag for 1D grid input
     PetscInt block_number = 1;   // Number of grid blocks
     PetscReal L_x, L_y, L_z;     // Domain lengths in x, y, and z directions
     PetscInt *imm = NULL, *jmm = NULL, *kmm = NULL;  // Grid sizes for blocks
 
-    // Retrieve MPI rank
+    // Retrieve MPI rank 
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
 
     // Log the start of the function
@@ -520,7 +521,7 @@ PetscErrorCode DefineGridCoordinates(UserCtx *user) {
         // Determine grid sizes for the current block
         ierr = DetermineGridSizes(bi, user, &IM, &JM, &KM, fd, generate_grid, imm, jmm, kmm, &block_number); CHKERRQ(ierr);
 
-        LOG_ALLOW(GLOBAL,LOG_INFO,"DefineGridCoordinates - IM,JM,KM - %d,%d,%d \n",IM,JM,KM);
+        LOG_ALLOW(GLOBAL,LOG_INFO,"DefineGridCoordinates - IM,JM,KM - %ld,%ld,%ld \n",IM,JM,KM);
 
         // Set up the DM for the current block
         ierr = InitializeGridDM(user,L_x,L_y,L_z); CHKERRQ(ierr);
@@ -532,7 +533,7 @@ PetscErrorCode DefineGridCoordinates(UserCtx *user) {
         DMDALocalInfo info = user->info;
         ierr = DMDAGetLocalInfo(user->da, &info);
         LOG_ALLOW(GLOBAL, LOG_INFO, 
-            "DefineGridCoordinates - Rank %d owns subdomain for block %d: xs=%d, xe=%d, ys=%d, ye=%d, zs=%d, ze=%d.\n", 
+            "DefineGridCoordinates - Rank %d owns subdomain for block %ld: xs=%ld, xe=%ld, ys=%ld, ye=%ld, zs=%ld, ze=%ld.\n", 
             rank, bi, info.xs, info.xs + info.xm, info.ys, info.ys + info.ym, info.zs, info.zs + info.zm);
     }
 
@@ -568,7 +569,8 @@ PetscErrorCode DefineGridCoordinates(UserCtx *user) {
 PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
 {
     PetscErrorCode ierr;
-    PetscInt i, j, k,rank;
+    PetscInt i, j, k;
+    PetscMPIInt rank;
     PetscInt xs, ys, zs, xe, ye, ze;
     DMDALocalInfo info;
     Vec coordinates;
@@ -578,13 +580,13 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
     // Start of function execution
     LOG_ALLOW(GLOBAL, LOG_INFO, "ComputeLocalBoundingBox: Entering the function.\n");
 
-    // Validate input pointers
+    // Validate input Pointers
     if (!user) {
-        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Input 'user' pointer is NULL.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Input 'user' Pointer is NULL.\n");
         return PETSC_ERR_ARG_NULL;
     }
     if (!localBBox) {
-        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Output 'localBBox' pointer is NULL.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Output 'localBBox' Pointer is NULL.\n");
         return PETSC_ERR_ARG_NULL;
     }
 
@@ -625,7 +627,7 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
     minCoords.x = minCoords.y = minCoords.z = PETSC_MAX_REAL;
     maxCoords.x = maxCoords.y = maxCoords.z = PETSC_MIN_REAL;
 
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "ComputeLocalBoundingBox: Grid indices: xs=%d, xe=%d, ys=%d, ye=%d, zs=%d, ze=%d.\n", xs, xe, ys, ye, zs, ze);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "ComputeLocalBoundingBox: Grid indices: xs=%ld, xe=%ld, ys=%ld, ye=%ld, zs=%ld, ze=%ld.\n", xs, xe, ys, ye, zs, ze);
 
     // Iterate over the local grid to find min and max coordinates
     for (k = zs; k < ze; k++) {
@@ -674,11 +676,11 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
  * `ComputeLocalBoundingBox`. It then uses an MPI gather operation to collect all
  * local bounding boxes on the root process (rank 0). On rank 0, it allocates an array
  * of `BoundingBox` structures to hold the gathered data and returns it via the
- * `allBBoxes` pointer. On other ranks, `allBBoxes` is set to `NULL`.
+ * `allBBoxes` Pointer. On other ranks, `allBBoxes` is set to `NULL`.
  *
  * @param[in]  user       Pointer to the user-defined context containing grid information.
  *                        This context must be properly initialized before calling this function.
- * @param[out] allBBoxes  Pointer to a pointer where the array of gathered bounding boxes will be stored on rank 0.
+ * @param[out] allBBoxes  Pointer to a Pointer where the array of gathered bounding boxes will be stored on rank 0.
  *                        On rank 0, this will point to the allocated array; on other ranks, it will be `NULL`.
  *
  * @return PetscErrorCode Returns `0` on success, non-zero on failure.
@@ -692,13 +694,13 @@ PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "GatherAllBoundingBoxes: Entering the function. \n");
 
-    // Validate input pointers
+    // Validate input Pointers
     if (!user) {
-        LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Input 'user' pointer is NULL.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Input 'user' Pointer is NULL.\n");
         return PETSC_ERR_ARG_NULL;
     }
     if (!allBBoxes) {
-        LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Output 'allBBoxes' pointer is NULL.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Output 'allBBoxes' Pointer is NULL.\n");
         return PETSC_ERR_ARG_NULL;
     }
 
@@ -723,7 +725,7 @@ PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
         return ierr;
     }
     
-    PetscBarrier(PETSC_NULL);
+    PetscBarrier(PETSC_NULLPTR);
 
     // On rank 0, allocate memory for the array of bounding boxes
     if (rank == 0) {
@@ -745,7 +747,7 @@ PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
         return ierr;
     }
 
-    // On rank 0, assign the gathered bounding boxes to the output pointer
+    // On rank 0, assign the gathered bounding boxes to the output Pointer
     if (rank == 0) {
         *allBBoxes = bboxArray;
         LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "GatherAllBoundingBoxes: Successfully gathered bounding boxes on rank 0.\n");
@@ -788,7 +790,7 @@ PetscErrorCode BroadcastAllBoundingBoxes(UserCtx *user, BoundingBox **bboxlist) 
     LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "BroadcastAllBoundingBoxes: Broadcasting bounding box information from rank 0.\n");
 
     // Broadcast bboxlist from rank 0 to all other ranks
-    ierr = MPI_Bcast(*bboxlist, (int)(size * sizeof(BoundingBox)), MPI_BYTE, 0, PETSC_COMM_WORLD);
+    ierr = MPI_Bcast(*bboxlist, (PetscInt)(size * sizeof(BoundingBox)), MPI_BYTE, 0, PETSC_COMM_WORLD);
     if (ierr != MPI_SUCCESS) {
         SETERRABORT(PETSC_COMM_WORLD, PETSC_ERR_LIB, "MPI_Bcast failed for bboxlist.");
     }

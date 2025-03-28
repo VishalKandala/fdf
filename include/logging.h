@@ -66,8 +66,8 @@ extern PetscLogEvent EVENT_walkingsearch;
  * @param ...   Additional arguments for the format string (optional).
  *
  * Example usage:
- *     LOG(LOCAL, LOG_ERROR, "An error occurred at index %d.\n", idx);
- *     LOG(GLOBAL, LOG_INFO, "Grid size: %d x %d x %d.\n", nx, ny, nz);
+ *     LOG(LOCAL, LOG_ERROR, "An error occurred at index %ld.\n", idx);
+ *     LOG(GLOBAL, LOG_INFO, "Grid size: %ld x %ld x %ld.\n", nx, ny, nz);
  */
 #define LOG(scope, level, fmt, ...) \
     do { \
@@ -92,8 +92,8 @@ extern PetscLogEvent EVENT_walkingsearch;
  * @param ...   Additional arguments for the format string (optional).
  *
  * Example usage:
- *     LOG_DEFAULT(LOG_ERROR, "Error occurred at index %d.\n", idx);
- *     LOG_DEFAULT(LOG_INFO, "Grid size: %d x %d x %d.\n", nx, ny, nz);
+ *     LOG_DEFAULT(LOG_ERROR, "Error occurred at index %ld.\n", idx);
+ *     LOG_DEFAULT(LOG_INFO, "Grid size: %ld x %ld x %ld.\n", nx, ny, nz);
  *
  * @note
  * - By default, this macro logs across all MPI processes using `MPI_COMM_WORLD`.
@@ -127,8 +127,8 @@ extern PetscLogEvent EVENT_walkingsearch;
  * @param ...   Additional arguments for the format string (optional).
  *
  * Example usage:
- *     LOG_SYNC(LOCAL, LOG_ERROR, "An error occurred at index %d.\n", idx);
- *     LOG_SYNC(GLOBAL, LOG_INFO, "Synchronized info: rank = %d.\n", rank);
+ *     LOG_SYNC(LOCAL, LOG_ERROR, "An error occurred at index %ld.\n", idx);
+ *     LOG_SYNC(GLOBAL, LOG_INFO, "Synchronized info: rank = %ld.\n", rank);
  */
 #define LOG_SYNC(scope, level, fmt, ...) \
     do { \
@@ -155,8 +155,8 @@ extern PetscLogEvent EVENT_walkingsearch;
  * @param ...   Additional arguments for the format string (optional).
  *
  * Example usage:
- *     LOG_SYNC_DEFAULT(LOG_ERROR, "Error at index %d.\n", idx);
- *     LOG_SYNC_DEFAULT(LOG_INFO,  "Process rank: %d.\n", rank);
+ *     LOG_SYNC_DEFAULT(LOG_ERROR, "Error at index %ld.\n", idx);
+ *     LOG_SYNC_DEFAULT(LOG_INFO,  "Process rank: %ld.\n", rank);
  *
  * @note
  * - By default, this macro logs across all MPI processes using `MPI_COMM_WORLD`.
@@ -206,13 +206,13 @@ extern PetscLogEvent EVENT_walkingsearch;
  *
  * @param scope  Either LOCAL (MPI_COMM_SELF) or GLOBAL (MPI_COMM_WORLD).
  * @param level  One of LOG_ERROR, LOG_WARNING, LOG_INFO, LOG_DEBUG.
- * @param fmt    A `printf`-style format string (e.g., "Message: %d\n").
+ * @param fmt    A `printf`-style format string (e.g., "Message: %ld\n").
  * @param ...    Variadic arguments to fill in `fmt`.
  *
  * Example usage:
  *
  * \code{.c}
- * LOG_ALLOW_SYNC(LOCAL, LOG_DEBUG, "Debug info: rank = %d\n", rank);
+ * LOG_ALLOW_SYNC(LOCAL, LOG_DEBUG, "Debug info: rank = %ld\n", rank);
  * LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,  "Synchronized info in %s\n", __func__);
  * \endcode
  */
@@ -241,7 +241,7 @@ extern PetscLogEvent EVENT_walkingsearch;
  *
  * Example:
  *    for (int i = 0; i < 100; i++) {
- *        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "Value of i=%d\n", i);
+ *        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "Value of i=%ld\n", i);
  *    }
  */
 #define LOG_LOOP_ALLOW(scope,level, iterVar, interval, fmt, ...)              \
@@ -249,7 +249,7 @@ extern PetscLogEvent EVENT_walkingsearch;
         if (is_function_allowed(__func__) && (int)(level) <= (int)get_log_level()) { \
             if ((iterVar) % (interval) == 0) {                                 \
                 MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
-                PetscPrintf(comm, "[%s] [Iter=%d] " fmt,                       \
+                PetscPrintf(comm, "[%s] [Iter=%ld] " fmt,                       \
                             __func__, (iterVar), ##__VA_ARGS__);               \
             }                                                                  \
         }                                                                      \
@@ -275,7 +275,7 @@ extern PetscLogEvent EVENT_walkingsearch;
         if (is_function_allowed(__func__) && (int)(level) <= (int)get_log_level()) { \
             if ((idx) >= 0 && (idx) < (length)) {                             \
                 MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
-                PetscPrintf(comm, "[%s] arr[%d] = " fmt "\n",                 \
+                PetscPrintf(comm, "[%s] arr[%ld] = " fmt "\n",                 \
                             __func__, (idx), (arr)[idx]);                     \
             }                                                                 \
         }                                                                     \
@@ -301,7 +301,7 @@ extern PetscLogEvent EVENT_walkingsearch;
             PetscInt _start = (start) < 0 ? 0 : (start);                      \
             PetscInt _end   = (end) >= (length) ? (length) - 1 : (end);       \
             for (PetscInt i = _start; i <= _end; i++) {                       \
-                PetscPrintf(comm, "[%s] arr[%d] = " fmt "\n", __func__, i, (arr)[i]); \
+                PetscPrintf(comm, "[%s] arr[%ld] = " fmt "\n", __func__, i, (arr)[i]); \
             }                                                                 \
         }                                                                     \
     } while (0)
@@ -333,7 +333,7 @@ extern PetscLogEvent EVENT_walkingsearch;
             __funcTimerStart = (double)_timeStamp;                              \
             __funcTimerActive = PETSC_TRUE;                                     \
             /* Start the PETSc log event (rank-wide). */                        \
-            PetscLogEventBegin(eventID, 0, 0, 0, 0);                            \
+            (void)PetscLogEventBegin(eventID, 0, 0, 0, 0);                            \
         }                                                                       \
     } while (0)
 
@@ -353,7 +353,7 @@ extern PetscLogEvent EVENT_walkingsearch;
     do {                                                                        \
         if (__funcTimerActive == PETSC_TRUE) {                                  \
             /* End the PETSc log event */                                       \
-            PetscLogEventEnd(eventID, 0, 0, 0, 0);                              \
+            (void)PetscLogEventEnd(eventID, 0, 0, 0, 0);                              \
             /* Log the wall-clock elapsed time */                               \
             if (is_function_allowed(__func__) && (int)(LOG_PROFILE) <= (int)get_log_level()) { \
                 PetscLogDouble _timeEnd = 0.0;                                  \
@@ -435,7 +435,7 @@ PetscBool is_function_allowed(const char* functionName);
  * @note
  * - Ensure that the `cell` pointer is not `NULL` before calling this function..
  */
-PetscErrorCode LOG_CELL_VERTICES(const Cell *cell, PetscInt rank);
+PetscErrorCode LOG_CELL_VERTICES(const Cell *cell, PetscMPIInt rank);
 
 /**
  * @brief Prints the signed distances to each face of the cell.
