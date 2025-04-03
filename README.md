@@ -421,7 +421,7 @@ This table clarifies that while `ucont[k][j][i]` stores 3 values, only one compo
 | **Total Meaningful Flux Values**| Sum of Interior and Boundary Flux Scalars        | N/A                                                             | 450                                   |
 | **Unused Scalar Slots**         | Allocated scalar slots not holding meaningful flux | Components `.y`,`.z` at i-face indices; `.x`,`.z` at j-face; etc. | 198                                   |
 
-*** Physical Domain ***
+***Physical Domain***
 ![image](https://github.com/user-attachments/assets/8df1521d-934f-4811-8124-31e83a36cef1)
 ![image](https://github.com/user-attachments/assets/f202afcf-d434-4f5b-8565-b215042199ad)
 ![image](https://github.com/user-attachments/assets/1dfad9bb-01ff-48d9-9c0e-7c5f8d348dc8)
@@ -429,7 +429,7 @@ This table clarifies that while `ucont[k][j][i]` stores 3 values, only one compo
 ![image](https://github.com/user-attachments/assets/a2255c03-6a7c-4a5a-9db6-ae098f59d318)
 ![image](https://github.com/user-attachments/assets/72ed5af8-e0d3-4d9a-a019-0952f6b44a2c)
 
-*** Domain Decomposition ***
+***Domain Decomposition***
 Here's a summary table and illustrative plots explaining the indexing and data access for Global vs. Local PETSc DMDA vectors.
 
 **Summary Table: Global vs. Local Vectors (DMDA)**
