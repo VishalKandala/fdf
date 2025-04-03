@@ -421,3 +421,10 @@ This table clarifies that while `ucont[k][j][i]` stores 3 values, only one compo
 | **Total Meaningful Flux Values**| Sum of Interior and Boundary Flux Scalars        | N/A                                                             | 450                                   |
 | **Unused Scalar Slots**         | Allocated scalar slots not holding meaningful flux | Components `.y`,`.z` at i-face indices; `.x`,`.z` at j-face; etc. | 198                                   |
 
+![image](https://github.com/user-attachments/assets/46890cac-7c6e-4326-8fdb-0aaf7a5dcfc1)
+![image](https://github.com/user-attachments/assets/f202afcf-d434-4f5b-8565-b215042199ad)
+![image](https://github.com/user-attachments/assets/1dfad9bb-01ff-48d9-9c0e-7c5f8d348dc8)
+![image](https://github.com/user-attachments/assets/ff4ea445-7831-468f-9e82-f636190340c1)
+![image](https://github.com/user-attachments/assets/a2255c03-6a7c-4a5a-9db6-ae098f59d318)
+![image](https://github.com/user-attachments/assets/72ed5af8-e0d3-4d9a-a019-0952f6b44a2c)
+
