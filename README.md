@@ -227,3 +227,77 @@ For issues or inquiries, contact:
 | **Corner Cells (e.g., i=0, j=0, k=0)** | `i=0, j=0, k=0`                | Boundary /<br>Ghost Role | `[0][0][0]` *(Node Index)*          | **Extrapolated "ghost" value** based on BCs at `i=0, j=0, k=0`| `[0][0][0]`                              |
 
 This refined table clarifies that the *meaning* of the value stored in `ucat[k][j][i]` depends on whether `(i,j,k)` is an interior or boundary node index.
+
+`ucont`, the face-centered contravariant velocity/flux, for the `IM=JM=KM=5` case.
+
+**1. Total Size of `ucont`:**
+
+*   Basis: Node-based `fda` DMDA (`M=6, N=6, P=6`).
+*   Total node locations: `M * N * P = 6 * 6 * 6 = 216`.
+*   Degrees of Freedom (DOF): 3 (for `.x`, `.y`, `.z` components stored at each node index).
+*   **Total allocated `Cmpnts` structs:** 216.
+*   **Total allocated scalar values:** `216 * 3 = 648`.
+*   Accessible array indices: `ucont[k][j][i]` where `i,j,k` range `0..5`.
+
+**2. Range Storing Meaningful "Interior" Face Flux Values:**
+
+*   These are the fluxes across faces located strictly *between* physical cells (not boundary faces).
+*   **U-flux (`.x`) across Interior i-Faces `Fi(i,j,k)`:**
+    *   Face index `i` range: `1` to `IM-1 = 4`.
+    *   Cell indices `j, k` range: `0` to `JM-1 = 4`, `0` to `KM-1 = 4`.
+    *   Storage: `ucont[k][j][i].x` where `i=1..4`, `j=0..4`, `k=0..4`.
+    *   Number: `(IM-1) * JM * KM = 4 * 5 * 5 = 100` locations.
+*   **V-flux (`.y`) across Interior j-Faces `Fj(i,j,k)`:**
+    *   Face index `j` range: `1` to `JM-1 = 4`.
+    *   Cell indices `i, k` range: `0` to `IM-1 = 4`, `0` to `KM-1 = 4`.
+    *   Storage: `ucont[k][j][i].y` where `i=0..4`, `j=1..4`, `k=0..4`.
+    *   Number: `IM * (JM-1) * KM = 5 * 4 * 5 = 100` locations.
+*   **W-flux (`.z`) across Interior k-Faces `Fk(i,j,k)`:**
+    *   Face index `k` range: `1` to `KM-1 = 4`.
+    *   Cell indices `i, j` range: `0` to `IM-1 = 4`, `0` to `JM-1 = 4`.
+    *   Storage: `ucont[k][j][i].z` where `i=0..4`, `j=0..4`, `k=1..4`.
+    *   Number: `IM * JM * (KM-1) = 5 * 5 * 4 = 100` locations.
+*   **Total Meaningful Interior Flux Scalars:** `100 + 100 + 100 = 300`.
+
+**3. Range Storing Meaningful "Boundary" Face Flux Values:**
+
+*   These are the fluxes across the faces that coincide with the physical boundaries of the domain. Their values are set by `FormBCS`.
+*   **U-flux (`.x`) across Boundary i-Faces `Fi(0,j,k)` and `Fi(IM,j,k)`:**
+    *   Face indices `i=0` and `i=IM=5`.
+    *   Cell indices `j, k` range: `0` to `JM-1 = 4`, `0` to `KM-1 = 4`.
+    *   Storage: `ucont[k][j][0].x` and `ucont[k][j][5].x` where `j=0..4`, `k=0..4`.
+    *   Number: `2 * JM * KM = 2 * 5 * 5 = 50` locations.
+*   **V-flux (`.y`) across Boundary j-Faces `Fj(i,0,k)` and `Fj(i,JM,k)`:**
+    *   Face indices `j=0` and `j=JM=5`.
+    *   Cell indices `i, k` range: `0` to `IM-1 = 4`, `0` to `KM-1 = 4`.
+    *   Storage: `ucont[k][0][i].y` and `ucont[k][5][i].y` where `i=0..4`, `k=0..4`.
+    *   Number: `2 * IM * KM = 2 * 5 * 5 = 50` locations.
+*   **W-flux (`.z`) across Boundary k-Faces `Fk(i,j,0)` and `Fk(i,j,KM)`:**
+    *   Face indices `k=0` and `k=KM=5`.
+    *   Cell indices `i, j` range: `0` to `IM-1 = 4`, `0` to `JM-1 = 4`.
+    *   Storage: `ucont[0][j][i].z` and `ucont[5][j][i].z` where `i=0..4`, `j=0..4`.
+    *   Number: `2 * IM * JM = 2 * 5 * 5 = 50` locations.
+*   **Total Meaningful Boundary Flux Scalars:** `50 + 50 + 50 = 150`.
+
+**4. Unused Storage Locations:**
+
+*   **Total Allocated Scalars:** 648.
+*   **Total Meaningful Flux Scalars (Interior + Boundary):** `300 + 150 = 450`.
+*   **Number of Unused Scalar Values:** `648 - 450 = 198`.
+*   **Explanation:** At each of the 216 node storage locations `ucont[k][j][i]`, only one of the three components (`.x`, `.y`, or `.z`) is used to store the physically meaningful flux across the corresponding face (`Fi(i)`, `Fj(j)`, or `Fk(k)`). The other two components at that specific `[k][j][i]` index are unused by this convention. (`216 locations * 2 unused components/location = 432` unused scalar slots? No, that's wrong).
+*   **Correct Calculation:** Total slots = 216. Each holds 3 scalars (648 total). Meaningful fluxes = 450 scalars. Unused = 648 - 450 = 198 scalar slots. This means out of the 216 `Cmpnts` structs, some components are unused. For example, `ucont[k][j][i].y` and `ucont[k][j][i].z` have no meaning relative to the i-face `Fi(i)` whose flux is stored in `ucont[k][j][i].x`.
+
+**Summary Table for `ucont`**
+
+| Feature                         | Description                                      | Storage Index `[k][j][i]` Range & Component Used                | Number of Meaningful Scalar Locations |
+| :------------------------------ | :----------------------------------------------- | :-------------------------------------------------------------- | :------------------------------------ |
+| **Total Allocation Size**       | Full node-indexed grid (`fda`)                   | `i,j,k = 0..5` (for `.x`, `.y`, `.z`)                           | 648 (216 `Cmpnts`)                  |
+| **Interior i-Face Flux Storage**| U-flux across interior face `Fi(i,j,k)`          | `i=1..4`, `j=0..4`, `k=0..4` --> **`.x`** component used         | 100                                   |
+| **Interior j-Face Flux Storage**| V-flux across interior face `Fj(i,j,k)`          | `i=0..4`, `j=1..4`, `k=0..4` --> **`.y`** component used         | 100                                   |
+| **Interior k-Face Flux Storage**| W-flux across interior face `Fk(i,j,k)`          | `i=0..4`, `j=0..4`, `k=1..4` --> **`.z`** component used         | 100                                   |
+| **Boundary i-Face Flux Storage**| U-flux across boundary face `Fi(0/IM,j,k)`       | `i=0,5`, `j=0..4`, `k=0..4` --> **`.x`** component used        | 50                                    |
+| **Boundary j-Face Flux Storage**| V-flux across boundary face `Fj(i,0/JM,k)`       | `i=0..4`, `j=0,5`, `k=0..4` --> **`.y`** component used        | 50                                    |
+| **Boundary k-Face Flux Storage**| W-flux across boundary face `Fk(i,j,0/KM)`       | `i=0..4`, `j=0..4`, `k=0,5` --> **`.z`** component used        | 50                                    |
+| **Total Meaningful Flux Values**| Sum of Interior and Boundary Flux Scalars        | N/A                                                             | 450                                   |
+| **Unused Scalar Slots**         | Allocated scalar slots not holding meaningful flux | Components `.y`,`.z` at i-face indices; `.x`,`.z` at j-face; etc. | 198                                   |
+
