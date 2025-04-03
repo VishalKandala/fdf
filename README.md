@@ -228,7 +228,127 @@ For issues or inquiries, contact:
 
 This refined table clarifies that the *meaning* of the value stored in `ucat[k][j][i]` depends on whether `(i,j,k)` is an interior or boundary node index.
 
+Okay, let's break down the `ucat` array for `IM=JM=KM=5`.
+
+**1. Total Size of `ucat`:**
+
+*   As established, `ucat` uses the node-based `fda` DMDA.
+*   Number of nodes: `M=IM+1=6`, `N=JM+1=6`, `P=KM+1=6`.
+*   Total node locations: `M * N * P = 6 * 6 * 6 = 216`.
+*   Degrees of Freedom (DOF): 3 (for `ucat.x`, `ucat.y`, `ucat.z`).
+*   **Total allocated `Cmpnts` structs:** 216.
+*   **Total allocated scalar values:** `216 * 3 = 648`.
+*   The accessible array indices are `ucat[k][j][i]` where `i` ranges `0..5`, `j` ranges `0..5`, `k` ranges `0..5`.
+
+**2. Range Storing Corresponding "Interior" Cell Center `ucat` Values:**
+
+*   **Conceptual Cells:** The interior physical cells are indexed `i=1..IM-1`, `j=1..JM-1`, `k=1..KM-1`. For `IM=5`, this is `i=1..4`, `j=1..4`, `k=1..4`.
+*   **Storage Convention:** The code stores the `ucat` value calculated by `Contra2Cart` (which represents the state at the center of cell `C(i,j,k)`) in the storage slot corresponding to **node index `(i,j,k)`**.
+*   **Index Range:**
+    *   `i` from `1` to `4` (`IM-1`)
+    *   `j` from `1` to `4` (`JM-1`)
+    *   `k` from `1` to `4` (`KM-1`)
+*   **Number of Locations:** `(IM-1 - 1 + 1) * (JM-1 - 1 + 1) * (KM-1 - 1 + 1) = 4 * 4 * 4 = 64` locations.
+*   **Meaning:** `ucat[k][j][i]` within this range holds the Cartesian velocity computed by `Contra2Cart`, representing the physical state at the center of cell `C(i,j,k)`.
+
+**3. Range Storing Boundary Extrapolated "Ghost" `ucat` Values:**
+
+*   **Storage Indices:** These values are stored at the node indices that lie on the boundaries of the `0..IM`, `0..JM`, `0..KM` node index space.
+*   **Index Range:** `ucat[k][j][i]` where:
+    *   `i = 0` OR `i = 5` (`IM`)
+    *   OR `j = 0` OR `j = 5` (`JM`)
+    *   OR `k = 0` OR `k = 5` (`KM`)
+*   **Number of Locations:** This is the total number of node locations minus the number of interior node locations used for cell values: `216 - 64 = 152` locations.
+*   **Meaning:** The values `ucat[k][j][i]` within this range **do not** represent the physical state at the center of the adjacent boundary cell (e.g., `ucat[0][0][0]` doesn't hold the value for the center of `C(0,0,0)`). Instead, they store the **extrapolated values calculated by `FormBCS`** (e.g., `ucat[0][0][0] = 2*ubcs[0][0][0] - ucat[1][0][0]`). These act as the necessary "ghost" values required by computational stencils operating in the first/last layer of interior cells (e.g., cells `C(1,j,k)` need the value stored at `ucat[k][j][0]`).
+
+**4. Unused Storage Locations?**
+
+*   Based on this convention, **all 216 node locations** `ucat[k][j][i]` (where `i,j,k` range `0..5`) are used to store meaningful data for the numerical scheme:
+    *   Indices `1..4` store interior cell values.
+    *   Indices `0` and `5` store extrapolated boundary/ghost values.
+*   Therefore, there are **0 unused `Cmpnts` struct storage locations**. All allocated slots hold either a value representing an interior cell or an extrapolated value representing the boundary condition's effect for the interior stencils. (It's possible some *components* within the `Cmpnts` struct at boundary locations might be less critical depending on the BC, but the extrapolation in `FormBCS` calculates all three).
+
+**Summary Table:**
+
+| Feature                         | Description                                                                                                | Index Range (`i`, `j`, `k`) | Number of Locations (`Cmpnts` structs) |
+| :------------------------------ | :--------------------------------------------------------------------------------------------------------- | :-------------------------- | :------------------------------------- |
+| **Total Allocation Size**       | Full node-indexed grid (`fda`)                                                                             | `0..5`, `0..5`, `0..5`      | 216                                    |
+| **Interior Cell Value Storage** | Slot `[k][j][i]` stores value representing center of cell `C(i,j,k)`                                       | `1..4`, `1..4`, `1..4`      | 64                                     |
+| **Boundary/Ghost Value Storage**| Slot `[k][j][i]` stores extrapolated value from `FormBCS` based on physical BC at the corresponding boundary | `i/j/k` is `0` or `5`       | 152                                    |
+| **Unused Locations**            | Locations not used for either purpose                                                                      | None                        | 0                                      |
+
 `ucont`, the face-centered contravariant velocity/flux, for the `IM=JM=KM=5` case.
+
+Storage versus the conceptual meaning for `ucont` (the face-centered contravariant velocity/flux).
+
+**1. Storage Allocation:**
+
+*   **Code Evidence:** Like `ucat`, `ucont` is created in `MG_Initial` by duplicating a vector (`user->Csi`) that is based on the `fda` DMDA (`DMCreateGlobalVector(user[bi].fda, &(user[bi].Csi))`).
+*   **Structure:** This means `ucont` is allocated using the **node-based indexing** scheme (`0..IM`, `0..JM`, `0..KM`) corresponding to the `M x N x P` grid layout. Each storage location `(i,j,k)` holds `DOF=3` scalar values (accessed as `ucont[k][j][i].x`, `.y`, `.z`).
+*   **Total Slots:** `(IM+1) * (JM+1) * (KM+1)` locations, each holding 3 scalars.
+
+**2. Conceptual Meaning:**
+
+*   **Physical Quantity:** `ucont` represents the contravariant velocity components (U, V, W), which are equivalent to the **volume flux normal to the cell faces** in computational space (when multiplied by the Jacobian, which is often implicitly included in the way metrics are defined or used).
+*   **Location:** These fluxes physically occur **at the center of the cell faces**.
+    *   The U-component (related to `ucont.x`) exists on faces of constant computational coordinate `i` (the i-faces, `Fi`).
+    *   The V-component (related to `ucont.y`) exists on faces of constant computational coordinate `j` (the j-faces, `Fj`).
+    *   The W-component (related to `ucont.z`) exists on faces of constant computational coordinate `k` (the k-faces, `Fk`).
+
+**3. The Mapping Convention (Storage Index vs. Physical Face):**
+
+The code uses a specific convention to store these face-centered flux components within the node-indexed `ucont` array:
+
+*   **`ucont[k][j][i].x` stores the U-flux** (normal to the i-face) associated with the **face `Fi(i, j, k)`**. This is the face located *at* computational coordinate `i`, separating cell `C(i-1,j,k)` from `C(i,j,k)`. This mapping holds for face indices `i` from `0` to `IM`.
+*   **`ucont[k][j][i].y` stores the V-flux** (normal to the j-face) associated with the **face `Fj(i, j, k)`**. This is the face located *at* computational coordinate `j`, separating cell `C(i,j-1,k)` from `C(i,j,k)`. This mapping holds for face indices `j` from `0` to `JM`.
+*   **`ucont[k][j][i].z` stores the W-flux** (normal to the k-face) associated with the **face `Fk(i, j, k)`**. This is the face located *at* computational coordinate `k`, separating cell `C(i,j,k-1)` from `C(i,j,k)`. This mapping holds for face indices `k` from `0` to `KM`.
+
+**Code Evidence for the Mapping:**
+
+*   **`Contra2Cart` Averaging:**
+    *   `q[0] = 0.5 * (ucont[k][j][i-1].x + ucont[k][j][i].x)` averages the U-flux from face `Fi(i-1)` (stored at index `i-1`) and face `Fi(i)` (stored at index `i`) to approximate the U-flux at the center of cell `C(i)`.
+    *   Similar logic applies to `q[1]` using `.y` components at indices `j-1` and `j`, and `q[2]` using `.z` components at indices `k-1` and `k`.
+*   **`Convection` Flux Calculation:**
+    *   `ucon = ucont[k][j][i].x * 0.5` uses the value stored at index `i` (representing face `Fi(i)`) when calculating the advective transport across that specific i-face.
+    *   The loops for `fp2` (j-flux) use `ucont[k][j][i].y` with `j` as the loop index, and `fp3` (k-flux) uses `ucont[k][j][i].z` with `k` as the loop index, confirming the component-direction association.
+*   **`FormBCS` Boundary Setting:**
+    *   Sets `ucont[k][j][0].x` for BC at face `Fi(0)`.
+    *   Sets `ucont[k][0][i].y` for BC at face `Fj(0)`.
+    *   Sets `ucont[0][j][i].z` for BC at face `Fk(0)`.
+    *   (And similarly for upper boundary faces `Fi(IM)`, `Fj(JM)`, `Fk(KM)`).
+
+**4. Boundary vs. Interior for `ucont`:**
+
+*   This mapping convention applies identically to both **boundary faces** and **interior faces**.
+*   `ucont[k][j][0].x` is the flux across the physical boundary face `Fi(0)`. Its *value* is determined by `FormBCS`.
+*   `ucont[k][j][1].x` is the flux across the first interior face `Fi(1)`. Its *value* is determined by the flow solver (momentum update/projection).
+*   `ucont[k][j][IM].x` is the flux across the other physical boundary face `Fi(IM)`. Its *value* is determined by `FormBCS`.
+
+**5. Unused Components:**
+
+*   Crucially, at a specific storage location `ucont[k][j][i]`, only *one* of the `.x`, `.y`, or `.z` components has a direct physical meaning according to this convention.
+    *   At `ucont[k][j][i]`, only `.x` represents the flux (across face `Fi(i)`). The values stored in `.y` and `.z` at this location are irrelevant to face `Fi(i)`.
+    *   Similarly, `ucont[k][j][i].y` is meaningful for face `Fj(j)`, while `.x` and `.z` stored at `[k][j][i]` are not directly related to that face.
+*   These "unused" components at each storage location might contain zero, leftover values, or potentially temporary data depending on the solver implementation, but they don't represent the primary contravariant fluxes associated with that index according to the convention used in `Contra2Cart`, `Convection`, and `FormBCS`.
+
+**Markdown Table Summary for `ucont`**
+
+| Physical Face                   | Face Index `(i,j,k)` Range         | Type      | `ucont` Storage Index `[k][j][i]` Used | Component Used | Physical Meaning of Stored Value                                     |
+| :------------------------------ | :--------------------------------- | :-------- | :------------------------------------ | :------------- | :------------------------------------------------------------------- |
+| **Interior i-Face `Fi(i,j,k)`** | `1 <= i <= IM-1` <br> `0 <= j <= JM-1` <br> `0 <= k <= KM-1` | Interior  | `[k][j][i]`                         | `.x`           | U-flux across face `Fi(i,j,k)` (Calculated by solver)              |
+| **Boundary i-Face `Fi(0,j,k)`** | `i=0` <br> `0 <= j <= JM-1` <br> `0 <= k <= KM-1` | Boundary  | `[k][j][0]`                         | `.x`           | U-flux across face `Fi(0,j,k)` (Set by `FormBCS`)                   |
+| **Boundary i-Face `Fi(IM,j,k)`**| `i=IM` <br> `0 <= j <= JM-1` <br> `0 <= k <= KM-1` | Boundary  | `[k][j][IM]`                        | `.x`           | U-flux across face `Fi(IM,j,k)` (Set by `FormBCS`)                  |
+| **Interior j-Face `Fj(i,j,k)`** | `0 <= i <= IM-1` <br> `1 <= j <= JM-1` <br> `0 <= k <= KM-1` | Interior  | `[k][j][i]`                         | `.y`           | V-flux across face `Fj(i,j,k)` (Calculated by solver)              |
+| **Boundary j-Face `Fj(i,0,k)`** | `0 <= i <= IM-1` <br> `j=0` <br> `0 <= k <= KM-1` | Boundary  | `[k][0][i]`                         | `.y`           | V-flux across face `Fj(i,0,k)` (Set by `FormBCS`)                   |
+| **Boundary j-Face `Fj(i,JM,k)`**| `0 <= i <= IM-1` <br> `j=JM` <br> `0 <= k <= KM-1` | Boundary  | `[k][JM][i]`                        | `.y`           | V-flux across face `Fj(i,JM,k)` (Set by `FormBCS`)                  |
+| **Interior k-Face `Fk(i,j,k)`** | `0 <= i <= IM-1` <br> `0 <= j <= JM-1` <br> `1 <= k <= KM-1` | Interior  | `[k][j][i]`                         | `.z`           | W-flux across face `Fk(i,j,k)` (Calculated by solver)              |
+| **Boundary k-Face `Fk(i,j,0)`** | `0 <= i <= IM-1` <br> `0 <= j <= JM-1` <br> `k=0` | Boundary  | `[0][j][i]`                         | `.z`           | W-flux across face `Fk(i,j,0)` (Set by `FormBCS`)                   |
+| **Boundary k-Face `Fk(i,j,KM)`**| `0 <= i <= IM-1` <br> `0 <= j <= JM-1` <br> `k=KM` | Boundary  | `[KM][j][i]`                        | `.z`           | W-flux across face `Fk(i,j,KM)` (Set by `FormBCS`)                  |
+| *Unused Components*             | *Any index*                        | N/A       | `[k][j][i]`                         | `.y`, `.z`     | *No direct meaning for flux across face `Fi(i,j,k)`*               |
+|                                 |                                    |           | `[k][j][i]`                         | `.x`, `.z`     | *No direct meaning for flux across face `Fj(i,j,k)`*               |
+|                                 |                                    |           | `[k][j][i]`                         | `.x`, `.y`     | *No direct meaning for flux across face `Fk(i,j,k)`*               |
+
+This table clarifies that while `ucont[k][j][i]` stores 3 values, only one component (`.x`, `.y`, or `.z`) at that index `(i,j,k)` corresponds to the physical flux across the respective face (`Fi(i)`, `Fj(j)`, or `Fk(k)`).
 
 **1. Total Size of `ucont`:**
 
