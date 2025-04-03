@@ -421,10 +421,46 @@ This table clarifies that while `ucont[k][j][i]` stores 3 values, only one compo
 | **Total Meaningful Flux Values**| Sum of Interior and Boundary Flux Scalars        | N/A                                                             | 450                                   |
 | **Unused Scalar Slots**         | Allocated scalar slots not holding meaningful flux | Components `.y`,`.z` at i-face indices; `.x`,`.z` at j-face; etc. | 198                                   |
 
-![image](https://github.com/user-attachments/assets/46890cac-7c6e-4326-8fdb-0aaf7a5dcfc1)
+*** Physical Domain ***
+![image](https://github.com/user-attachments/assets/8df1521d-934f-4811-8124-31e83a36cef1)
 ![image](https://github.com/user-attachments/assets/f202afcf-d434-4f5b-8565-b215042199ad)
 ![image](https://github.com/user-attachments/assets/1dfad9bb-01ff-48d9-9c0e-7c5f8d348dc8)
 ![image](https://github.com/user-attachments/assets/ff4ea445-7831-468f-9e82-f636190340c1)
 ![image](https://github.com/user-attachments/assets/a2255c03-6a7c-4a5a-9db6-ae098f59d318)
 ![image](https://github.com/user-attachments/assets/72ed5af8-e0d3-4d9a-a019-0952f6b44a2c)
 
+*** Domain Decomposition ***
+Here's a summary table and illustrative plots explaining the indexing and data access for Global vs. Local PETSc DMDA vectors.
+
+**Summary Table: Global vs. Local Vectors (DMDA)**
+
+| Feature             | Global Vector (`globalV`)                                   | Local Vector (`localV`)                                                                 |
+| :------------------ | :---------------------------------------------------------- | :-------------------------------------------------------------------------------------- |
+| **Concept**         | Represents the entire domain's data, distributed.           | Represents data relevant to one process (owned + ghosts).                               |
+| **Data Location**   | Physically resides across multiple processes' memory.       | Resides entirely on a single process's memory.                                          |
+| **Data Content**    | Each process stores **only its owned** portion.             | Stores **owned portion + ghost/halo regions** (copies from neighbors + boundary space). |
+| **Creation**        | `DMCreateGlobalVector(dm, &globalV)`                        | `DMCreateLocalVector(dm, &localV)`                                                      |
+| **Array Access**    | `DMDAVecGetArray(dm, globalV, &arr)`                        | `DMDAVecGetArray(dm, localV, &arr)`                                                     |
+| **Index Meaning**   | Array index `arr[i]` refers to **global index `i`**.        | Array index `arr[i]` refers to **global index `i`**.                                  |
+| **Valid Index Range**| Only **owned** indices: `xs <= i < xe` (for 1D)           | **Owned + Ghost** indices: `gxs <= i < gxe` (for 1D)                                    |
+| **Size (Conceptual)**| Size of the entire domain grid.                             | Larger than owned portion; depends on owned size + stencil width `s`.                   |
+| **Primary Purpose** | Storing final solution/state, RHS/solution in solvers, I/O. | Work vector for computations involving stencils (derivatives, fluxes), applying BCs.      |
+| **Communication**   | Source for `DMGlobalToLocal`; Target for `DMLocalToGlobal`. | Target for `DMGlobalToLocal`; Source for `DMLocalToGlobal`.                             |
+
+---
+
+![image](https://github.com/user-attachments/assets/155f45a0-025a-46e9-aa5a-85ef4d7e8b3d)
+
+**Explanation of Figures:**
+
+*   **Top Row (Global Vector Access):**
+    *   Shows the full range of global node indices (0 to 9).
+    *   For each processor's subplot, only the blocks corresponding to the indices it *owns* are colored blue (`Owned Data`).
+    *   The gray blocks (`Not Accessible / Invalid`) represent data physically stored on *other* processors. Using `DMDAVecGetArray` on the global vector on this processor does *not* provide access to these gray regions.
+*   **Bottom Row (Local Vector Access):**
+    *   Shows the range of indices accessible in the local vector array for each processor (`gxs` to `gxe-1`). Note how this range extends beyond the owned indices.
+    *   Blue blocks (`Owned Data`) are the same as in the global view.
+    *   Light blue blocks (`Ghost (Neighbor Copy)`) represent indices within the physical domain (0-9) but owned by a different processor. After `DMGlobalToLocalBegin/End`, these blocks in the local vector contain copies of the data from the neighbor. For example, Proc 1's local vector has slots for indices 1 and 2 containing copies from Proc 0, and slots for indices 7 and 8 containing copies from Proc 2.
+    *   Light red blocks (`Ghost (Boundary Cond.)`) represent indices *outside* the physical domain (i < 0 or i >= M). These slots in the local vector are used by the boundary condition routines (like `FormBCS`) to store extrapolated values or apply other boundary treatments. Proc 0 uses indices -2, -1. Proc 2 uses indices 10, 11.
+
+This visualization clearly shows that while the *index number* always refers to the same physical grid location, the *accessibility* and *content* (owned vs. ghost) depend heavily on whether you are accessing a global or a local vector array. `DMGlobalToLocal` bridges this gap by populating the ghost regions of the local vector.
