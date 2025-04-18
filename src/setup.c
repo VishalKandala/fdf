@@ -22,6 +22,11 @@
 
  #include "setup.h"
 
+// Define a buffer size for error messages if not already available
+#ifndef ERROR_MSG_BUFFER_SIZE
+#define ERROR_MSG_BUFFER_SIZE 256 // Or use PETSC_MAX_PATH_LEN if appropriate
+#endif
+
  /**
     * @brief Register events for logging.
     * 
@@ -739,7 +744,7 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
              ierr = InterpolateAllFieldsToSwarm(user); CHKERRQ(ierr);
 
 	     // Scatter Particle Fields to Euler Field.
-	     //  ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
+	     ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
 	     
              // --- Initial Output ---
              if (OutputFreq > 0) { // Always output initial state if output is on
@@ -789,7 +794,7 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
         ierr = InterpolateAllFieldsToSwarm(user); CHKERRQ(ierr); // Calculates V_interp @ P(t+dt)
 
 	// --- Step 10: Scatter Fields from particles to grid
-	//ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
+	ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
 	LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Scattering particle fields to grid at new particle positions.\n", currentTime, step);
 
 	user->step = step + 1;
@@ -1058,6 +1063,163 @@ PetscErrorCode SetDMDAProcLayout(DM dm, UserCtx *user)
     PetscFunctionReturn(0);
 }
 
+//-----------------------------------------------------------------------------
+// MODULE (COUNT): Calculates Particle Count Per Cell - REVISED FOR DMDAVecGetArray
+//-----------------------------------------------------------------------------
+/**
+ * @brief Counts particles in each cell of the DMDA 'da' and stores the result in user->ParticleCount.
+ * @ingroup scatter_module
+ *
+ * Zeros the user->ParticleCount vector, then iterates through local particles.
+ * Reads the **GLOBAL** cell index (I, J, K) stored in the "DMSwarm_CellID" field.
+ * Uses DMDAVecGetArray to access the local portion of the count vector and increments
+ * the count at the global index (I, J, K) if it belongs to the local patch (including ghosts).
+ *
+ * @param[in,out] user Pointer to the UserCtx structure containing da, swarm, and ParticleCount.
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ */
+PetscErrorCode CalculateParticleCountPerCell(UserCtx *user) {
+    PetscErrorCode ierr;
+    DM             da = user->da;
+    DM             swarm = user->swarm;
+    Vec            countVec = user->ParticleCount;
+    PetscInt       nlocal, p;
+    PetscInt64       *global_cell_id_arr; // Read GLOBAL cell IDs
+    PetscScalar    ***count_arr_3d;     // Use 3D accessor
+    PetscInt64       *PID_arr;
+    PetscMPIInt    rank;
+    char           msg[ERROR_MSG_BUFFER_SIZE];
+    PetscInt       particles_counted_locally = 0;
+
+    PetscFunctionBeginUser;
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+
+    // --- Input Validation ---
+    if (!da) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx->da is NULL.");
+    if (!swarm) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx->swarm is NULL.");
+    if (!countVec) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx->ParticleCount is NULL.");
+    // Check DOF of da
+    PetscInt count_dof;
+    ierr = DMDAGetInfo(da, NULL, NULL, NULL, NULL, NULL, NULL, NULL, &count_dof, NULL, NULL, NULL, NULL, NULL); CHKERRQ(ierr);
+     if (count_dof != 1) { PetscSNPrintf(msg, sizeof(msg), "countDM must have DOF=1, got %d.", count_dof); SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG, msg); }
+
+    // --- Zero the count vector ---
+    ierr = VecSet(countVec, 0.0); CHKERRQ(ierr);
+
+    // --- Get Particle Data ---
+    LOG_ALLOW(GLOBAL,LOG_DEBUG, "CalculateParticleCountPerCell: Accessing particle data.\n");
+    ierr = DMSwarmGetLocalSize(swarm, &nlocal); CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm,"DMSwarm_CellID", NULL, NULL, (void **)&global_cell_id_arr); CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm,"DMSwarm_pid",NULL,NULL,(void **)&PID_arr);CHKERRQ(ierr);
+
+    // --- Get Grid Vector Array using DMDA accessor ---
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "CalculateParticleCountPerCell: Accessing ParticleCount vector array (using DMDAVecGetArray).\n");
+    ierr = DMDAVecGetArray(da, countVec, &count_arr_3d); CHKERRQ(ierr);
+
+    // Get local owned range for validation/logging if needed, but not for indexing with DMDAVecGetArray
+    PetscInt xs, ys, zs, xm, ym, zm;
+    ierr = DMDAGetCorners(da, &xs, &ys, &zs, &xm, &ym, &zm); CHKERRQ(ierr);
+
+    // --- Accumulate Counts Locally ---
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "CalculateParticleCountPerCell (Rank %d): Processing %d local particles using GLOBAL CellIDs.\n",rank,nlocal);
+    for (p = 0; p < nlocal; p++) {
+        // Read the GLOBAL indices stored for this particle
+        PetscInt64 i = global_cell_id_arr[p * 3 + 0]; // Global i index
+        PetscInt64 j = global_cell_id_arr[p * 3 + 1]; // Global j index
+        PetscInt64 k = global_cell_id_arr[p * 3 + 2]; // Global k index
+
+        // *** Bounds check is implicitly handled by DMDAVecGetArray for owned+ghost region ***
+        // However, accessing outside this region using global indices WILL cause an error.
+        // A preliminary check might still be wise if global IDs could be wild.
+        // We rely on LocateAllParticles to provide valid global indices [0..IM-1] etc.
+    // *** ADD PRINTF HERE ***
+	LOG_LOOP_ALLOW(LOCAL,LOG_DEBUG,p,100,"[Rank %d CalcCount] Read CellID for p=%d, PID = %ld: (%ld, %ld, %ld)\n", rank, p,PID_arr[p],i, j, k);
+    // *** END PRINTF ***
+        // *** Access the local array using GLOBAL indices ***
+        // DMDAVecGetArray allows this, mapping global (I,J,K) to the correct
+        // location within the local ghosted array segment.
+        // This assumes (I,J,K) corresponds to a cell within the local owned+ghost region.
+        // If (I,J,K) is for a cell owned by *another* rank (and not in the ghost region
+        // of this rank), accessing count_arr_3d[K][J][I] will likely lead to a crash
+        // or incorrect results. This highlights why storing LOCAL indices is preferred
+        // for parallel runs. But proceeding with GLOBAL as requested:
+        if (i >= xs && i < xs + xm  && 
+            j >= ys && j < ys + ym  && // Adjust based on actual ghost width
+            k >= zs && k < zs + zm  )   // This check prevents definite crashes but doesn't guarantee ownership
+        {
+             // Increment count at the location corresponding to GLOBAL index (I,J,K)
+	  //  LOG_ALLOW(LOCAL, LOG_DEBUG, "CalculateParticleCountPerCell (Rank %d): Particle %d with global CellID (%d, %d, %d) incremented with a particle.\n",rank, p, i, j, k);
+             count_arr_3d[k][j][i] += 1.0;
+             particles_counted_locally++;
+         } else {
+              // This particle's global ID is likely outside the range this rank handles (even ghosts)
+              LOG_ALLOW(LOCAL, LOG_DEBUG, "CalculateParticleCountPerCell (Rank %d): Skipping particle %ld with global CellID (%ld, %ld, %ld) - likely outside local+ghost range.\n",rank, PID_arr[p] , i, j, k);
+	}
+    }
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "CalculateParticleCountPerCell (Rank %d): Local counting finished. Processed %d particles locally.\n", rank, particles_counted_locally);
+
+    // --- Restore Access ---
+    ierr = DMDAVecRestoreArray(da, countVec, &count_arr_3d); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm,"DMSwarm_CellID", NULL, NULL, (void **)&global_cell_id_arr); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm,"DMSwarm_pid",NULL,NULL,(void **)&PID_arr);CHKERRQ(ierr);
+
+    // --- Assemble Global Vector ---
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "CalculateParticleCountPerCell: Assembling global ParticleCount vector.\n");
+    ierr = VecAssemblyBegin(countVec); CHKERRQ(ierr);
+    ierr = VecAssemblyEnd(countVec); CHKERRQ(ierr);
+
+    // --- Verification Logging ---
+    PetscReal total_counted_particles = 0.0, max_count_in_cell = 0.0;
+    ierr = VecSum(countVec, &total_counted_particles); CHKERRQ(ierr);
+    PetscInt max_idx_global = -1;
+    ierr = VecMax(countVec, &max_idx_global, &max_count_in_cell); CHKERRQ(ierr);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "CalculateParticleCountPerCell: Total counted globally = %.0f, Max count in cell = %.0f\n",
+              total_counted_particles, max_count_in_cell);
+
+    // --- ADD THIS DEBUGGING BLOCK ---
+    if (max_idx_global >= 0) { // Check if VecMax found a location
+         // Need to convert the flat global index back to 3D global index (I, J, K)
+         // Get global grid dimensions (Nodes, NOT Cells IM/JM/KM)
+         PetscInt M, N, P;
+         ierr = DMDAGetInfo(da, NULL, &M, &N, &P, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL); CHKERRQ(ierr);
+         // Note: Assuming DOF=1 for countVec, index mapping uses node dimensions M,N,P from DMDA creation (IM+1, etc)
+         // Re-check if your DMDA uses cell counts (IM) or node counts (IM+1) for Vec layout. Let's assume Node counts M,N,P.
+         PetscInt Kmax = max_idx_global / (M * N);
+         PetscInt Jmax = (max_idx_global % (M * N)) / M;
+         PetscInt Imax = max_idx_global % M;
+         LOG_ALLOW(GLOBAL, LOG_INFO, "  -> Max count located at global index (I,J,K) = (%d, %d, %d) [Flat index: %d]\n",
+                   (int)Imax, (int)Jmax, (int)Kmax, (int)max_idx_global);
+
+        // Also, let's explicitly check the count at (0,0,0)
+        PetscScalar count_at_origin = 0.0;
+        PetscScalar ***count_arr_for_check;
+        ierr = DMDAVecGetArrayRead(da, countVec, &count_arr_for_check); CHKERRQ(ierr);
+        // Check bounds before accessing - crucial if using global indices
+        PetscInt xs, ys, zs, xm, ym, zm;
+        ierr = DMDAGetCorners(da, &xs, &ys, &zs, &xm, &ym, &zm); CHKERRQ(ierr);
+        if (0 >= xs && 0 < xs+xm && 0 >= ys && 0 < ys+ym && 0 >= zs && 0 < zs+zm) {
+             count_at_origin = count_arr_for_check[0][0][0]; // Access using global index (0,0,0)
+        } else {
+            // Origin is not on this rank (relevant for parallel, but check anyway)
+            count_at_origin = -999.0; // Indicate it wasn't accessible locally
+        }
+        ierr = DMDAVecRestoreArrayRead(da, countVec, &count_arr_for_check); CHKERRQ(ierr);
+        LOG_ALLOW(GLOBAL, LOG_INFO, "  -> Count at global index (0,0,0) = %.1f\n", count_at_origin);
+
+    } else {
+         LOG_ALLOW(GLOBAL, LOG_WARNING, "  -> VecMax did not return a location for the maximum value.\n");
+    }
+    // --- END DEBUGGING BLOCK ---
+    
+    LOG_ALLOW(GLOBAL, LOG_INFO, "CalculateParticleCountPerCell: Particle counting complete.\n");
+
+    PetscFunctionReturn(0);
+}
+
+// NOTE: AccumulateParticleField also needs the same modification if it is to handle global CellIDs
+// and use DMDAVecGetArray/DMDAVecGetArrayDOF
+
 
 /**
  * @brief Counts particles in each cell of the DMDA 'da' and stores the result in user->ParticleCount.
@@ -1069,6 +1231,7 @@ PetscErrorCode SetDMDAProcLayout(DM dm, UserCtx *user)
  * @param[in,out] user Pointer to the UserCtx structure containing da, swarm, and ParticleCount.
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
+/*
 PetscErrorCode CalculateParticleCountPerCell(UserCtx *user) {
     PetscErrorCode ierr;
     DM             da = user->da;
@@ -1157,3 +1320,4 @@ PetscErrorCode CalculateParticleCountPerCell(UserCtx *user) {
     LOG_ALLOW(GLOBAL, LOG_INFO, "CalculateParticleCountPerCell: Particle counting complete.\n");    
     PetscFunctionReturn(0);
 }
+*/

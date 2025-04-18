@@ -1480,16 +1480,16 @@ PetscErrorCode GetScatterTargetInfo(UserCtx *user, const char *particleFieldName
 PetscErrorCode AccumulateParticleField(DM swarm, const char *particleFieldName,
                                        DM gridSumDM, Vec gridSumVec)
 {
-    PetscErrorCode  ierr;
-    PetscInt        dof;                   // DOF determined from gridSumDM
-    PetscInt        nlocal, p;             // Local particle count and loop index
-    const PetscReal *particle_arr = NULL;  // Pointer to particle field data array (assuming Real)
-    const PetscInt  *cell_id_arr = NULL;   // Pointer to particle cell ID array ("DMSwarm_CellID", Int)
-    PetscScalar     *sum_arr_ptr = NULL;   // Pointer to grid sum vector data array (Scalar)
-    PetscInt        gxs, gys, gzs;         // Start indices of local ghosted patch (often 0)
-    PetscInt        gxm, gym, gzm;         // Dimensions of local ghosted patch (including ghosts)
-    PetscMPIInt     rank;                  // MPI rank for logging
-    char            msg[ERROR_MSG_BUFFER_SIZE]; // Buffer for formatted error messages
+    PetscErrorCode    ierr;
+    PetscInt          dof;                   // DOF determined from gridSumDM
+    PetscInt          nlocal, p;             // Local particle count and loop index
+    const PetscReal   *particle_arr = NULL;  // Pointer to particle field data array (assuming Real)
+    const PetscInt64  *cell_id_arr = NULL;   // Pointer to particle cell ID array ("DMSwarm_CellID", Int)
+    PetscScalar       *sum_arr_ptr = NULL;   // Pointer to grid sum vector data array (Scalar)
+    PetscInt          gxs, gys, gzs;         // Start indices of local ghosted patch (often 0)
+    PetscInt          gxm, gym, gzm;         // Dimensions of local ghosted patch (including ghosts)
+    PetscMPIInt       rank;                  // MPI rank for logging
+    char              msg[ERROR_MSG_BUFFER_SIZE]; // Buffer for formatted error messages
 
     PetscFunctionBeginUser;
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
