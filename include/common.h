@@ -63,7 +63,19 @@ typedef struct {
     Cmpnts loc;         /**< Location of the particle in 3D space. */
     Cmpnts vel;         /**< Velocity of the particle in 3D space. */
     Cmpnts weights;     /**< Weights associated with the particle (e.g., for interpolation). */
+  //PetscReal P;          // Pressure associated with the particle //
 } Particle;
+
+// Structure to hold neighbor ranks (using common directions)
+typedef struct {
+    PetscMPIInt rank_xm; // Neighbor at x-
+    PetscMPIInt rank_xp; // Neighbor at x+
+    PetscMPIInt rank_ym; // Neighbor at y-
+    PetscMPIInt rank_yp; // Neighbor at y+
+    PetscMPIInt rank_zm; // Neighbor at z-
+    PetscMPIInt rank_zp; // Neighbor at z+
+    // Add edge/corner neighbors if needed later
+} RankNeighbors;
 
 /**
  * @brief Represents a cell in the computational grid with its eight vertices.
@@ -83,6 +95,8 @@ typedef struct {
     DM da;                  ///< Data structure for scalar fields.
     DM fda;                 ///< Data structure for vector fields.
     DM fda2;                  ///< Data structure for RANS fields.
+    PetscReal xMin,yMin,zMin; /// Minimum bounds of the grid.
+    PetscReal xMax,yMax,zMax; /// Maximum bounds of the grid.
     PetscInt IM, JM, KM;    ///< Global grid dimensions in x, y, z directions.
     BoundingBox bbox;       ///< Bounding box for the local grid domain.
     DMDALocalInfo info;     ///< Local information about the DMDA.
@@ -91,13 +105,16 @@ typedef struct {
     PetscReal rz;           // Stretching ratio in z-direction
 
     // Simulation fields
-    Vec Ucont;              ///< Contravariant velocity field.
-    Vec Ucat;               ///< Cartesian velocity field.
-    Vec P;                  ///< Pressure field.
-    Vec Nvert;              ///< Node state field (fluid, solid, etc.).
-    Vec Nvert_o;            ///< Node state field in the previous timestep.
-    Vec lUcont, lNvert;     ///< Local versions of Ucont and Nvert.
-
+    Vec Ucont,lUcont;              ///< Contravariant velocity field.
+    Vec Ucat, lUcat;               ///< Cartesian velocity field.
+    Vec P, lP;                  ///< Pressure field.
+    Vec Nvert, lNvert;              ///< Node state field (fluid, solid, etc.).
+    Vec Nvert_o, lNvert_o;            ///< Node state field in the previous timestep.
+    PetscReal ConstantVelocity;
+    PetscReal ConstantContra;
+    PetscReal ConstantPressure;
+    PetscReal ConstantNvert;
+  
     // Statistical fields
     Vec Ucat_sum;           ///< Sum of Cartesian velocity for averaging.
     Vec Ucat_cross_sum;     ///< Cross-product sum of Cartesian velocities.
@@ -111,25 +128,32 @@ typedef struct {
     // RANS-specific fields
     Vec K_Omega;            ///< Turbulent kinetic energy (K) and specific dissipation rate (Omega).
     Vec K_Omega_o;          ///< Old values of K_Omega for time-stepping.
-  Vec lK_Omega,lK_Omega_o;  ///< Local K_Omega and old K_Omega for each process.
+    Vec lK_Omega,lK_Omega_o;  ///< Local K_Omega and old K_Omega for each process.
 
     // Particle-related fields
     DM swarm;               ///< Particle data structure using DMSwarm.
     PetscMPIInt *miglist;      ///< List of ranks for particle migration.
     PetscInt ParticleInitialization;
+    PetscInt NumberofParticles;   /// No.of particles in the domain.
+    Vec ParticleCount;        /// Count of number of particles in each cell.
 
     // Simulation parameters
     PetscReal dt;           ///< Time step.
     PetscReal ren;          ///< Reynolds number.
-
+    PetscReal ti;            ///< Current time.
+    PetscReal step;            /// Current Timestep Index.
+    PetscInt  FieldInitialization;
+    PetscInt  LoggingFrequency;  // Logging frequency for particle data logging (LOG_PARTICLE_FIELDS)
+  
     // Flags for simulation modes
     PetscBool averaging;    ///< Flag to indicate whether statistical averaging is enabled.
     PetscBool les;          ///< Flag to indicate if LES is active.
     PetscBool rans;         ///< Flag to indicate if RANS is active.
+    RankNeighbors neighbors;  // Neighbor ranks
 
     // Miscellaneous fields
     PetscInt _this;         ///< Current block index.
-    PetscInt ti;            ///< Current timestep index.
+  
 } UserCtx;
 
 /* --------------------------------------------------------------------
@@ -276,5 +300,11 @@ typedef enum {
     NUM_FACES    /**< Total number of faces */
 } Face;
 
+// Structure to hold migration information for a particle
+typedef struct {
+    PetscInt local_index; // Original local index of the particle on this rank
+    PetscInt target_rank; // Rank this particle should migrate to
+    // Add PID if needed for debugging: PetscInt64 pid;
+} MigrationInfo;
 
 #endif // COMMON_H

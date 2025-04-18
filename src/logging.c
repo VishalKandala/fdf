@@ -96,7 +96,7 @@ void print_log_level() {
                              (level == LOG_DEBUG)   ? "DEBUG" :
                              (level == LOG_PROFILE) ? "PROFILE" : "UNKNOWN";
     
-    LOG(GLOBAL, LOG_INFO, "Current log level: %s (%d)\n", level_name, level);
+    PetscPrintf(PETSC_COMM_WORLD,"Current log level: %s (%d)\n", level_name, level);
 }
 
 
@@ -354,7 +354,7 @@ static void BuildRowFormatString(PetscMPIInt wRank, PetscInt wPID, PetscInt wCel
     // We assume that the Rank is an int (%d), PID is a 64-bit int (%ld)
     // and the remaining columns are strings (which have been formatted already).
     snprintf(fmtStr, bufSize,
-             "| %%-%dd | %%-%ldld | %%-%lds | %%-%lds | %%-%lds | %%-%lds |\n",
+             "| %%-%dd | %%-%dd | %%-%ds | %%-%ds | %%-%ds | %%-%ds |\n",
              wRank, wPID, wCell, wPos, wVel, wWt);
 }
 
@@ -402,7 +402,7 @@ PetscErrorCode LOG_PARTICLE_FIELDS(UserCtx* user, PetscInt printInterval)
     LOG_ALLOW(GLOBAL,LOG_INFO, "PrintParticleFields - Rank %d is retrieving particle data.\n", rank);
 
     ierr = DMSwarmGetLocalSize(swarm, &localNumParticles); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL,LOG_DEBUG,"PrintParticleFields - Rank %d has %ld particles.\n", rank, localNumParticles);
+    LOG_ALLOW(GLOBAL,LOG_DEBUG,"PrintParticleFields - Rank %d has %d particles.\n", rank, localNumParticles);
 
     ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
     ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&particleIDs); CHKERRQ(ierr);
@@ -497,9 +497,9 @@ PetscErrorCode LOG_PARTICLE_FIELDS(UserCtx* user, PetscInt printInterval)
  
      ierr = VecDuplicate(positionVec, &analyticalvelocityVec); CHKERRQ(ierr);
      ierr = VecCopy(positionVec, analyticalvelocityVec); CHKERRQ(ierr);
-
+     
      LOG_ALLOW(GLOBAL, LOG_DEBUG, "LOG_INTERPOLATION_ERROR - Applying analytical solution to position vector.\n");
-     ierr = SetAnalyticalSolution(analyticalvelocityVec); CHKERRQ(ierr);
+     ierr = SetAnalyticalSolution(analyticalvelocityVec,user->FieldInitialization); CHKERRQ(ierr);
 
      ierr = VecDuplicate(analyticalvelocityVec, &errorVec); CHKERRQ(ierr);
      ierr = VecCopy(analyticalvelocityVec, errorVec); CHKERRQ(ierr);

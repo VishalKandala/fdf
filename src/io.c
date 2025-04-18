@@ -19,9 +19,11 @@
  *
  * @param[in,out] user      Pointer to the UserCtx structure containing grid details.
  * @param[out] grid1d       Pointer to flag indicating if the grid is 1D (1) or 3D (0).
- * @param[out] L_x          Pointer to domain length in the x-direction.
- * @param[out] L_y          Pointer to domain length in the y-direction.
- * @param[out] L_z          Pointer to domain length in the z-direction.
+ * @param[out]    xMax          Pointer to store the upper bound in x-direction.
+ * @param[out]    yMin          Pointer to store the lower bound in y-direction.
+ * @param[out]    yMax          Pointer to store the upper bound in y-direction.
+ * @param[out]    zMin          Pointer to store the lower bound in z-direction.
+ * @param[out]    zMax          Pointer to store the upper bound in z-direction.
  * @param[out] imm          Pointer to array storing the i-dimensions of each block.
  * @param[out] jmm          Pointer to array storing the j-dimensions of each block.
  * @param[out] kmm          Pointer to array storing the k-dimensions of each block.
@@ -29,8 +31,9 @@
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode ReadGridGenerationInputs(UserCtx *user, PetscInt *grid1d, PetscReal *L_x, PetscReal *L_y, PetscReal *L_z,
-                                        PetscInt **imm, PetscInt **jmm, PetscInt **kmm, PetscInt *nblk) {
+PetscErrorCode ReadGridGenerationInputs(UserCtx *user, PetscInt *grid1d, PetscReal *xMin, PetscReal *xMax,
+                               PetscReal *yMin, PetscReal *yMax, PetscReal *zMin, PetscReal *zMax,  PetscInt **imm, PetscInt **jmm, PetscInt **kmm,
+                               PetscInt *nblk ){
     PetscErrorCode ierr;
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridGenerationInputs - Reading grid generation parameters.\n");
@@ -45,14 +48,17 @@ PetscErrorCode ReadGridGenerationInputs(UserCtx *user, PetscInt *grid1d, PetscRe
 
     // Read grid dimensions, number of blocks and stretching ratios.
     ierr = PetscOptionsGetInt(NULL, NULL, "-nblk", nblk, NULL); CHKERRQ(ierr);
-    ierr = PetscOptionsGetReal(NULL, NULL, "-L_x", L_x, NULL); CHKERRQ(ierr);
-    ierr = PetscOptionsGetReal(NULL, NULL, "-L_y", L_y, NULL); CHKERRQ(ierr);
-    ierr = PetscOptionsGetReal(NULL, NULL, "-L_z", L_z, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-xMin", xMin, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-yMin", yMin, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-zMin", zMin, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-xMax", xMax, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-yMax", yMax, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-zMax", zMax, NULL); CHKERRQ(ierr);
     ierr = PetscOptionsGetReal(NULL, NULL, "-r_x", &user->rx, NULL); CHKERRQ(ierr);
     ierr = PetscOptionsGetReal(NULL, NULL, "-r_y", &user->ry, NULL); CHKERRQ(ierr);
     ierr = PetscOptionsGetReal(NULL, NULL, "-r_z", &user->rz, NULL); CHKERRQ(ierr);
     
-    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridGenerationInputs - Number of grid blocks: %ld.\n", *nblk);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridGenerationInputs - Number of grid blocks: %d.\n", *nblk);
   
     // Ensure if 'nblk' is not mentioned in the control.dat file, the default value is set to 1.
     if(*nblk==0) *nblk = 1;
@@ -108,9 +114,9 @@ PetscErrorCode ReadGridFile(const char *filename, PetscInt *nblk, PetscInt **imm
         }
 
         // Read number of blocks
-        fscanf(fd, "%ld\n", nblk);
+        fscanf(fd, "%d\n", nblk);
 
-	LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridGridFile - Number of grid blocks: %ld.\n", *nblk);
+	LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridGridFile - Number of grid blocks: %d.\n", *nblk);
   
 	// Ensure if 'nblk' is not mentioned in the control.dat file, the default value is set to 1.
 	if(*nblk==0) *nblk = 1;
@@ -143,7 +149,7 @@ PetscErrorCode ReadGridFile(const char *filename, PetscInt *nblk, PetscInt **imm
     ierr = MPI_Bcast(kmm, *nblk, MPI_INT, 0, comm); CHKERRQ(ierr);
     ierr = MPI_Bcast(grid1d, 1, MPI_INT, 0, comm); CHKERRQ(ierr);
 
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadGridFile - Blocks: nblk=%ld, grid1d=%ld.\n", *nblk, *grid1d);
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadGridFile - Blocks: nblk=%d, grid1d=%d.\n", *nblk, *grid1d);
     LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridFile - Grid file data retrieved successfully.\n");
 
     return 0;
@@ -165,53 +171,65 @@ PetscErrorCode ReadGridFile(const char *filename, PetscInt *nblk, PetscInt **imm
  */
 PetscErrorCode ReadFieldData(UserCtx *user, const char *field_name, Vec field_vec, PetscInt ti, const char *ext)
 {
-    PetscErrorCode ierr;   // PETSc error handling
-    PetscViewer viewer;    // PETSc binary viewer for reading files
-    char filename[256];    // File name buffer
-    PetscBool fileExists;  // Flag to check file existence
-    PetscMPIInt rank;         // MPI rank
+    PetscErrorCode ierr, ierr_load; // Use a separate variable for VecLoad's potential error
+    PetscViewer    viewer;
+    char           filename[PETSC_MAX_PATH_LEN]; // Use PETSc constant
+    PetscBool      fileExists;
+    PetscMPIInt    rank;
 
+    PetscFunctionBeginUser; // Use User version
     // Validate inputs
     if (!user || !field_name || !field_vec || !ext) {
-        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, 
-                "ReadFieldData - Null argument provided (user, field, vec, or extension).");
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "ReadFieldData - Null argument provided.");
     }
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr); // Use CHKERRQ for MPI errors
 
-    // Retrieve MPI rank
-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
-
-    // Construct the file name
-    user->_this = 0; // Bad hack for now! until the use of _this is figured out! 
-    snprintf(filename, sizeof(filename), "results/%s%05ld_%ld.%s", field_name, ti, user->_this, ext);
+    // Construct filename
+    // Consider making results directory path configurable
+    ierr = PetscSNPrintf(filename, sizeof(filename), "results/%s%05" PetscInt_FMT "_%d.%s", field_name, ti, 0 /*user->_this placeholder*/, ext); CHKERRQ(ierr);
 
     LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadFieldData - Attempting to read file: %s\n", filename);
 
-    // Check if the file exists before attempting to open it
+    // Check file existence
     ierr = PetscTestFile(filename, FILE_MODE_READ, &fileExists); CHKERRQ(ierr);
     if (!fileExists) {
-    LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadFieldData - File '%s' does not exist.\n", filename);
-    char err_msg[512];
-    PetscSNPrintf(err_msg, sizeof(err_msg), 
-              "ReadFieldData - Could not open file '%s' for reading. File does not exist.", 
-              filename);
-    SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FILE_OPEN, err_msg);
-}  
-    // Attempt to open the file
-    ierr = PetscViewerBinaryOpen(PETSC_COMM_WORLD, filename, FILE_MODE_READ, &viewer);
-    if (ierr) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadFieldData - Failed to open file: %s. Skipping this field.\n", filename);
-        return 0; // Continue execution despite missing file
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadFieldData - File '%s' does not exist. Skipping field read.\n", filename);
+        // Return a specific error code that the caller (ReadAllSwarmFields) can check
+        PetscFunctionReturn(PETSC_ERR_FILE_OPEN);
     }
 
-    // Load data into the vector
-    ierr = VecLoad(field_vec, viewer); CHKERRQ(ierr);
+    // Open the viewer
+    ierr = PetscViewerBinaryOpen(PETSC_COMM_WORLD, filename, FILE_MODE_READ, &viewer);
+    // Handle viewer open error separately - might be permissions etc.
+    if (ierr) {
+         LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadFieldData - PetscViewerBinaryOpen failed for '%s' (Error code %d). Skipping field read.\n", filename, ierr);
+         // We still want to return PETSC_ERR_FILE_OPEN to the caller
+         PetscFunctionReturn(PETSC_ERR_FILE_OPEN);
+    }
 
-    // Close the file viewer
-    ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
+    // Attempt to load data, store return code separately
+    ierr_load = VecLoad(field_vec, viewer);
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadFieldData - Successfully loaded data for field: %s\n", field_name);
+    // Always destroy the viewer
+    ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr); // Use CHKERRQ for critical errors like viewer destroy failure
 
-    return 0;
+    // Check the return code from VecLoad *after* destroying the viewer
+    if (ierr_load) {
+        // An error occurred during VecLoad (e.g., size mismatch, corrupted data)
+        LOG_ALLOW(GLOBAL, LOG_WARNING,"ReadFieldData - VecLoad failed for file '%s' (Error code %d). Vector data may be incorrect/incomplete. Continuing post-processing.\n", filename, ierr_load);
+        // Decide how to proceed. Returning 0 allows post-processing to continue,
+        // but the vector might be in an inconsistent state (e.g., wrong size
+        // if the resize failed internally before erroring).
+        // Returning the error might be safer if subsequent steps rely on valid data.
+        // Let's return 0 for now, assuming the caller checks vector size.
+        PetscFunctionReturn(0);
+         // Alternatively, return the specific error:
+         // PetscFunctionReturn(ierr_load);
+    }
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadFieldData - Successfully loaded data for field: %s from %s\n", field_name, filename);
+
+    PetscFunctionReturn(0);
 }
 
 /**
@@ -243,6 +261,9 @@ PetscErrorCode ReadSimulationFields(UserCtx *user,PetscInt ti)
 
     // Read node state field (nvert)
     ierr = ReadFieldData(user, "nvfield", user->Nvert_o, ti, "dat"); CHKERRQ(ierr);
+
+    // Read Particle Count field
+    ierr = ReadFieldData(user, "ParticleCount", user->ParticleCount, ti, "dat"); CHKERRQ(ierr);
 
     // Process LES fields if enabled
     if (user->les) {
@@ -372,7 +393,7 @@ PetscErrorCode WriteFieldData(UserCtx *user, const char *field_name, Vec field_v
     char filen[128];
 
     // Construct the file name
-    snprintf(filen, sizeof(filen), "results/%s%05ld_%ld.%s", field_name, ti, user->_this, ext);
+    snprintf(filen, sizeof(filen), "results/%s%05d_%d.%s", field_name, ti, user->_this, ext);
 
     LOG_ALLOW(GLOBAL, LOG_DEBUG, "WriteFieldData - Attempting to write file: %s\n", filen);
 
@@ -408,16 +429,18 @@ PetscErrorCode WriteSimulationFields(UserCtx *user)
     LOG_ALLOW(GLOBAL, LOG_INFO, "WriteSimulationFields - Starting to write simulation fields.\n");
 
     // Write contravariant velocity field
-    ierr = WriteFieldData(user, "vfield", user->Ucont, user->ti, "dat"); CHKERRQ(ierr);
+    ierr = WriteFieldData(user, "vfield", user->Ucont, user->step, "dat"); CHKERRQ(ierr);
 
     // Write Cartesian velocity field
-    ierr = WriteFieldData(user, "ufield", user->Ucat, user->ti, "dat"); CHKERRQ(ierr);
+    ierr = WriteFieldData(user, "ufield", user->Ucat, user->step, "dat"); CHKERRQ(ierr);
 
     // Write pressure field
-    ierr = WriteFieldData(user, "pfield", user->P, user->ti, "dat"); CHKERRQ(ierr);
+    ierr = WriteFieldData(user, "pfield", user->P, user->step, "dat"); CHKERRQ(ierr);
 
     // Write node state field (nvert)
-    ierr = WriteFieldData(user, "nvfield", user->Nvert, user->ti, "dat"); CHKERRQ(ierr);
+    ierr = WriteFieldData(user, "nvfield", user->Nvert, user->step, "dat"); CHKERRQ(ierr);
+
+    ierr = WriteFieldData(user, "ParticleCount",user->ParticleCount,user->step,"dat"); CHKERRQ(ierr);
 
     // Write LES fields if enabled
     if (user->les) {
@@ -455,10 +478,10 @@ PetscErrorCode WriteStatisticalFields(UserCtx *user)
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "WriteStatisticalFields - Starting to write statistical fields.\n");
 
-    ierr = WriteFieldData(user, "su0", user->Ucat_sum, user->ti, "dat"); CHKERRQ(ierr);
-    ierr = WriteFieldData(user, "su1", user->Ucat_cross_sum, user->ti, "dat"); CHKERRQ(ierr);
-    ierr = WriteFieldData(user, "su2", user->Ucat_square_sum, user->ti, "dat"); CHKERRQ(ierr);
-    ierr = WriteFieldData(user, "sp", user->P_sum, user->ti, "dat"); CHKERRQ(ierr);
+    ierr = WriteFieldData(user, "su0", user->Ucat_sum, user->step, "dat"); CHKERRQ(ierr);
+    ierr = WriteFieldData(user, "su1", user->Ucat_cross_sum, user->step, "dat"); CHKERRQ(ierr);
+    ierr = WriteFieldData(user, "su2", user->Ucat_square_sum, user->step, "dat"); CHKERRQ(ierr);
+    ierr = WriteFieldData(user, "sp", user->P_sum, user->step, "dat"); CHKERRQ(ierr);
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "WriteStatisticalFields - Finished writing statistical fields.\n");
 
@@ -485,7 +508,7 @@ PetscErrorCode WriteLESFields(UserCtx *user)
     VecDuplicate(user->P, &Cs);
     DMLocalToGlobalBegin(user->da, user->lCs, INSERT_VALUES, Cs);
     DMLocalToGlobalEnd(user->da, user->lCs, INSERT_VALUES, Cs);
-    ierr = WriteFieldData(user, "cs", Cs, user->ti, "dat"); CHKERRQ(ierr);
+    ierr = WriteFieldData(user, "cs", Cs, user->step, "dat"); CHKERRQ(ierr);
     VecDestroy(&Cs);
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "WriteLESFields - Finished writing LES fields.\n");
@@ -509,7 +532,7 @@ PetscErrorCode WriteRANSFields(UserCtx *user)
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "WriteRANSFields - Starting to write RANS fields.\n");
 
-    ierr = WriteFieldData(user, "kfield", user->K_Omega, user->ti, "dat"); CHKERRQ(ierr);
+    ierr = WriteFieldData(user, "kfield", user->K_Omega, user->step, "dat"); CHKERRQ(ierr);
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "WriteRANSFields - Finished writing RANS fields.\n");
 
@@ -705,7 +728,7 @@ PetscInt ReadDataFileToArray(const char   *filename,
         }
 
         LOG_ALLOW(GLOBAL, LOG_DEBUG,
-                  "ReadDataFileToArray - File '%s' has %ld lines.\n",
+                  "ReadDataFileToArray - File '%s' has %d lines.\n",
                   filename, N);
 
         /* (3b) Allocate array on rank 0. */
@@ -732,7 +755,7 @@ PetscInt ReadDataFileToArray(const char   *filename,
         fclose(fp);
 
         LOG_ALLOW(GLOBAL, LOG_INFO,
-                  "ReadDataFileToArray - Successfully read %ld values from '%s'.\n",
+                  "ReadDataFileToArray - Successfully read %d values from '%s'.\n",
                   N, filename);
     }
 
@@ -758,7 +781,7 @@ PetscInt ReadDataFileToArray(const char   *filename,
     *Nout     = N;
 
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "ReadDataFileToArray - Done. Provided array of length=%ld to all ranks.\n",
+              "ReadDataFileToArray - Done. Provided array of length=%d to all ranks.\n",
               N);
     return 0; /* success */
 }
@@ -779,12 +802,12 @@ PetscInt ReadDataFileToArray(const char   *filename,
 PetscInt WriteVTKAppendedBlock(FILE *fp, const void *data, PetscInt num_elements, size_t element_size) {
 
     // Log the function call with parameters
-  LOG_ALLOW_SYNC(LOCAL,LOG_INFO,"WriteVTKAppendedBlock - Called with %ld elements, each of size %zu bytes.\n",
+  LOG_ALLOW_SYNC(LOCAL,LOG_INFO,"WriteVTKAppendedBlock - Called with %d elements, each of size %zu bytes.\n",
                    num_elements, element_size);
 
     // Calculate the block size
     PetscInt block_size = num_elements * (PetscInt)element_size;
-    LOG_ALLOW_SYNC(LOCAL, LOG_DEBUG, "WriteVTKAppendedBlock - Calculated block size: %ld bytes.\n", block_size);
+    LOG_ALLOW_SYNC(LOCAL, LOG_DEBUG, "WriteVTKAppendedBlock - Calculated block size: %d bytes.\n", block_size);
 
     // Write the block size as a 4-byte integer
     if (fwrite(&block_size, sizeof(PetscInt), 1, fp) != 1) {
@@ -801,7 +824,7 @@ PetscInt WriteVTKAppendedBlock(FILE *fp, const void *data, PetscInt num_elements
     }
 
     // Log success
-    LOG_ALLOW_SYNC(LOCAL, LOG_INFO, "WriteVTKAppendedBlock - Successfully wrote block of %ld bytes.\n", block_size);
+    LOG_ALLOW_SYNC(LOCAL, LOG_INFO, "WriteVTKAppendedBlock - Successfully wrote block of %d bytes.\n", block_size);
 
     return 0; // Success
 }
@@ -838,7 +861,7 @@ static PetscInt WriteVTSXMLHeader(FILE       *fp,
 {
     // Log the entry into this function and the parameters
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "WriteVTSXMLHeader - Writing .vts header (fieldName=%s, numComponents=%ld,boffset=%ld,mx=%ld, my=%ld, mz=%ld, nnodes=%ld).\n",fieldName,numComponents,boffset,
+              "WriteVTSXMLHeader - Writing .vts header (fieldName=%s, numComponents=%d,boffset=%d,mx=%d, my=%d, mz=%d, nnodes=%d).\n",fieldName,numComponents,boffset,
               mx, my, mz, nnodes);
 
     // Set XML configuration strings
@@ -849,29 +872,29 @@ static PetscInt WriteVTSXMLHeader(FILE       *fp,
     fprintf(fp, "<?xml version=\"1.0\"?>\n");
     fprintf(fp, "<VTKFile type=\"StructuredGrid\" version=\"0.1\" byte_order=\"%s\">\n",
             byte_order);
-    fprintf(fp, "  <StructuredGrid WholeExtent=\"%d %ld %d %ld %d %ld\">\n",
+    fprintf(fp, "  <StructuredGrid WholeExtent=\"%d %d %d %d %d %d\">\n",
             0, mx-1, 0, my-1, 0, mz-1);
-    fprintf(fp, "    <Piece Extent=\"%d %ld %d %ld %d %ld\">\n",
+    fprintf(fp, "    <Piece Extent=\"%d %d %d %d %d %d\">\n",
             0, mx-1, 0, my-1, 0, mz-1);
 
     // Points section
     fprintf(fp, "      <Points>\n");
     fprintf(fp, "        <DataArray type=\"%s\" Name=\"Position\" NumberOfComponents=\"3\" "
-                "format=\"appended\" offset=\"%ld\" />\n",
+                "format=\"appended\" offset=\"%d\" />\n",
             precision, boffset);
     boffset += (PetscInt)sizeof(PetscInt) + 3 * nnodes * (PetscInt)sizeof(double);
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "WriteVTSXMLHeader - Updated offset to %ld after Points.\n", boffset);
+              "WriteVTSXMLHeader - Updated offset to %d after Points.\n", boffset);
     fprintf(fp, "      </Points>\n");
 
     // PointData => "ufield,vfield,p
     fprintf(fp, "      <PointData Scalars=\"%s\">\n", fieldName);
-    fprintf(fp, "        <DataArray type=\"%s\" Name=\"%s\" NumberOfComponents=\"%ld\" "
-                "format=\"appended\" offset=\"%ld\" />\n",
+    fprintf(fp, "        <DataArray type=\"%s\" Name=\"%s\" NumberOfComponents=\"%d\" "
+                "format=\"appended\" offset=\"%d\" />\n",
             precision, fieldName, numComponents,boffset);
     boffset += (PetscInt)sizeof(PetscInt) + nnodes * numComponents * (PetscInt)sizeof(double);
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "WriteVTSXMLHeader - Updated offset to %ld after PointData.\n", boffset);
+              "WriteVTSXMLHeader - Updated offset to %d after PointData.\n", boffset);
     fprintf(fp, "      </PointData>\n");
 
     // Close the piece and structured grid tags
@@ -887,7 +910,7 @@ static PetscInt WriteVTSXMLHeader(FILE       *fp,
 
     // Log successful completion
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "WriteVTSXMLHeader - Completed writing .vts header. New boffset=%ld.\n", boffset);
+              "WriteVTSXMLHeader - Completed writing .vts header. New boffset=%d.\n", boffset);
 
     return 0;
 }
@@ -935,20 +958,49 @@ static PetscInt WriteVTSXMLFooter(FILE *fp)
  *
  * @return PetscInt  Returns 0 on success.
  */
-static PetscInt WriteVTPXMLHeader(FILE *fp,
-                             PetscInt npoints,
-                             const char *fieldName,
-                             PetscInt numComponents,
-                             PetscInt boffset,
-                             PetscInt *boffsetOut)
+/**
+ * @brief Writes the XML header portion of a .vtp file for a point-cloud representation.
+ *
+ * This function sets up the appended data sections for point coordinates, a named field
+ * (e.g., velocity) with a specified number of components, and the connectivity/offsets data for
+ * each point as a vertex. The byte offset for the appended data is updated after each
+ * section. The data type for connectivity and offsets ("Int32" or "Int64") is now
+ * determined dynamically based on the size of PetscInt during compilation.
+ *
+ * @param[in]  fp            File pointer for writing the XML header (already open).
+ * @param[in]  npoints       Number of points in the point-cloud.
+ * @param[in]  fieldName     Name of the point data field (e.g., "velocity").
+ * @param[in]  numComponents Number of components in the fieldName array (e.g., 3 for velocity).
+ * @param[in]  boffset       Current byte offset into the appended data section.
+ * @param[out] boffsetOut    Updated byte offset after writing the header information.
+ *
+ * @return PetscInt  Returns 0 on success.
+ */
+static PetscInt WriteVTPXMLHeader(FILE       *fp,
+                                  PetscInt    npoints,
+                                  const char *fieldName,
+                                  PetscInt    numComponents,
+                                  PetscInt    boffset,
+                                  PetscInt   *boffsetOut)
 {
     // Log function entry with parameters
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "WriteVTPXMLHeader - Called with npoints=%ld, fieldName=%s, numComponents=%ld, boffset=%ld.\n",
+              "WriteVTPXMLHeader - Called with npoints=%d, fieldName=%s, numComponents=%d, boffset=%d.\n",
               npoints, fieldName, numComponents, boffset);
 
-    // We'll assume double precision => Float64
-    const char *precision = "Float64";
+    // Determine data types based on compilation settings
+    const char *precision     = "Float64"; // Assuming coordinates and field data are doubles
+    const char *int_type_str  = (sizeof(PetscInt) == 8) ? "Int64" : "Int32"; // Dynamic check for PetscInt size
+
+    // Pre-calculate byte sizes for data blocks
+    PetscInt points_bytes       = npoints * 3 * sizeof(double); // 3 components, double precision
+    PetscInt field_data_bytes   = npoints * numComponents * sizeof(double); // numComponents, double precision
+    PetscInt connectivity_bytes = npoints * sizeof(PetscInt); // Based on actual PetscInt size
+    PetscInt offsets_bytes      = npoints * sizeof(PetscInt); // Based on actual PetscInt size
+
+    LOG_ALLOW(GLOBAL, LOG_DEBUG,
+              "WriteVTPXMLHeader - Determined types: precision=%s, int_type=%s (sizeof(PetscInt)=%zu)\n",
+              precision, int_type_str, sizeof(PetscInt));
 
     // 1) Standard XML + <VTKFile> opening
     fprintf(fp, "<?xml version=\"1.0\"?>\n");
@@ -957,45 +1009,47 @@ static PetscInt WriteVTPXMLHeader(FILE *fp,
 
     // For simple point-cloud => #Verts = npoints
     fprintf(fp,
-            "    <Piece NumberOfPoints=\"%ld\" NumberOfVerts=\"%ld\" NumberOfLines=\"0\" NumberOfPolys=\"0\" NumberOfStrips=\"0\">\n",
+            "    <Piece NumberOfPoints=\"%d\" NumberOfVerts=\"%d\" NumberOfLines=\"0\" NumberOfPolys=\"0\" NumberOfStrips=\"0\">\n",
             npoints, npoints);
 
     // 2) Points => offset=boffset
     fprintf(fp, "      <Points>\n");
     fprintf(fp, "        <DataArray type=\"%s\" Name=\"Position\" NumberOfComponents=\"3\" "
-                "format=\"appended\" offset=\"%ld\"/>\n",
+                "format=\"appended\" offset=\"%d\"/>\n",
                 precision, boffset);
-    boffset += sizeof(PetscInt) + 3 * npoints * sizeof(double);
+    boffset += sizeof(PetscInt) + points_bytes; // Increment by size prefix + actual data bytes
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "WriteVTPXMLHeader - Updated offset to %ld after Points.\n", boffset);
+              "WriteVTPXMLHeader - Updated offset to %d after Points (%d bytes data).\n", boffset, points_bytes);
     fprintf(fp, "      </Points>\n");
 
     // 3) PointData => e.g. "velocity" => next offset
     fprintf(fp, "      <PointData>\n");
     fprintf(fp,
-            "        <DataArray type=\"%s\" Name=\"%s\" NumberOfComponents=\"%ld\" "
-            "format=\"appended\" offset=\"%ld\"/>\n",
+            "        <DataArray type=\"%s\" Name=\"%s\" NumberOfComponents=\"%d\" "
+            "format=\"appended\" offset=\"%d\"/>\n",
             precision, fieldName, numComponents, boffset);
-    boffset += sizeof(PetscInt) + numComponents * npoints * sizeof(double);
+    boffset += sizeof(PetscInt) + field_data_bytes; // Increment by size prefix + actual data bytes
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "WriteVTPXMLHeader - Updated offset to %ld after PointData.\n", boffset);
+              "WriteVTPXMLHeader - Updated offset to %d after PointData ('%s', %d bytes data).\n", boffset, fieldName, field_data_bytes);
     fprintf(fp, "      </PointData>\n");
 
     // 4) Verts => connectivity + offsets
     fprintf(fp, "      <Verts>\n");
+    // Use the dynamically determined integer type string
     fprintf(fp,
-            "        <DataArray type=\"Int64\" Name=\"connectivity\" format=\"appended\" offset=\"%ld\"/>\n",
-            boffset);
-    boffset += sizeof(PetscInt) + npoints * sizeof(PetscInt);
+            "        <DataArray type=\"%s\" Name=\"connectivity\" format=\"appended\" offset=\"%d\"/>\n",
+            int_type_str, boffset);
+    boffset += sizeof(PetscInt) + connectivity_bytes; // Increment by size prefix + actual data bytes
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "WriteVTPXMLHeader - Updated offset to %ld after connectivity.\n", boffset);
+              "WriteVTPXMLHeader - Updated offset to %d after connectivity (%s, %d bytes data).\n", boffset, int_type_str, connectivity_bytes);
 
+    // Use the dynamically determined integer type string
     fprintf(fp,
-            "        <DataArray type=\"Int64\" Name=\"offsets\" format=\"appended\" offset=\"%ld\"/>\n",
-            boffset);
-    boffset += sizeof(PetscInt) + npoints * sizeof(PetscInt);
+            "        <DataArray type=\"%s\" Name=\"offsets\" format=\"appended\" offset=\"%d\"/>\n",
+            int_type_str, boffset);
+    boffset += sizeof(PetscInt) + offsets_bytes; // Increment by size prefix + actual data bytes
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "WriteVTPXMLHeader - Updated offset to %ld after offsets.\n", boffset);
+              "WriteVTPXMLHeader - Updated offset to %d after offsets (%s, %d bytes data).\n", boffset, int_type_str, offsets_bytes);
     fprintf(fp, "      </Verts>\n");
 
     // 5) Close out the piece + PolyData
@@ -1005,17 +1059,19 @@ static PetscInt WriteVTPXMLHeader(FILE *fp,
     // 6) <AppendedData encoding="raw"> + underscore
     //    => all binary must follow AFTER this line
     fprintf(fp, "  <AppendedData encoding=\"raw\">\n");
-    fprintf(fp, "_");
+    fprintf(fp, "_"); // This underscore MUST be present before the binary data blocks
 
+    // Assign the final calculated offset to the output parameter
     *boffsetOut = boffset;
 
     // Log function completion
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "WriteVTPXMLHeader - Completed writing VTP XML header. Updated boffset=%ld.\n",
+              "WriteVTPXMLHeader - Completed writing VTP XML header. Final calculated boffset (before actual data write)=%d.\n",
               boffset);
 
-    return 0;
+    return 0; // Success
 }
+
 
 /**
  * @brief Finalizes the .vtp file by closing the appended data section and the VTKFile tag.
@@ -1072,8 +1128,8 @@ static PetscInt WriteVTKFileHeader(FILE *fp, const VTKMetaData *meta, PetscInt b
      * Log the entry into this function with the key metadata parameters.
      *-----------------------------------------------------------------------*/
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "WriteVTKFileHeader - Entered: fileType=%d, npoints=%ld, scalarField=%s, vectorField=%s, "
-              "numVectorFields=%ld, mx=%ld, my=%ld, mz=%ld, nnodes=%ld.\n",
+              "WriteVTKFileHeader - Entered: fileType=%d, npoints=%d, scalarField=%s, vectorField=%s, "
+              "numVectorFields=%d, mx=%d, my=%d, mz=%d, nnodes=%d.\n",
               meta->fileType, meta->npoints, meta->scalarFieldName, meta->vectorFieldName,
               meta->numVectorFields, meta->mx, meta->my, meta->mz, meta->nnodes);
 
@@ -1103,7 +1159,7 @@ static PetscInt WriteVTKFileHeader(FILE *fp, const VTKMetaData *meta, PetscInt b
 
         /* Log the call to the polydata header-writing function */
         LOG_ALLOW(GLOBAL, LOG_DEBUG,
-                  "WriteVTKFileHeader - Calling WriteVTPXMLHeader with boffset=%ld.\n", boffset);
+                  "WriteVTKFileHeader - Calling WriteVTPXMLHeader with boffset=%d.\n", boffset);
         return WriteVTPXMLHeader(fp,
                                  meta->npoints,
                                  fieldName,
@@ -1136,7 +1192,7 @@ static PetscInt WriteVTKFileHeader(FILE *fp, const VTKMetaData *meta, PetscInt b
 
         /* Log the grid dimensions and number of nodes, then call the structured grid header-writing function */
         LOG_ALLOW(GLOBAL, LOG_DEBUG,
-                  "WriteVTKFileHeader - Calling WriteVTSXMLHeader with boffset=%ld, grid dimensions (%ld, %ld, %ld) and nnodes=%ld.\n",
+                  "WriteVTKFileHeader - Calling WriteVTSXMLHeader with boffset=%d, grid dimensions (%d, %d, %d) and nnodes=%d.\n",
                   boffset, meta->mx, meta->my, meta->mz, meta->nnodes);
         return WriteVTSXMLHeader(fp,
                                  meta->mx,
@@ -1226,16 +1282,16 @@ PetscInt CreateVTKFileFromMetadata(const char *filename,
 
         PetscInt boffset = 0;
         // 2) Write the XML header => sets <DataArray ... offset="...">
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing header (initial boffset=%ld).\n", boffset);
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing header (initial boffset=%d).\n", boffset);
         WriteVTKFileHeader(fp, meta, boffset, &boffset);
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Header written (updated boffset=%ld).\n", boffset);
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Header written (updated boffset=%d).\n", boffset);
 
         // 3) Immediately write appended data blocks in EXACT order:
         //    (a) coords (3*npoints doubles)
         if (meta->coords) {
 	  PetscInt ncoords = 3 * (meta->fileType == VTK_STRUCTURED ? meta->nnodes : meta->npoints);
             if (ncoords > 0) {
-                LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing coords block: %ld doubles.\n", ncoords);
+                LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing coords block: %d doubles.\n", ncoords);
                 WriteVTKAppendedBlock(fp, meta->coords, ncoords, sizeof(double));
                 boffset += sizeof(PetscInt) + ncoords * sizeof(double);
             }
@@ -1244,27 +1300,27 @@ PetscInt CreateVTKFileFromMetadata(const char *filename,
         //    (b) scalar or vector field
         if (meta->numScalarFields > 0 && meta->scalarField) {
 	  PetscInt nvals = (meta->fileType == VTK_STRUCTURED ? meta->nnodes : meta->npoints);
-            LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing scalar field block: %ld doubles.\n", nvals);
+            LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing scalar field block: %d doubles.\n", nvals);
             WriteVTKAppendedBlock(fp, meta->scalarField, nvals, sizeof(double));
             boffset += sizeof(PetscInt) + nvals * sizeof(double);
         }
         else if (meta->numVectorFields > 0 && meta->vectorField) {
 	  PetscInt nvals = 3 * (meta->fileType == VTK_STRUCTURED ? meta->nnodes : meta->npoints); // 3 components
-            LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing vector field block: %ld doubles.\n", nvals);
+            LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing vector field block: %d doubles.\n", nvals);
             WriteVTKAppendedBlock(fp, meta->vectorField, nvals, sizeof(double));
             boffset += sizeof(PetscInt) + nvals * sizeof(double);
         }
 
         //    (c) connectivity (if polydata)
         if (meta->fileType == VTK_POLYDATA && meta->connectivity) {
-            LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing connectivity block: %ld PetscInts.\n", meta->npoints);
+            LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing connectivity block: %d PetscInts.\n", meta->npoints);
             WriteVTKAppendedBlock(fp, meta->connectivity, meta->npoints, sizeof(PetscInt));
             boffset += sizeof(PetscInt) + meta->npoints * sizeof(PetscInt);
         }
 
         //    (d) offsets (if polydata)
         if (meta->fileType == VTK_POLYDATA && meta->offsets) {
-            LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing offsets block: %ld PetscInts.\n", meta->npoints);
+            LOG_ALLOW(GLOBAL, LOG_DEBUG, "CreateVTKFileFromMetadata - Writing offsets block: %d PetscInts.\n", meta->npoints);
             WriteVTKAppendedBlock(fp, meta->offsets, meta->npoints, sizeof(PetscInt));
             boffset += sizeof(PetscInt) + meta->npoints * sizeof(PetscInt);
         }
@@ -1321,7 +1377,7 @@ PetscErrorCode VecToArrayOnRank0(Vec inVec, PetscInt *N, double **arrayOut)
 
     // Log vector sizes and process info
     LOG_ALLOW(GLOBAL, LOG_DEBUG,
-              "VecToArrayOnRank0 - rank=%d of %d, globalSize=%ld, localSize=%ld.\n",
+              "VecToArrayOnRank0 - rank=%d of %d, globalSize=%d, localSize=%d.\n",
               rank, size, globalSize, localSize);
 
     /* Access the local array data */
@@ -1442,43 +1498,39 @@ PetscErrorCode ReadSwarmField(UserCtx *user, const char *field_name, PetscInt ti
 PetscErrorCode ReadAllSwarmFields(UserCtx *user, PetscInt ti)
 {
   PetscErrorCode ierr;
+  PetscInt nGlobal;
 
   PetscFunctionBegin;
+  LOG_ALLOW(GLOBAL, LOG_INFO, "ReadAllSwarmFields - Starting to read DMSwarm fields for timestep %d.\n", ti);
 
-  LOG_ALLOW(GLOBAL, LOG_INFO, "ReadAllSwarmFields - Starting to read DMSwarm fields.\n");
+  // 1) Read positions (this should set the swarm size)
+  ierr = ReadSwarmField(user, "position", ti, "dat");
+  if (ierr == PETSC_ERR_FILE_OPEN) { // Handle missing position file specifically
+      LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadAllSwarmFields - Position file for step %d not found. Skipping step.\n", ti);
+      PetscFunctionReturn(0); // Return success, but skip rest of processing for this step
+  } else CHKERRQ(ierr); // Handle other errors from ReadSwarmField/ReadFieldData
 
-  
-  // 1) Read positions (the built-in DMSwarm coordinate field).
-  ierr = ReadSwarmField(user, "position", ti, "dat");CHKERRQ(ierr);
+  // --- Check size after reading position ---
+  ierr = DMSwarmGetSize(user->swarm, &nGlobal); CHKERRQ(ierr);
+  if (nGlobal == 0) {
+      LOG_ALLOW(GLOBAL, LOG_INFO, "ReadAllSwarmFields - Swarm is empty after reading position for step %d. Skipping other fields.\n", ti);
+  } else {
+      LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadAllSwarmFields - Swarm size is %d after reading position for step %d. Reading other fields.\n", nGlobal, ti);
+      // 2) Read velocity (only if particles exist)
+      ierr = ReadSwarmField(user, "velocity", ti, "dat");
+       if (ierr == PETSC_ERR_FILE_OPEN) { // Handle potentially missing file
+            LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadAllSwarmFields - Velocity file for step %d not found. Velocity data may be invalid.\n", ti);
+            // Decide if this is fatal or if processing can continue without velocity
+       } else CHKERRQ(ierr);
 
-  /*
-   * 2) Read velocity field from file into DMSwarm. 
-   *    Make sure "velocity" is an existing field in your swarm registration.
-   */
-  ierr = ReadSwarmField(user, "velocity", ti, "dat");CHKERRQ(ierr);
+      // 3) Read CellID (Optional)
+      // ierr = ReadSwarmField(user, "DMSwarm_CellID", ti, "dat"); // Handle potential errors
 
-  /*
-   * 3) Read CellID (built-in or custom). The built-in PETSc field name for cell IDs 
-   *    is typically DMSwarmField_cellid. Change if you used a different name at registration.
-   */
-  //  ierr = ReadSwarmField(user, "DMSwarm_CellID", ti, "dat");CHKERRQ(ierr);
+      // 4) Read weight (Optional)
+      // ierr = ReadSwarmField(user, "weight", ti, "dat"); // Handle potential errors
+  }
 
-  /*
-   * 4) Read weight field from file into DMSwarm.
-   *    Ensure "weight" is declared in your swarm.
-   */
-  //  ierr = ReadSwarmField(user, "weight", ti, "dat");CHKERRQ(ierr);
-
-  /*
-   * (Optional) Insert additional fields here if needed, e.g.:
-   *
-   * if (user->someFlag) {
-   *   ierr = ReadSwarmField(user, "someExtraField", ti, "dat");CHKERRQ(ierr);
-   * }
-   */
-
-  LOG_ALLOW(GLOBAL, LOG_INFO, "ReadAllSwarmFields - Finished reading DMSwarm fields.\n");
-
+  LOG_ALLOW(GLOBAL, LOG_INFO, "ReadAllSwarmFields - Finished reading DMSwarm fields for timestep %d.\n", ti);
   PetscFunctionReturn(0);
 }
 
@@ -1514,7 +1566,7 @@ PetscErrorCode ReadPositionsFromFile(PetscInt timeIndex,
   ierr = ReadFieldData(user, "position", coordsVec, timeIndex, "dat");
   if (ierr) {
     LOG_ALLOW(GLOBAL, LOG_ERROR,
-              "ReadPositionsFromFile - Error reading position data (ti=%ld).\n",
+              "ReadPositionsFromFile - Error reading position data (ti=%d).\n",
               timeIndex);
     PetscFunctionReturn(ierr);
   }
@@ -1525,7 +1577,7 @@ PetscErrorCode ReadPositionsFromFile(PetscInt timeIndex,
   ierr = VecDestroy(&coordsVec);CHKERRQ(ierr);
 
   LOG_ALLOW(GLOBAL, LOG_DEBUG,
-            "ReadPositionsFromFile - Successfully gathered coordinates. Ncoords=%ld.\n", *Ncoords);
+            "ReadPositionsFromFile - Successfully gathered coordinates. Ncoords=%d.\n", *Ncoords);
   PetscFunctionReturn(0);
 }
 
@@ -1562,7 +1614,7 @@ PetscErrorCode ReadFieldDataToRank0(PetscInt timeIndex,
   ierr = ReadFieldData(user, fieldName, fieldVec, timeIndex, "dat");
   if (ierr) {
     LOG_ALLOW(GLOBAL, LOG_ERROR,
-              "ReadFieldDataWrapper - Error reading field '%s' (ti=%ld).\n",
+              "ReadFieldDataWrapper - Error reading field '%s' (ti=%d).\n",
               fieldName, timeIndex);
     PetscFunctionReturn(ierr);
   }
@@ -1573,7 +1625,7 @@ PetscErrorCode ReadFieldDataToRank0(PetscInt timeIndex,
   ierr = VecDestroy(&fieldVec);CHKERRQ(ierr);
 
   LOG_ALLOW(GLOBAL, LOG_DEBUG,
-            "ReadFieldDataWrapper - Successfully gathered field '%s'. Nscalars=%ld.\n",
+            "ReadFieldDataWrapper - Successfully gathered field '%s'. Nscalars=%d.\n",
             fieldName, *Nscalars);
   PetscFunctionReturn(0);
 }

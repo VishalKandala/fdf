@@ -16,6 +16,10 @@
 #include "grid.h"           // Grid functions
 #include "logging.h"        // Logging macros
 #include "io.h"             // Data Input and Output functions
+#include "interpolation.h"  // Interpolation routines
+#include "AnalyticalSolution.h" // Analytical Solution for testing
+#include "ParticleMotion.h" // Functions related to motion of particles
+
 
 
 /* Macro to automatically select the correct allocation function */
@@ -50,13 +54,16 @@ PetscErrorCode registerEvents(void);
  * @param[out] rank    MPI rank of the process.
  * @param[out] size    Number of MPI processes.
  * @param[out] np      Number of particles.
- * @param[out] rstart  Flag to restart (1) or start from t=0 (0).
+ * @param[out] StartStep Simulation Starting Timestep
+ * @param[out] StepsToRun No.of Timesteps to run simulation.
+ * @param[out] StartTIme Time of start of simulation.
  * @param[out] ti      The timestep to start from if restarting.
  * @param[out] nblk    Number of grid blocks.
+ * @param[out] outputFreq The Frequency at which data should be output from the simulation.
  *
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  */
- PetscErrorCode InitializeSimulation(UserCtx **user, PetscMPIInt *rank, PetscMPIInt *size, PetscInt *np, PetscInt *rstart, PetscInt *ti, PetscInt *nblk);
+PetscErrorCode InitializeSimulation(UserCtx **user, PetscMPIInt *rank, PetscMPIInt *size, PetscInt *np, PetscInt *StartStep, PetscInt *StepsToRun,PetscReal *StartTime, PetscInt *nblk, PetscInt *outputFreq);
 
 /** 
  * @brief Setup grid and vectors for the simulation.
@@ -148,5 +155,137 @@ PetscErrorCode Deallocate3DArrayScalar(PetscReal ***array, PetscInt nz, PetscInt
  * @return PetscErrorCode 0 on success, nonzero on failure.
  */
 PetscErrorCode Deallocate3DArrayVector(Cmpnts ***array, PetscInt nz, PetscInt ny);
+
+/**
+ * @brief Determines the range of CELL indices owned by the current processor.
+ *
+ * Based on the local node ownership information provided by a DMDA's DMDALocalInfo
+ * (typically from the node-based fda DM), this function calculates the starting
+ * global index (xs_cell) and the number of cells (xm_cell) owned by the
+ * current process in one specified dimension (x, y, or z).
+ *
+ * @param[in]  info_nodes Pointer to the DMDALocalInfo struct obtained from the NODE-based DMDA (e.g., user->fda).
+ * @param[in]  dim        The dimension to compute the range for (0 for x/i, 1 for y/j, 2 for z/k).
+ * @param[out] xs_cell    Pointer to store the starting global CELL index owned by this process in the specified dimension.
+ * @param[out] xm_cell    Pointer to store the number of CELLs owned by this process in the specified dimension.
+ *
+ * @return PetscErrorCode 0 on success.
+ *
+ * @note A processor owning nodes xs_node to xe_node-1 owns cells xs_node to xe_node-2.
+ *       Special handling is included for processors owning only the last node.
+ */
+PetscErrorCode GetOwnedCellRange(const DMDALocalInfo *info_nodes, PetscInt dim, PetscInt *xs_cell, PetscInt *xm_cell);
+
+/**
+ * @brief Updates the local vector (including ghost points) from its corresponding global vector.
+ *
+ * This function identifies the correct global vector, local vector, and DM based on the
+ * provided fieldName and performs the standard PETSc DMGlobalToLocalBegin/End sequence.
+ * Includes optional debugging output (max norms before/after).
+ *
+ * @param user       The UserCtx structure containing the vectors and DMs.
+ * @param fieldName  The name of the field to update ("Ucat", "Ucont", "P", "Nvert", etc.).
+ *
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ *
+ * @note This function assumes the global vector associated with fieldName has already
+ *       been populated with the desired data (including any boundary conditions).
+ */
+PetscErrorCode UpdateLocalGhosts(UserCtx* user, const char *fieldName);
+
+/**
+ * @brief Initializes or updates all necessary simulation fields for a given timestep.
+ *
+ * This function handles the logic for either:
+ * A) Initializing fields analytically (for the first step or if not reading):
+ *    - Sets interior values using SetAnalyticalCartesianField.
+ *    - Applies boundary conditions using ApplyAnalyticalBC.
+ *    - Updates local vectors with ghosts using UpdateLocalGhosts.
+ *    - Optionally writes the initial fields.
+ * B) Reading fields from a file for a specific timestep index:
+ *    - Reads global vectors using ReadSimulationFields.
+ *    - Updates local vectors with ghosts using UpdateLocalGhosts.
+ * C) Updating fields using a fluid solver (Placeholder for future integration):
+ *    - Calls a placeholder function SolveFluidEquations.
+ *    - Applies boundary conditions using ApplyAnalyticalBC.
+ *    - Updates local vectors with ghosts using UpdateLocalGhosts.
+ *
+ * @param user        Pointer to the UserCtx structure.
+ * @param step        The current timestep number (0 for initial step).
+ * @param time        The current simulation time.
+ * @param readFields  Flag indicating whether to read fields from file.
+ * @param fieldSource Source for field data (e.g., ANALYTICAL, FILE, SOLVER).
+ *                    (Here using readFields bool for simplicity based on original code)
+ *
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartStep, PetscReal time, PetscBool readFields);
+
+/**
+ * @brief Executes the main time-marching loop for the particle simulation.
+ *
+ * This function performs the following steps repeatedly:
+ * 1. Updates/Sets the background fluid velocity field (Ucat) for the current step.
+ * 2. Updates particle positions using velocity from the *previous* step's interpolation.
+ *    (Note: For the very first step (step=StartStep), the velocity used might be zero
+ *     or an initial guess if not handled carefully).
+ * 3. Locates particles in the grid based on their *new* positions.
+ * 4. Interpolates the fluid velocity (from the *current* Ucat) to the new particle locations.
+ * 5. Logs errors and outputs data at specified intervals.
+ *
+ * @param user         Pointer to the UserCtx structure.
+ * @param StartStep    The initial step number (e.g., 0 for a new run, >0 for restart).
+ * @param StartTime    The simulation time corresponding to StartStep.
+ * @param StepsToRun   The number of steps to execute in this run.
+ * @param OutputFreq   Frequency (in number of steps) at which to output data and log errors.
+ * @param readFields   Flag indicating whether to read initial fields (only at StartStep).
+ * @param bboxlist     A list that contains the bounding boxes of all the ranks.
+ *
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal StartTime, PetscInt StepsToRun, PetscInt OutputFreq, PetscBool readFields, const BoundingBox *bboxlist);
+
+/**
+ * @brief Computes and stores the Cartesian neighbor ranks for the DMDA decomposition.
+ *
+ * This function retrieves the neighbor information from the primary DMDA (user->da)
+ * and stores the face neighbors (xm, xp, ym, yp, zm, zp) in the user->neighbors structure.
+ * It assumes a standard PETSc ordering for the neighbors array returned by DMDAGetNeighbors.
+ * Logs warnings if the assumed indices seem incorrect (e.g., center rank mismatch).
+ *
+ * @param[in,out] user Pointer to the UserCtx structure where neighbor info will be stored.
+ *
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user);
+
+/**
+ * @brief Sets the processor layout for a given DMDA based on PETSc options.
+ *
+ * Reads the desired number of processors in x, y, and z directions using
+ * PETSc options (e.g., -dm_processors_x, -dm_processors_y, -dm_processors_z).
+ * If an option is not provided for a direction, PETSC_DECIDE is used for that direction.
+ * Applies the layout using DMDASetNumProcs.
+ *
+ * Also stores the retrieved/decided values in user->procs_x/y/z if user context is provided.
+ *
+ * @param dm   The DMDA object to configure the layout for.
+ * @param user Pointer to the UserCtx structure (optional, used to store layout values).
+ *
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode SetDMDAProcLayout(DM dm, UserCtx *user);
+
+/**
+ * @brief Counts particles in each cell of the DMDA 'da' and stores the result in user->ParticleCount.
+ *
+ * Assumes user->ParticleCount is a pre-allocated global vector associated with user->da
+ * and initialized to zero before calling this function (though it resets it internally).
+ * Assumes particle 'DMSwarm_CellID' field contains local cell indices.
+ *
+ * @param[in,out] user Pointer to the UserCtx structure containing da, swarm, and ParticleCount.
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ */
+PetscErrorCode CalculateParticleCountPerCell(UserCtx *user);
 
  #endif // SETUP_H

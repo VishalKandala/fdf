@@ -534,3 +534,256 @@ PetscErrorCode PrintParticleFields(UserCtx* user) {
 
     return 0;
 }
+
+///////////////////////////////
+
+// -----------------------------------------------------------------------------
+// Interpolation: Corner -> Center (vector)
+// -----------------------------------------------------------------------------
+/**
+ * @brief Safely Interpolatete a vector field from corner nodes (from the coordinate DM)
+ *        to cell centers (from the cell-centered DM) using the provided UserCtx.
+ *
+ * For each cell center in the physical region of the cell-centered DM (fda), this function
+ * averages the 8 surrounding corner values from the coordinate DM (da). The coordinate DM
+ * (da) is built on corners (IM+1 x JM+1 x KM+1) while the cell-centered DM (fda) covers
+ * the physical cells (IM x JM x KM). Index offsets are adjusted using DMDAGetLocalInfo.
+ *
+ * @param[in]  field     3D array of corner-based vector data (from user->da).
+ * @param[out] centfield 3D array for the Interpolateted cell-center vector data (for user->fda).
+ * @param[in]  user      User context containing:
+ *                       - da  : DM for the coordinate (corner) data.
+ *                       - fda : DM for the cell-centered data.
+ *
+ * @return PetscErrorCode 0 on success.
+ */
+PetscErrorCode InterpolateFieldFromCornerToCenter_Vector(
+    Cmpnts ***field,         /* coordinate DM array (da, ghosted) */
+    Cmpnts ***centfield,     /* output: Interpolateted Interior cell–center values for fda */
+    UserCtx *user)
+{
+  PetscErrorCode ierr;
+  PetscMPIInt    rank;
+  ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+  LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
+    "InterpolateFieldFromCornerToCenter_Vector - Rank %d starting Interpolatetion.\n", rank);
+
+  /* Get local info for da (owned cells) */
+  DMDALocalInfo info;
+  ierr = DMDAGetLocalInfo(user->da, &info); CHKERRQ(ierr);
+
+  /* For da, get ghost region info instead of owned-only info */
+  PetscInt gxs, gys, gzs, gxm, gym, gzm;
+  ierr = DMDAGetGhostCorners(user->da, &gxs, &gys, &gzs, &gxm, &gym, &gzm); CHKERRQ(ierr);
+  LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
+    "Rank %d -> DM-da Ghost Corners: gxs=%d, gxm=%d, gys=%d, gym=%d, gzs=%d, gzm=%d\n",
+    rank, gxs, gxm, gys, gym, gzs, gzm);
+
+  /* Compute physical region for fda */
+  PetscInt xs = info.xs, xe = info.xs + info.xm;
+  PetscInt ys = info.ys, ye = info.ys + info.ym;
+  PetscInt zs = info.zs, ze = info.zs + info.zm;
+  PetscInt mx = info.mx, my = info.my, mz = info.mz;
+  
+  PetscInt lxs = xs,lxe = xe;
+  PetscInt lys = ys,lye = ye;
+  PetscInt lzs = zs,lze = ze;
+  
+  /*
+  if (xs==0) lxs = xs+1;
+  if (ys==0) lys = ys+1;
+  if (zs==0) lzs = zs+1;
+  
+  if (xe==mx) lxe = xe-1;
+  if (ye==my) lye = ye-1;
+  if (ze==mz) lze = ze-1;
+  */
+
+  for (PetscInt k = lzs; k < lze; k++) {
+    for (PetscInt j = lys; j < lye; j++) {
+      for (PetscInt i = lxs; i < lxe; i++) {
+
+        Cmpnts sum = {0.0, 0.0, 0.0};
+        PetscInt count = 0;
+
+        /* For cell center (i,j,k) in fda, its 8 surrounding corners in da have global indices
+           from (i-1,j-1,k-1) to (i,j,k). Use ghost region information from da.
+         */
+        for (PetscInt dk = 0; dk < 2; dk++) {
+          for (PetscInt dj = 0; dj < 2; dj++) {
+            for (PetscInt di = 0; di < 2; di++) {
+             
+              PetscInt ci = i - 1 + di;
+              PetscInt cj = j - 1 + dj;
+              PetscInt ck = k - 1 + dk;
+              
+              if (ci >= 0 && ci < mx &&
+                  cj >= 0 && cj < my &&
+                  ck >= 0 && ck < mz)
+              {
+                sum.x += field[ck][cj][ci].x;
+                sum.y += field[ck][cj][ci].y;
+                sum.z += field[ck][cj][ci].z;
+                count++;
+
+	        LOG_LOOP_ALLOW(GLOBAL,LOG_DEBUG,i*j*k,1000," Rank %d| i,j,k - %d,%d,%d |ci,cj,ck - %d,%d,%d| \n",rank,i,j,k,ci,cj,ck);
+              }
+	    }
+	  }
+	}
+	
+        if (count > 0) {
+          // As centfield is a local array with index 0 at xs,xy,xz.
+          centfield[k-info.zs][j-info.ys][i-info.xs].x = sum.x / (PetscReal)count;
+          centfield[k-info.zs][j-info.ys][i-info.xs].y = sum.y / (PetscReal)count;
+          centfield[k-info.zs][j-info.ys][i-info.xs].z = sum.z / (PetscReal)count;
+        } else {
+	  //  centfield[k-zs][j-ys][i-xs].x = 0.0;
+	  //  centfield[k-zs][j-ys][i-xs].y = 0.0;
+	  //  centfield[k-zs][j-ys][i-xs].z = 0.0;
+          LOG_ALLOW(GLOBAL, LOG_DEBUG,
+                    "Rank %d: Cell (i=%d,j=%d,k=%d) got no valid corner data.\n", rank, i, j, k);
+        }
+	/*
+        if (count > 0) {
+          centfield[k][j][i].x = sum.x / (PetscReal)count;
+          centfield[k][j][i].y = sum.y / (PetscReal)count;
+          centfield[k][j][i].z = sum.z / (PetscReal)count;
+        } else {
+          centfield[k][j][i].x = 0.0;
+          centfield[k][j][i].y = 0.0;
+          centfield[k][j][i].z = 0.0;
+        }
+        */
+      }
+    }
+  }
+
+  LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
+            "InterpolateFieldFromCornerToCenter_Vector_Interior - Rank %d completed Interpolatetion.\n", rank);
+  return 0;
+}
+
+/**
+ * @brief Performs trilinear Interpolatetion of velocities from grid to particles using Interpolatetion coefficients.
+ *
+ * This function Interpolatetes velocities for particles based on the velocity field defined on the computational grid.
+ * It retrieves cell indices for each particle from the "DMSwarm_CellID" field and assigns the Interpolateted velocity
+ * using trilinear Interpolatetion from the surrounding grid cells. The function handles boundary checks and ensures
+ * that particles outside the valid grid range are appropriately managed.
+ *
+ * Key Steps:
+ * 1. Retrieve the number of local particles and their associated data fields (cell indices and velocities).
+ * 2. Map the global velocity field (`Ucat`) to the local portion for efficient access.
+ * 3. Retrieve Interpolatetion coefficients (`a1`, `a2`, `a3`) for each particle.
+ * 4. Compute trilinear Interpolatetion weights and Interpolatete velocities from the surrounding grid cells.
+ * 5. Handle edge cases where particles may lie outside the valid grid range.
+ * 6. Restore all data fields and ensure PETSc arrays and vectors are correctly finalized.
+ *
+ * @param[in] user Pointer to the `UserCtx` structure containing:
+ *                 - `user->da`: DMDA for the grid.
+ *                 - `user->swarm`: DMSwarm for particles.
+ *                 - `user->Ucat`: Global velocity vector on the grid.
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ */
+PetscErrorCode InterpolateParticleVelocities(UserCtx *user) {
+    PetscErrorCode ierr;
+    PetscInt n_local;             // Number of local particles
+    PetscInt64 *cellIDs = NULL;     // Array to store cell indices for each particle
+    PetscReal *velocities = NULL; // Array to store particle velocities
+    PetscReal *weights = NULL;    // Array to store Interpolatetion weights
+    Cmpnts ***ucat;               // 3D array to map local grid velocities
+    Cmpnts uPetscInterp;               // Temporary variable to store Interpolateted velocities.
+    PetscInt i,j,k;
+    PetscReal a1,a2,a3;           // The weights of a particles are stored here for trilinear coefficient calculation.
+    DM fda = user->fda;           // Field DA 
+    DM swarm = user->swarm;       // DMSwarm for the particles
+
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "InterpolateParticleVelocities: Starting particle velocity Interpolatetion.\n");
+
+    // Verify global velocity field
+    PetscReal max_val;
+    ierr = VecNorm(user->Ucat, NORM_INFINITY, &max_val); CHKERRQ(ierr);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Global velocity field Ucat maximum magnitude: %f \n", max_val);
+
+    // Retrieve the number of local particles
+    ierr = DMSwarmGetLocalSize(swarm, &n_local); CHKERRQ(ierr);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "InterpolateParticleVelocities: Found %d local particles.\n", n_local);
+
+    // Retrieve particle data fields
+    ierr = DMSwarmGetField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs); CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "velocity", NULL, NULL, (void**)&velocities); CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr); // Ensure 'weight' field exists
+
+    // Access the local portion of the global velocity vector (Ucat) using 'fda'
+    ierr = DMDAVecGetArrayRead(user->fda,user->Ucat,&ucat);CHKERRQ(ierr);
+
+
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "InterpolateParticleVelocities: Starting velocity assignment for particles.\n");
+
+    // Log grid dimensions
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Grid dimensions: mx=%d, my=%d, mz=%d \n", user->info.mx, user->info.my, user->info.mz);
+
+    // Loop over all local particles
+    for (PetscInt p = 0; p < n_local; p++) {
+        // Retrieve cell indices for the particle
+        i = cellIDs[3 * p];
+        j = cellIDs[3 * p + 1];
+        k = cellIDs[3 * p + 2];
+
+	LOG_LOOP_ALLOW(GLOBAL, LOG_DEBUG, p, 10, "Particle %d: Host Cell = (%d, %d, %d)\n", p, i, j, k);
+
+	// Clamp i, j, k to [0..mx-2], [0..my-2], [0..mz-2]
+	if (i >= user->info.mx) i = user->info.mx - 1;
+	if (j >= user->info.my) j = user->info.my - 1;
+	if (k >= user->info.mz) k = user->info.mz - 1;
+
+        // Validate cell indices (boundary check)
+        if (i < 0 || j < 0 || k < 0 || i >= user->info.mx || j >= user->info.my || k >= user->info.mz) {
+            LOG_ALLOW(GLOBAL, LOG_WARNING, "Particle %d has invalid cell indices (%d, %d, %d)\n. Skipping Interpolatetion.\n", p, i, j, k);
+            velocities[3 * p    ] = 0.0;
+            velocities[3 * p + 1] = 0.0;
+            velocities[3 * p + 2] = 0.0;
+            continue;
+        }
+
+        // Retrieve a1, a2, a3 from the 'weights' field (if that's where you're storing them)
+        a1 = weights[3*p + 0];
+        a2 = weights[3*p + 1];
+        a3 = weights[3*p + 2];
+
+        
+	// Apply Interpolatetion method to obtain velocity at the particle location
+	//  ierr = InterpolateTrilinearVelocity(ucat,i,j,k,a1,a2,a3,&uPetscInterp);
+	
+        // Assign Interpolateted velocity to the particle
+
+        // zeroth order Interpolation
+        
+        velocities[3 * p]     = ucat[k+1][j+1][i+1].x; // u-component
+        velocities[3 * p + 1] = ucat[k+1][j+1][i+1].y; // v-component
+        velocities[3 * p + 2] = ucat[k+1][j+1][i+1].z; // w-component
+       
+	LOG_LOOP_ALLOW(GLOBAL, LOG_DEBUG, p, 10, "Particle %d: Interpolated velocity: (velocity.x=%f, velocity.y=%f, velocity.z=%f).\n",
+                        p, velocities[3 * p], velocities[3 * p + 1], velocities[3 * p + 2]);	
+    }
+
+    // Restore the local velocity array
+    ierr = DMDAVecRestoreArrayRead(fda,user->Ucat, &ucat); CHKERRQ(ierr);
+
+    // Restore particle data fields
+    ierr = DMSwarmRestoreField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "velocity", NULL, NULL, (void**)&velocities); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr);
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "InterpolateParticleVelocities: Particle velocity Interpolatetion completed.\n");
+
+    // Ensure all ranks finish Interpolatetion before proceeding
+    ierr = MPI_Barrier(PETSC_COMM_WORLD); CHKERRQ(ierr);
+
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "InterpolateParticleVelocities: All ranks completed particle Interpolatetion.\n");
+
+    return 0;
+}

@@ -22,7 +22,6 @@
  *
  * Defines various severity levels for logging messages.
  */
-
 typedef enum {
     LOG_ERROR = 0,   /**< Critical errors that may halt the program */
     LOG_WARNING,     /**< Non-critical issues that warrant attention */
@@ -194,6 +193,28 @@ extern PetscLogEvent EVENT_walkingsearch;
     } while (0)
 
 
+/** ------- DEBUG ------------------------------------------
+#define LOG_ALLOW(scope, level, fmt, ...) \
+    do { \
+        MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
+        PetscInt __current_level_val = get_log_level(); \
+        PetscBool __allowed_func_val = is_function_allowed(__func__); \
+        // Print BEFORE the check  \
+        if (strcmp(__func__, "LocateAllParticlesInGrid") == 0) { \
+             printf("[DEBUG LOG_ALLOW in %s] Checking: level=%d, get_log_level() returned %d, func_allowed=%d\n", \
+                    __func__, (int)level, (int)__current_level_val, (int)__allowed_func_val); \
+        } \
+        if ((int)(level) <= (int)__current_level_val && __allowed_func_val) { \
+             // Print AFTER passing the check // \
+             if (strcmp(__func__, "LocateAllParticlesInGrid") == 0) { \
+                  printf("[DEBUG LOG_ALLOW in %s] Check PASSED. Printing log.\n", __func__); \
+             } \
+             PetscPrintf(comm, "[%s] " fmt, __func__, ##__VA_ARGS__); \
+        } \
+    } while (0)
+-------------------------------------------------------------------------------
+*/
+
 /**
  * @brief Synchronized logging macro that checks both the log level 
  *        and whether the calling function is in the allow-list.
@@ -241,7 +262,7 @@ extern PetscLogEvent EVENT_walkingsearch;
  *
  * Example:
  *    for (int i = 0; i < 100; i++) {
- *        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "Value of i=%ld\n", i);
+ *        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "Value of i=%d\n", i);
  *    }
  */
 #define LOG_LOOP_ALLOW(scope,level, iterVar, interval, fmt, ...)              \
@@ -249,12 +270,41 @@ extern PetscLogEvent EVENT_walkingsearch;
         if (is_function_allowed(__func__) && (int)(level) <= (int)get_log_level()) { \
             if ((iterVar) % (interval) == 0) {                                 \
                 MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
-                PetscPrintf(comm, "[%s] [Iter=%ld] " fmt,                       \
+                PetscPrintf(comm, "[%s] [Iter=%d] " fmt,                       \
                             __func__, (iterVar), ##__VA_ARGS__);               \
             }                                                                  \
         }                                                                      \
     } while (0)
 
+/*
+#define LOG_LOOP_ALLOW(scope,level, iterVar, interval, fmt, ...)              \
+    do {                                                                       \
+        PetscInt __current_level_val = get_log_level(); \
+        PetscBool __allowed_func_val = is_function_allowed(__func__); \
+        // Print BEFORE the check  \
+        if (strcmp(__func__, "LocateAllParticlesInGrid") == 0) { \
+             printf("[DEBUG LOG_LOOP_ALLOW in %s] Iter=%d: Checking: level=%d, get_log_level() returned %d, func_allowed=%d\n", \
+                    __func__, (int)(iterVar), (int)level, (int)__current_level_val, (int)__allowed_func_val); \
+        } \
+        if (__allowed_func_val && (int)(level) <= (int)__current_level_val) { \
+	  // Print AFTER passing the check 				\
+             if (strcmp(__func__, "LocateAllParticlesInGrid") == 0) { \
+                 printf("[DEBUG LOG_LOOP_ALLOW in %s] Iter=%d: Level/Func check PASSED.\n", __func__, (int)(iterVar)); \
+             } \
+             if ((iterVar) % (interval) == 0) {                                 \
+                 // Print before interval check  \
+                 if (strcmp(__func__, "LocateAllParticlesInGrid") == 0) { \
+                      printf("[DEBUG LOG_LOOP_ALLOW in %s] Iter=%d: Interval check PASSED. Printing log.\n", __func__, (int)(iterVar)); \
+                 } \
+                 MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
+                 PetscPrintf(comm, "[%s] [Iter=%d] " fmt,                       \
+                             __func__, (iterVar), ##__VA_ARGS__);               \
+             }                                                                  \
+        }                                                                      \
+    } while (0)
+*/
+
+      
 /**
  * @brief Logs a single element of an array, given an index.
  *
@@ -275,7 +325,7 @@ extern PetscLogEvent EVENT_walkingsearch;
         if (is_function_allowed(__func__) && (int)(level) <= (int)get_log_level()) { \
             if ((idx) >= 0 && (idx) < (length)) {                             \
                 MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
-                PetscPrintf(comm, "[%s] arr[%ld] = " fmt "\n",                 \
+                PetscPrintf(comm, "[%s] arr[%d] = " fmt "\n",                 \
                             __func__, (idx), (arr)[idx]);                     \
             }                                                                 \
         }                                                                     \
@@ -301,7 +351,7 @@ extern PetscLogEvent EVENT_walkingsearch;
             PetscInt _start = (start) < 0 ? 0 : (start);                      \
             PetscInt _end   = (end) >= (length) ? (length) - 1 : (end);       \
             for (PetscInt i = _start; i <= _end; i++) {                       \
-                PetscPrintf(comm, "[%s] arr[%ld] = " fmt "\n", __func__, i, (arr)[i]); \
+                PetscPrintf(comm, "[%s] arr[%d] = " fmt "\n", __func__, i, (arr)[i]); \
             }                                                                 \
         }                                                                     \
     } while (0)
@@ -327,7 +377,7 @@ extern PetscLogEvent EVENT_walkingsearch;
     double __funcTimerStart = 0.0;                                              \
     PetscBool __funcTimerActive = PETSC_FALSE;                                  \
     do {                                                                        \
-        if (is_function_allowed(__func__) && (int)(LOG_PROFILE) <= (int)get_log_level()) { \
+        if (is_function_allowed(__func__) && (int)(LOG_PROFILE) == (int)get_log_level()) { \
             PetscLogDouble _timeStamp = 0.0;                                    \
             PetscTime(&_timeStamp);                                             \
             __funcTimerStart = (double)_timeStamp;                              \
@@ -355,7 +405,7 @@ extern PetscLogEvent EVENT_walkingsearch;
             /* End the PETSc log event */                                       \
             (void)PetscLogEventEnd(eventID, 0, 0, 0, 0);                              \
             /* Log the wall-clock elapsed time */                               \
-            if (is_function_allowed(__func__) && (int)(LOG_PROFILE) <= (int)get_log_level()) { \
+            if (is_function_allowed(__func__) && (int)(LOG_PROFILE) == (int)get_log_level()) { \
                 PetscLogDouble _timeEnd = 0.0;                                  \
                 PetscTime(&_timeEnd);                                           \
                 double elapsed = (double)_timeEnd - __funcTimerStart;           \

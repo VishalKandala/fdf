@@ -8,6 +8,8 @@
 #include <math.h>
 #include <petsctime.h>
 #include <petscdmcomposite.h>
+#include <petscerror.h>
+#include <petscsys.h>
 
 // Include additional headers
 #include "common.h"         // Shared type definitions
@@ -236,39 +238,155 @@ PetscErrorCode InterpolateFieldFromCornerToCenter_Vector(
     UserCtx *user);
 
 /**
- * @brief Safely interpolate a scalar field from cell centers to corners, including boundary checks.
+ * @brief Interpolates a scalar field from cell centers to corner nodes.
  *
- * For each corner at (i,j,k), we consider up to eight adjacent cell centers
- * at indices (i..i-1, j..j-1, k..k-1). If a center is out of valid [xs..xe), [ys..ye), etc.,
- * we skip it. This ensures no out-of-bounds read when i=0 or i=mx-1, etc.
+ * This function estimates the value of a scalar field at each grid node by averaging
+ * the values from the cell centers of the cells surrounding that node (up to 8).
+ * It handles physical boundaries by averaging only the available adjacent cells.
  *
- * @param[in]  centfield 3D array (PetscReal ***) of cell-center values
- * @param[out] field     3D array (PetscReal ***) to store interpolated corner values
- * @param[in]  info      DMDALocalInfo for the cell-center DMDA
+ * Assumes input `centfield_arr` is from a ghosted local vector associated with `user->da` (DOF=1, s=2)
+ * and output `field_arr` is from a ghosted local vector also associated with `user->da` (DOF=1, s=2).
+ * Input array uses GLOBAL cell indices, output array uses GLOBAL node indices.
  *
- * @return PetscErrorCode
+ * @param[in]  centfield_arr  Input: 3D array (ghosted) of scalar data at cell centers,
+ *                            accessed via GLOBAL cell indices (k=0..KM-1, j=0..JM-1, i=0..IM-1).
+ * @param[out] field_arr      Output: 3D array (ghosted) where interpolated node values are stored,
+ *                            accessed via GLOBAL node indices (k=0..KM, j=0..JM, i=0..IM).
+ * @param[in]  user           User context containing DMDA information (da).
+ *
+ * @return PetscErrorCode 0 on success.
  */
-PetscErrorCode InterpolateFieldFromCenterToCorner_Scalar(PetscReal ***field,
-                                                  PetscReal ***centfield,
-                                                  DMDALocalInfo *info);
+PetscErrorCode InterpolateFieldFromCenterToCorner_Scalar(PetscReal ***field_arr,
+                                                  PetscReal ***centfield_arr,
+                                                  UserCtx *user);
 
 /**
- * @brief Safely interpolate a vector field (Cmpnts) from cell centers to corners, including boundary checks.
+ * @brief Interpolates a vector field from cell centers to corner nodes.
  *
- * We loop over each corner (i,j,k) and consider up to eight cell centers
- * (i+di, j+dj, k+dk) in {0,1}. Each valid center is averaged.
- * On boundaries, partial stencils are used (skipping out-of-range indices).
+ * This function estimates the value of a vector field at each grid node by averaging
+ * the vector values from the cell centers of the cells surrounding that node (up to 8).
+ * It handles physical boundaries by averaging only the available adjacent cells.
  *
- * @param[in]  centfield 3D array (Cmpnts ***) of cell-center vectors
- * @param[out] field     3D array (Cmpnts ***) for corner vectors
- * @param[in]  info      DMDALocalInfo for the cell-center DMDA
+ * Assumes input `centfield_arr` is from a ghosted local vector (e.g., representing ucat,
+ * stored using node-indexing convention) and output `field_arr` is a ghosted local
+ * vector associated with `user->fda` (DOF=3, s=2), accessed using global node indices.
  *
- * @return PetscErrorCode
+ * @param[in]  centfield_arr  Input: 3D array (ghosted) of vector data conceptually at cell centers,
+ *                            accessed via GLOBAL indices respecting the storage convention
+ *                            (e.g., `ucat[k][j][i]` uses node index `i` but represents cell `C(i,j,k)` for interior).
+ * @param[out] field_arr      Output: 3D array (ghosted) where interpolated node values are stored,
+ *                            accessed via GLOBAL node indices (k=0..KM, j=0..JM, i=0..IM).
+ * @param[in]  user           User context containing DMDA information (da and fda).
+ *
+ * @return PetscErrorCode 0 on success.
  */
-PetscErrorCode InterpolateFieldFromCenterToCorner_Vector(Cmpnts ***field,
-                                                  Cmpnts ***centfield,
-                                                  DMDALocalInfo *info);
+PetscErrorCode InterpolateFieldFromCenterToCorner_Vector(Cmpnts ***field_arr,
+                                                  Cmpnts ***centfield_arr,
+                                                  UserCtx *user);
 
 
+
+/**
+ * @brief Determines the target Eulerian DM and expected DOF for scattering a given particle field.
+ * @ingroup scatter_module
+ *
+ * Based on hardcoded rules mapping particle field names to user context DMs (da/fda).
+ * This function encapsulates the policy of where different fields should be scattered.
+ *
+ * @param[in] user             Pointer to the UserCtx containing da and fda.
+ * @param[in] particleFieldName Name of the particle field (e.g., "P", "Ucat").
+ * @param[out] targetDM        Pointer to store the determined target DM (da or fda).
+ * @param[out] expected_dof    Pointer to store the expected DOF (1 or 3) for this field.
+ *
+ * @return PetscErrorCode Returns 0 on success, PETSC_ERR_ARG_UNKNOWN if field name is not recognized,
+ *         or PETSC_ERR_ARG_NULL for NULL inputs.
+ */
+PetscErrorCode GetScatterTargetInfo(UserCtx *user, const char *particleFieldName,
+                                    DM *targetDM, PetscInt *expected_dof);
+
+
+/**
+ * @brief Accumulates a particle field (scalar or vector) into a target grid sum vector.
+ * @ingroup scatter_module_internal
+ *
+ * This function iterates through local particles, identifies their cell using the
+ * "DMSwarm_CellID" field, and adds the particle's field value (`particleFieldName`)
+ * to the corresponding cell location in the `gridSumVec`. It handles both scalar
+ * (DOF=1) and vector (DOF=3) fields automatically based on the DOF of `gridSumDM`.
+ *
+ * IMPORTANT: The caller must ensure `gridSumVec` is zeroed before calling this
+ * function if a fresh sum calculation is desired.
+ *
+ * @param[in] swarm           The DMSwarm containing particles.
+ * @param[in] particleFieldName Name of the field on the particles (must match DOF).
+ * @param[in] gridSumDM       The DMDA associated with `gridSumVec`. Its DOF determines
+ *                            how many components are accumulated.
+ * @param[in,out] gridSumVec  The Vec (associated with `gridSumDM`) to accumulate sums into.
+ *
+ * @return PetscErrorCode 0 on success. Errors if fields don't exist or DMs are incompatible.
+ */
+PetscErrorCode AccumulateParticleField(DM swarm, const char *particleFieldName,
+                                       DM gridSumDM, Vec gridSumVec);
+
+/**
+ * @brief Normalizes a grid vector of sums by a grid vector of counts to produce an average.
+ * @ingroup scatter_module_internal
+ *
+ * Calculates avgVec[i] = sumVec[i] / countVec[i] for each component of each
+ * OWNED cell where countVec[i] > 0. Sets avgVec[i] = 0 otherwise.
+ * Handles both scalar (DOF=1) and vector (DOF=3) data fields based on `dataDM`.
+ * Uses basic `VecGetArray`/`VecGetArrayRead` and manual index calculation.
+ *
+ * @param[in] countDM    The DMDA associated with `countVec` (must have DOF=1).
+ * @param[in] countVec   The Vec containing particle counts per cell (read-only).
+ * @param[in] dataDM     The DMDA associated with `sumVec` and `avgVec` (must have DOF=1 or DOF=3).
+ * @param[in] sumVec     The Vec containing the accumulated sums per cell (read-only).
+ * @param[in,out] avgVec The Vec where the calculated averages will be stored (overwritten).
+ *
+ * @return PetscErrorCode 0 on success.
+ */
+PetscErrorCode NormalizeGridVectorByCount(DM countDM, Vec countVec,
+                                          DM dataDM, Vec sumVec, Vec avgVec);
+
+/**
+ * @brief Scatters a particle field (scalar or vector) to the corresponding Eulerian field average.
+ * @ingroup scatter_module
+ *
+ * This is the main user-facing function. It determines the target Eulerian DM
+ * based on the `particleFieldName`, validates the provided `eulerFieldAverageVec`
+ * against the target DM, and then orchestrates the scatter operation by calling
+ * the internal helper function `ScatterParticleFieldToEulerField_Internal`.
+ * The final averaged result is stored IN-PLACE in `eulerFieldAverageVec`.
+ *
+ * @param[in] user                 Pointer to UserCtx containing da, fda, swarm, ParticleCount.
+ * @param[in] particleFieldName    Name of the field in the DMSwarm (e.g., "P", "Ucat").
+ * @param[in,out] eulerFieldAverageVec Pre-created Vec associated with the correct target DM
+ *                                 (implicitly da or fda). Result stored here.
+ *
+ * @return PetscErrorCode 0 on success. Errors on NULL input, unrecognized field name,
+ *         or incompatible target vector.
+ */
+PetscErrorCode ScatterParticleFieldToEulerField(UserCtx *user,
+                                                const char *particleFieldName,
+                                                Vec eulerFieldAverageVec);
+
+/**
+ * @brief Scatters a predefined set of particle fields to their corresponding Eulerian fields.
+ * @ingroup scatter_module
+ *
+ * This convenience function calls the unified `ScatterParticleFieldToEulerField`
+ * for a standard set of fields ("P", potentially others). It assumes the target
+ * Eulerian Vec objects (e.g., `user->P`, `user->Ucat`) exist in the UserCtx structure
+ * and are correctly associated with their respective DMs (`user->da` or `user->fda`).
+ * It zeros the target Vecs before scattering.
+ *
+ * @param[in,out] user Pointer to the UserCtx structure containing all required DMs,
+ *                     Vecs (`ParticleCount`, target Eulerian fields like `P`, `Ucat`), and `swarm`.
+ *
+ * @return PetscErrorCode 0 on success. Errors if prerequisites (like ParticleCount)
+ *         are missing or if underlying scatter calls fail.
+ */
+PetscErrorCode ScatterAllParticleFieldsToEulerFields(UserCtx *user);
 
 #endif // INTERPOLATION_H
+

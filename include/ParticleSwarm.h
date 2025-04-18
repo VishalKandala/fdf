@@ -16,6 +16,7 @@
 #include <math.h>
 #include "common.h"       // Common type definitions
 #include "logging.h"      // Logging macros and definitions
+#include "walkingsearch.h"
 
 // --------------------- Function Declarations ---------------------
 
@@ -128,35 +129,6 @@ PetscErrorCode DistributeParticles(PetscInt numParticles, PetscMPIInt rank, Pets
 PetscErrorCode FinalizeSwarmSetup(PetscRandom *randx, PetscRandom *randy, PetscRandom *randz);
 
 /**
- * @brief Defines the basic migration pattern for particles within the swarm.
- *
- * This function establishes the migration pattern that dictates how particles
- * move between different MPI ranks in the simulation. It initializes a migration
- * list where each particle is assigned a target rank based on predefined conditions.
- * The migration pattern can be customized to implement various migration behaviors.
- *
- * @param[in,out] user    Pointer to the UserCtx structure containing simulation context.
- *
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
- */
-PetscErrorCode DefineBasicMigrationPattern(UserCtx* user);
-
-/**
- * @brief Performs the basic migration of particles based on the defined migration pattern.
- *
- * This function updates the positions of particles within the swarm by migrating them
- * to target MPI ranks as specified in the migration list. It handles the migration process
- * by setting the 'DMSwarm_rank' field for each particle and invokes the DMSwarm migration
- * mechanism to relocate particles across MPI processes. After migration, it cleans up
- * allocated resources and ensures synchronization across all MPI ranks.
- *
- * @param[in,out] user    Pointer to the UserCtx structure containing simulation context.
- *
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
- */
-PetscErrorCode PerformBasicMigration(UserCtx* user);
-
-/**
  * @brief Initializes a Particle struct with data from DMSwarm fields.
  *
  * This helper function populates a Particle structure using data retrieved from DMSwarm fields.
@@ -189,16 +161,34 @@ PetscErrorCode InitializeParticle(PetscInt i, const PetscInt64 *PIDs, const Pets
 PetscErrorCode UpdateSwarmFields(PetscInt i, const Particle *particle,
                                         PetscReal *weights, PetscInt64 *cellIndices);
 
+
 /**
  * @brief Locates all particles within the grid and calculates their interpolation weights.
+ * @ingroup ParticleLocation
  *
- * This function iterates through all local particles, checks if they intersect the bounding box,
- * locates them within the grid using `LocateParticleInGrid`, and updates their interpolation weights
- * and cell indices accordingly.
+ * This function iterates through all particles currently local to this MPI rank.
+ * For each particle, it first checks if the particle is within the rank's
+ * pre-calculated bounding box (`user->bbox`). If it is, it calls the
+ * `LocateParticleInGrid` function to perform the walking search.
  *
- * @param[in] user Pointer to the user-defined context containing grid and swarm information.
+ * `LocateParticleInGrid` is responsible for finding the containing cell `(i,j,k)`
+ * and calculating the corresponding interpolation weights `(w1,w2,w3)`. It updates
+ * the `particle->cell` and `particle->weights` fields directly upon success.
+ * If the search fails (particle not found within MAX_TRAVERSAL, goes out of bounds,
+ * or gets stuck without resolution), `LocateParticleInGrid` sets the particle's
+ * `cell` to `{-1,-1,-1}` and `weights` to `{0.0, 0.0, 0.0}`.
  *
- * @return PetscErrorCode Returns `0` on success, non-zero on failure.
+ * After attempting location, this function updates the corresponding entries in the
+ * DMSwarm's "DMSwarm_CellID" and "weight" fields using the potentially modified
+ * data from the `particle` struct.
+ *
+ * @param[in] user Pointer to the UserCtx structure containing grid, swarm, and bounding box info.
+ *
+ * @return PetscErrorCode Returns `0` on success, non-zero on failure (e.g., errors accessing DMSwarm fields).
+ *
+ * @note Assumes `user->bbox` is correctly initialized for the local rank.
+ * @note Assumes `InitializeParticle` correctly populates the temporary `particle` struct.
+ * @note Assumes `UpdateSwarmFields` correctly writes data back to the DMSwarm.
  */
 PetscErrorCode LocateAllParticlesInGrid(UserCtx *user);
 
@@ -236,5 +226,28 @@ PetscBool IsParticleInsideBoundingBox(const BoundingBox *bbox, const Particle *p
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  */
 PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle);
+
+/**
+ * @brief Perform particle swarm initialization, particle-grid interaction, and related operations.
+ *
+ * This function handles the following tasks:
+ * 1. Initializes the particle swarm using the provided bounding box list (bboxlist) to determine initial placement
+ *    if ParticleInitialization is 0.
+ * 2. Locates particles within the computational grid.
+ * 3. Updates particle positions based on grid interactions (if such logic exists elsewhere in the code).
+ * 4. Interpolates particle velocities from grid points using trilinear interpolation.
+ *
+ * @param[in,out] user     Pointer to the UserCtx structure containing grid and particle swarm information.
+ * @param[in]     np       Number of particles to initialize in the swarm.
+ * @param[in]     bboxlist Pointer to an array of BoundingBox structures, one per MPI rank.
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ *
+ * @note
+ * - Ensure that `np` (number of particles) is positive.
+ * - The `bboxlist` array must be correctly computed and passed in before calling this function.
+ * - If ParticleInitialization == 0, particles will be placed at the midpoint of the local bounding box.
+ */
+PetscErrorCode InitializeParticleSwarm(UserCtx *user, PetscInt np, BoundingBox *bboxlist);
 
 #endif // PARTICLE_SWARM_H
