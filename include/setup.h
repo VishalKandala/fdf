@@ -7,7 +7,9 @@
 #include <time.h>
 #include <math.h>
 #include <petsctime.h>
+#include <petscsys.h>
 #include <petscdmcomposite.h>
+#include <petscsystypes.h>
 
 // Include additional headers
 #include "common.h"         // Shared type definitions
@@ -287,5 +289,30 @@ PetscErrorCode SetDMDAProcLayout(DM dm, UserCtx *user);
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
 PetscErrorCode CalculateParticleCountPerCell(UserCtx *user);
+
+// --- Helper function to resize swarm globally (add or remove) ---
+// This assumes removing excess particles means removing the globally last ones.
+PetscErrorCode ResizeSwarmGlobally(DM swarm, PetscInt N_target);
+
+/**
+ * @brief Checks particle count in the reference file and resizes the swarm if needed.
+ *
+ * Reads the specified field file (e.g., position) into a temporary Vec to determine
+ * the number of particles (`N_file`) represented in that file for the given timestep.
+ * Compares `N_file` with the current swarm size (`N_current`). If they differ,
+ * resizes the swarm globally (adds or removes particles) to match `N_file`.
+ * Removal assumes excess particles are the globally last ones.
+ *
+ * @param[in,out] user      Pointer to the UserCtx structure containing the DMSwarm.
+ * @param[in]     fieldName Name of the reference field (e.g., "position").
+ * @param[in]     ti        Time index for constructing the file name.
+ * @param[in]     ext       File extension (e.g., "dat").
+ * @param[out]    skipStep  Pointer to boolean flag, set to PETSC_TRUE if the step
+ *                          should be skipped (e.g., file not found), PETSC_FALSE otherwise.
+ *
+ * @return PetscErrorCode 0 on success, non-zero on critical failure.
+ *         If the reference file is not found, returns 0 and sets skipStep = PETSC_TRUE.
+ */
+PetscErrorCode PreCheckAndResizeSwarm(UserCtx *user, PetscInt ti, const char *ext);
 
  #endif // SETUP_H

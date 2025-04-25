@@ -105,19 +105,19 @@ int main(int argc, char **argv) {
        //"FinalizeSimulation"
        "AdvanceSimulation",
        //"SetEulerianFields"
-       //"CheckAndRemoveOutOfBoundsParticles",
+       "CheckAndRemoveOutOfBoundsParticles",
        //"IdentifyMigratingParticles",
        //"SetMigrationRanks",
        //"PerformMigration",
        //"SetDMDAProcLayout",
        //"ComputeAndStoreNeighborsRanks",
-	"CalculateParticleCountPerCell",
-	"ScatterAllParticleFieldsToEulerFields",
-	"ScatterParticleFieldToEulerField",
-	"ScatterParticleFieldToEulerField_Internal",
-	"NormalizeGridVectorByCount",
-	"AccumulateParticleField",
-	"GetScatterTargetInfo"
+       //"CalculateParticleCountPerCell",
+       //"ScatterAllParticleFieldsToEulerFields",
+       //"ScatterParticleFieldToEulerField",
+       //"ScatterParticleFieldToEulerField_Internal",
+       //"NormalizeGridVectorByCount",
+       //"AccumulateParticleField",
+       //"GetScatterTargetInfo"
     };
     set_allowed_functions(allowedFuncs, sizeof(allowedFuncs) / sizeof(allowedFuncs[0])); // Use sizeof for count
 
@@ -150,8 +150,21 @@ int main(int argc, char **argv) {
 
     LOG_ALLOW(GLOBAL,LOG_INFO," Grid & Fields Setup! \n");
 
+    // Get Domain bounds for display
+    PetscReal xMin,xMax,yMin,yMax,zMin,zMax;
+
+    ierr = PetscOptionsGetReal(NULL, NULL, "-xMin", &xMin, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-xMax", &xMax, NULL); CHKERRQ(ierr);
+
+    ierr = PetscOptionsGetReal(NULL, NULL, "-yMin", &yMin, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-yMax", &yMax, NULL); CHKERRQ(ierr);
+
+    ierr = PetscOptionsGetReal(NULL, NULL, "-zMin", &zMin, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-zMax", &zMax, NULL); CHKERRQ(ierr);
+    
     PetscPrintf(PETSC_COMM_WORLD," ---------------------------------------- \n");
     PetscPrintf(PETSC_COMM_WORLD," Grid: %d,%d,%d \n",user->IM,user->JM,user->KM);
+    PetscPrintf(PETSC_COMM_WORLD," Domain: X: %.2f - %.2f | Y: %.2f - %.2f | Z: %.2f - %.2f \n",xMin,xMax,yMin,yMax,zMin,zMax); 
     PetscPrintf(PETSC_COMM_WORLD," StartTime: %0.4f | Timestep: %0.4f \n",StartTime,user->dt);
     PetscPrintf(PETSC_COMM_WORLD," StartStep: %d | Simulation Length (Timesteps): %d \n",StartStep,StepsToRun);
     PetscPrintf(PETSC_COMM_WORLD," No.of Processors: %d \n",size);

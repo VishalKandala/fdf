@@ -4,22 +4,6 @@
  * Provides the setup to start any simulation with DMSwarm and DMDAs.
  **/
 
- #include <petscpf.h>
- #include <petscdmswarm.h>
- #include <stdlib.h>
- #include <time.h>
- #include <math.h>
- #include <petsctime.h>
- #include <petscdmcomposite.h>
- 
- // Include the updated headers
- //#include "common.h"         // Shared type definitions
- //#include "ParticleSwarm.h"  // Particle swarm functions
- //#include "walkingsearch.h"  // Particle location functions
- //#include "grid.h"           // Grid functions
- //#include "logging.h"        // Logging macros
- //#include "io.h"             // Data Input and Output functions
-
  #include "setup.h"
 
 // Define a buffer size for error messages if not already available
@@ -1078,6 +1062,7 @@ PetscErrorCode SetDMDAProcLayout(DM dm, UserCtx *user)
  * @param[in,out] user Pointer to the UserCtx structure containing da, swarm, and ParticleCount.
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+
  */
 PetscErrorCode CalculateParticleCountPerCell(UserCtx *user) {
     PetscErrorCode ierr;
@@ -1220,104 +1205,180 @@ PetscErrorCode CalculateParticleCountPerCell(UserCtx *user) {
 // NOTE: AccumulateParticleField also needs the same modification if it is to handle global CellIDs
 // and use DMDAVecGetArray/DMDAVecGetArrayDOF
 
-
-/**
- * @brief Counts particles in each cell of the DMDA 'da' and stores the result in user->ParticleCount.
- *
- * Assumes user->ParticleCount is a pre-allocated global vector associated with user->da
- * and initialized to zero before calling this function (though it resets it internally).
- * Assumes particle 'DMSwarm_CellID' field contains local cell indices.
- *
- * @param[in,out] user Pointer to the UserCtx structure containing da, swarm, and ParticleCount.
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
- */
-/*
-PetscErrorCode CalculateParticleCountPerCell(UserCtx *user) {
+// --- Helper function to resize swarm globally (add or remove) ---
+// This assumes removing excess particles means removing the globally last ones.
+PetscErrorCode ResizeSwarmGlobally(DM swarm, PetscInt N_target)
+{
     PetscErrorCode ierr;
-    DM             da = user->da;
-    DM             swarm = user->swarm;
-    Vec            countVec = user->ParticleCount; // The target vector
-    PetscInt       nlocal, p;
-    const PetscInt *cell_id_arr; // Read-only access to particle cell IDs
-    PetscScalar    *count_arr;   // Read-write access to the local part of countVec
-    PetscScalar    *PID;         // Particle ID array for logging.
-    PetscInt       gxs, gys, gzs, gxm, gym, gzm; // Local grid ghosted corners/dimensions
+    PetscInt       N_current, nlocal_current;
     PetscMPIInt    rank;
+    MPI_Comm       comm;
 
     PetscFunctionBeginUser;
+    ierr = PetscObjectGetComm((PetscObject)swarm, &comm); CHKERRQ(ierr);
+    ierr = MPI_Comm_rank(comm, &rank); CHKERRQ(ierr);
+    ierr = DMSwarmGetSize(swarm, &N_current); CHKERRQ(ierr);
+    ierr = DMSwarmGetLocalSize(swarm, &nlocal_current); CHKERRQ(ierr);
 
-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
-    
-    // --- Input Validation ---
-    if (!da) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx->da is NULL.");
-    if (!swarm) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx->swarm is NULL.");
-    if (!countVec) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx->ParticleCount is NULL.");
+    PetscInt delta = N_target - N_current;
 
-    // --- *** IMPORTANT: Zero the count vector before accumulating *** ---
-    ierr = VecSet(countVec, 0.0); CHKERRQ(ierr);
-    
-    // --- Get Particle Data ---
-    LOG_ALLOW(GLOBAL,LOG_DEBUG, "Accessing particle data.\n");
-    ierr = DMSwarmGetLocalSize(swarm, &nlocal); CHKERRQ(ierr);
-    // Use the PETSc predefined enum for the Cell ID field for robustness
-    ierr = DMSwarmGetField(swarm,"DMSwarm_CellID", NULL, NULL, (void **)&cell_id_arr); CHKERRQ(ierr);
-    //ierr = DMSwarmGetField(swarm,"DMSwarm_pid",NULL, NULL, (void **)&PID); CHKERRQ(ierr);
-
-    // --- Get Grid Vector Array and Grid Dimensions ---
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Accessing ParticleCount vector array.\n");
-    ierr = VecGetArray(countVec, &count_arr); CHKERRQ(ierr);
-    // Get dimensions of the local patch *including ghosts* for correct indexing
-    // using the local cell IDs (pidx, pidy, pidz) from DMSwarm_CellID
-    ierr = DMDAGetGhostCorners(da, &gxs, &gys, &gzs, &gxm, &gym, &gzm); CHKERRQ(ierr);
-
-    // --- Accumulate Counts Locally ---
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "CalculateParticleCountPerCell (Rank %d): Counting %d local particles.\n",rank,nlocal);
-    for (p = 0; p < nlocal; ++p) {
-        // Get local cell indices for this particle
-        // Assumes cell_id_arr stores {pidx, pidy, pidz} relative to the start of the local ghosted patch
-        PetscInt pidx = cell_id_arr[p * 3 + 0]; // Local i-index (0 to gxm-1)
-        PetscInt pidy = cell_id_arr[p * 3 + 1]; // Local j-index (0 to gym-1)
-        PetscInt pidz = cell_id_arr[p * 3 + 2]; // Local k-index (0 to gzm-1)
-
-        // Check if indices are within the valid bounds of the local ghosted array
-        if (pidx >= 0 && pidx < gxm && pidy >= 0 && pidy < gym && pidz >= 0 && pidz < gzm)
-        {
-             // Calculate the flat 1D index into the count_arr
-             // Indexing order matches PETSc standard: k (slowest), j, i (fastest)
-             PetscInt flat_idx = (pidz * gym + pidy) * gxm + pidx;
-             count_arr[flat_idx] += 1.0; // Increment count for this cell
-        } else {
-            // This particle's CellID points outside the expected local ghosted region.
-            // This might indicate an issue with particle position, CellID calculation,
-            // or potentially particle migration timing.
-             LOG_ALLOW(LOCAL, LOG_WARNING, "CalculateParticleCountPerCell (Rank %d): Particle %d has out-of-bounds CellID (%d, %d, %d). Ghosted dims: %dx%dx%d. Skipping count.\n",
-                      rank, p, pidx, pidy, pidz, gxm, gym, gzm);
-             // Depending on the application, you might want to handle this differently
-             // (e.g., flag the particle for migration, error out).
-        }
- 
+    if (delta == 0) {
+        PetscFunctionReturn(0); // Nothing to do
     }
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "CalculateParticleCountPerCell (Rank %d): Local counting finished.\n",rank);
 
-    // --- Restore Access ---
-    ierr = VecRestoreArray(countVec, &count_arr); CHKERRQ(ierr);
-    ierr = DMSwarmRestoreField(swarm,"DMSwarm_CellID", NULL, NULL, (void **)&cell_id_arr); CHKERRQ(ierr);
-    //ierr = DMSwarmRestoreField(swarm,"DMSwarm_pid",NULL, NULL, (void **)&PID); CHKERRQ(ierr);
+    if (delta < 0) { // Remove particles
+        PetscInt num_to_remove_global = -delta;
+        LOG_ALLOW(GLOBAL, LOG_INFO, "ResizeSwarmGlobally: Current size %d > target size %d. Removing %d particles globally.\n", N_current, N_target, num_to_remove_global);
 
-    // --- Assemble Global Vector ---
-    // This sums contributions from different processes to the same global cell index,
-    // which is essential for cells on process boundaries.
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "CalculateParticleCountPerCell: Assembling global ParticleCount vector.\n");
-    ierr = VecAssemblyBegin(countVec); CHKERRQ(ierr);
-    ierr = VecAssemblyEnd(countVec); CHKERRQ(ierr);
+        // --- Strategy: Remove the globally last 'num_to_remove_global' particles ---
+        // Each rank needs to determine how many of its *local* particles fall
+        // within the range of global indices [N_target, N_current - 1].
 
-    PetscReal AvgCount;
-    PetscReal total_counted_particles;
-    
-    ierr = VecSum(countVec, &total_counted_particles); CHKERRQ(ierr);
-    ;
-    LOG_ALLOW(GLOBAL, LOG_INFO, " Total particles counted globally: %.0f\n", total_counted_particles);
-    LOG_ALLOW(GLOBAL, LOG_INFO, "CalculateParticleCountPerCell: Particle counting complete.\n");    
+        PetscInt rstart = 0;
+	PetscInt  rend;
+	// Global range owned by this rank [rstart, rend)
+
+	ierr = MPI_Exscan(&nlocal_current, &rstart, 1, MPIU_INT, MPI_SUM, comm); CHKERRMPI(ierr); // Use CHKERRMPI for MPI calls
+
+	rend = rstart + nlocal_current;
+	
+
+        // Calculate how many local particles have global indices >= N_target
+        PetscInt nlocal_remove_count = 0;
+        if (rend > N_target) { // If this rank owns any particles slated for removal
+            PetscInt start_remove_local_idx = (N_target > rstart) ? (N_target - rstart) : 0;
+            nlocal_remove_count = nlocal_current - start_remove_local_idx;
+        }
+
+        if (nlocal_remove_count < 0) nlocal_remove_count = 0; // Sanity check
+        if (nlocal_remove_count > nlocal_current) nlocal_remove_count = nlocal_current; // Sanity check
+
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Global range [%d, %d). Target size %d. Need to remove %d local particles (from end).\n", rank, rstart, rend, N_target, nlocal_remove_count);
+
+        // Remove the last 'nlocal_remove_count' particles *locally* by iterating backwards
+        PetscInt removal_ops_done = 0;
+        for (PetscInt p = nlocal_current - 1; p >= 0 && removal_ops_done < nlocal_remove_count; --p) {
+            ierr = DMSwarmRemovePointAtIndex(swarm, p); CHKERRQ(ierr);
+            removal_ops_done++;
+        }
+
+        if (removal_ops_done != nlocal_remove_count) {
+             SETERRQ(comm, PETSC_ERR_PLIB, "Rank %d: Failed to remove the expected number of local particles (%d != %d)", rank, removal_ops_done, nlocal_remove_count);
+        }
+         LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Removed %d local particles.\n", rank, removal_ops_done);
+ 
+	// Barrier to ensure all removals are done before size check
+        ierr = MPI_Barrier(comm); CHKERRMPI(ierr);
+
+    } else { // delta > 0: Add particles
+        PetscInt num_to_add_global = delta;
+        LOG_ALLOW(GLOBAL, LOG_INFO, "ResizeSwarmGlobally: Current size %d < target size %d. Adding %d particles globally.\n", N_current, N_target, num_to_add_global);
+        ierr = DMSwarmAddNPoints(swarm, num_to_add_global); CHKERRQ(ierr);
+        // Note: Added particles will have uninitialized field data. Reading will overwrite.
+    }
+
+    // Verify final size
+    PetscInt N_final;
+    ierr = DMSwarmGetSize(swarm, &N_final); CHKERRQ(ierr);
+    if (N_final != N_target) {
+        SETERRQ(comm, PETSC_ERR_PLIB, "Failed to resize swarm: expected %d particles, got %d", N_target, N_final);
+    }
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "ResizeSwarmGlobally: Swarm successfully resized to %d particles.\n", N_final);
     PetscFunctionReturn(0);
 }
-*/
+
+/**
+ * @brief Checks particle count in the position file and resizes the swarm if needed (PETSc 3.18 compatible).
+ *
+ * Always uses "position" as the reference field and assumes a block size of 3.
+ * Reads the position file (expected at results/position<#####>_0.ext format)
+ * into a temporary Vec to determine the number of particles (`N_file`).
+ * Compares `N_file` with the current swarm size (`N_current`). If they differ,
+ * resizes the swarm globally.
+ * If the position file is not found, returns PETSC_ERR_FILE_OPEN.
+ *
+ * @param[in,out] user Pointer to the UserCtx structure containing the DMSwarm.
+ * @param[in]     ti   Time index for constructing the file name.
+ * @param[in]     ext  File extension (e.g., "dat").
+ *
+ * @return PetscErrorCode 0 on success, non-zero on failure (including PETSC_ERR_FILE_OPEN).
+ */
+PetscErrorCode PreCheckAndResizeSwarm(UserCtx *user,
+                                      PetscInt ti,
+                                      const char *ext)
+{
+    PetscErrorCode ierr;
+    char           filename[PETSC_MAX_PATH_LEN];
+    PetscViewer    viewer;
+    Vec            tmpVec = NULL;
+    PetscInt       N_file = 0;
+    PetscInt       N_current = 0;
+    MPI_Comm       comm;
+    PetscBool      fileExists = PETSC_FALSE;
+    const char    *refFieldName = "position"; // Hardcoded reference field
+    const PetscInt bs = 3;                   // Hardcoded block size for position
+    const int      placeholder_int = 0;      // Placeholder integer for filename format
+
+    PetscFunctionBeginUser;
+    ierr = PetscObjectGetComm((PetscObject)user->swarm, &comm); CHKERRQ(ierr);
+
+    // --- Construct filename using the specified format ---
+    // results/%s%05<PetscInt_FMT>_%d.%s
+    ierr = PetscSNPrintf(filename, sizeof(filename), "results/%s%05" PetscInt_FMT "_%d.%s",
+                         refFieldName, ti, placeholder_int, ext); CHKERRQ(ierr);
+    // Note: Make sure the "results" directory exists or handle directory creation elsewhere.
+
+    // Log message indicating the check using the constructed filename
+    LOG_ALLOW(GLOBAL, LOG_INFO, "PreCheckAndResizeSwarm: Checking particle count for timestep %d using reference file '%s' (bs=%d assumed).\n", ti, filename, bs);
+
+    // --- Check existence of the position file ---
+    ierr = PetscTestFile(filename, 'r', &fileExists); CHKERRQ(ierr);
+
+    if (!fileExists) {
+        SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Mandatory reference file '%s' not found for timestep %d.", filename, ti);
+    }
+
+    // LOG_ALLOW(GLOBAL, LOG_DEBUG, "PreCheckAndResizeSwarm: Found position file %s. Determining particle count.\n", filename);
+
+    // --- Load position file into temporary Vec to get size ---
+    ierr = PetscViewerBinaryOpen(comm, filename, FILE_MODE_READ, &viewer); CHKERRQ(ierr);
+    ierr = VecCreate(comm, &tmpVec); CHKERRQ(ierr);
+
+    ierr = VecLoad(tmpVec, viewer);
+    if (ierr) {
+        PetscErrorCode ierr_destroy;
+        ierr_destroy = PetscViewerDestroy(&viewer); CHKERRQ(ierr_destroy);
+        ierr_destroy = VecDestroy(&tmpVec); CHKERRQ(ierr_destroy);
+        // LOG_ALLOW(GLOBAL, LOG_ERROR, "PreCheckAndResizeSwarm: Failed to load reference file %s into temporary vector. Error %d\n", filename, ierr);
+        PetscFunctionReturn(ierr); // Return the VecLoad error
+    }
+
+    // --- Calculate particle count using hardcoded block size ---
+    PetscInt vecSize;
+    ierr = VecGetSize(tmpVec, &vecSize); CHKERRQ(ierr);
+    if (vecSize % bs != 0) {
+        PetscErrorCode ierr_destroy;
+        ierr_destroy = PetscViewerDestroy(&viewer); CHKERRQ(ierr_destroy);
+        ierr_destroy = VecDestroy(&tmpVec); CHKERRQ(ierr_destroy);
+        SETERRQ(comm, PETSC_ERR_FILE_READ, "Temporary vector size %d from file %s is not divisible by assumed block size %d for '%s'", vecSize, filename, bs, refFieldName);
+    }
+    N_file = vecSize / bs; // Calculate particle count
+
+    // LOG_ALLOW(GLOBAL, LOG_DEBUG, "PreCheckAndResizeSwarm: File %s contains %d particles (Vec size %d, BS %d).\n", filename, N_file, vecSize, bs);
+
+    // --- Clean up temporary objects ---
+    ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
+    ierr = VecDestroy(&tmpVec); CHKERRQ(ierr);
+
+    // --- Compare with current swarm size and resize if needed ---
+    ierr = DMSwarmGetSize(user->swarm, &N_current); CHKERRQ(ierr);
+
+    if (N_file == N_current) {
+        // LOG_ALLOW(GLOBAL, LOG_DEBUG, "PreCheckAndResizeSwarm: Swarm size (%d) already matches file size (%d). No resize needed for timestep %d.\n", N_current, N_file, ti);
+    } else {
+        // LOG_ALLOW(GLOBAL, LOG_INFO, "PreCheckAndResizeSwarm: Swarm size %d differs from file size %d for timestep %d. Resizing swarm.\n", N_current, N_file, ti);
+        ierr = ResizeSwarmGlobally(user->swarm, N_file); CHKERRQ(ierr);
+    }
+
+    PetscFunctionReturn(0); // Return 0 only if everything succeeded
+}

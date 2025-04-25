@@ -1495,6 +1495,74 @@ PetscErrorCode ReadSwarmField(UserCtx *user, const char *field_name, PetscInt ti
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
+/**
+ * @brief Reads multiple fields (positions, velocity, etc.) into a DMSwarm.
+ *
+ * ASSUMES the swarm has already been resized (if necessary) by a function
+ * like PreCheckAndResizeSwarm to match the particle count in the input files
+ * for the current timestep.
+ *
+ * @param[in,out] user Pointer to the UserCtx structure containing the DMSwarm (user->swarm).
+ * @param[in]     ti   Time index for constructing the file name.
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure. Handles
+ *         missing optional files as warnings.
+ */
+PetscErrorCode ReadAllSwarmFields(UserCtx *user, PetscInt ti)
+{
+  PetscErrorCode ierr;
+  PetscInt nGlobal;
+
+  PetscFunctionBegin;
+  ierr = DMSwarmGetSize(user->swarm, &nGlobal); CHKERRQ(ierr); // Get final size
+  LOG_ALLOW(GLOBAL, LOG_INFO, "ReadAllSwarmFields - Reading DMSwarm fields for timestep %d (expected size %d).\n", ti, nGlobal);
+
+  // If the swarm is empty after potential resize, we might still technically proceed
+  // but ReadSwarmField might do nothing or error depending on implementation.
+  // It's safer to just return if empty.
+  if (nGlobal == 0) {
+      LOG_ALLOW(GLOBAL, LOG_INFO, "ReadAllSwarmFields - Swarm is empty for timestep %d. Nothing to read.\n", ti);
+      PetscFunctionReturn(0);
+  }
+
+  // 1) Read positions (required, should succeed now)
+  ierr = ReadSwarmField(user, "position", ti, "dat");
+  if (ierr == PETSC_ERR_FILE_OPEN) {
+      // This shouldn't happen if PreCheckAndResizeSwarm ran successfully, but handle defensively.
+      LOG_ALLOW(GLOBAL, LOG_ERROR, "ReadAllSwarmFields - Position file missing for step %d, but PreCheck succeeded? Inconsistent state.\n", ti);
+      PetscFunctionReturn(PETSC_ERR_PLIB);
+  } else if (ierr) {
+      LOG_ALLOW(GLOBAL, LOG_ERROR, "ReadAllSwarmFields - Failed to read position field for step %d (Error %d), even though size should match.\n", ti, ierr);
+      CHKERRQ(ierr); // Treat other errors as fatal
+  } else {
+       LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadAllSwarmFields - Successfully read position field for step %d.\n", ti);
+  }
+
+  // 2) Read velocity
+  ierr = ReadSwarmField(user, "velocity", ti, "dat");
+   if (ierr == PETSC_ERR_FILE_OPEN) { // Handle potentially missing file as warning
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadAllSwarmFields - Velocity file for step %d not found. Velocity data may be invalid/uninitialized.\n", ti);
+   } else if (ierr) {
+       LOG_ALLOW(GLOBAL, LOG_ERROR, "ReadAllSwarmFields - Failed to read velocity field for step %d (Error %d). File might be corrupt or size incorrect despite pre-check.\n", ti, ierr);
+       CHKERRQ(ierr); // Treat other errors as fatal
+   } else {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadAllSwarmFields - Successfully read velocity field for step %d.\n", ti);
+   }
+
+  // 3) Read CellID (Optional)
+  // ierr = ReadSwarmField(user, "DMSwarm_CellID", ti, "dat");
+  // if (ierr == PETSC_ERR_FILE_OPEN) { LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadAllSwarmFields - CellID file for step %d not found.\n", ti); }
+  // else CHKERRQ(ierr); // Treat other errors as fatal unless CellID read can also fail gracefully
+
+  // 4) Read weight (Optional)
+  // ierr = ReadSwarmField(user, "weight", ti, "dat");
+  // if (ierr == PETSC_ERR_FILE_OPEN) { LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadAllSwarmFields - Weight file for step %d not found.\n", ti); }
+  // else CHKERRQ(ierr);
+
+  LOG_ALLOW(GLOBAL, LOG_INFO, "ReadAllSwarmFields - Finished reading DMSwarm fields for timestep %d.\n", ti);
+  PetscFunctionReturn(0);
+}
+/*
 PetscErrorCode ReadAllSwarmFields(UserCtx *user, PetscInt ti)
 {
   PetscErrorCode ierr;
@@ -1532,7 +1600,7 @@ PetscErrorCode ReadAllSwarmFields(UserCtx *user, PetscInt ti)
 
   LOG_ALLOW(GLOBAL, LOG_INFO, "ReadAllSwarmFields - Finished reading DMSwarm fields for timestep %d.\n", ti);
   PetscFunctionReturn(0);
-}
+  }*/
 
 /**
  * @brief Reads coordinate data (for particles)  from file into a PETSc Vec, then gathers it to rank 0.

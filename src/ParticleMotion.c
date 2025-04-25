@@ -183,6 +183,7 @@ PetscErrorCode CheckAndRemoveOutOfBoundsParticles(UserCtx *user,
 
     PetscFunctionReturn(0);
 }
+
 /**
  * @brief Defines the basic migration pattern for particles within the swarm.
  *

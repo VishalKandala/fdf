@@ -606,6 +606,9 @@ int main(int argc, char **argv)
 
         // Write Eulerian field data to vts files
 	ierr =  WriteEulerianVTK(user,ti, pps.eulerianExt,pps.eulerianPrefix);
+
+        // Pre-check size using position file and resize swarm if needed
+        ierr = PreCheckAndResizeSwarm(user,ti, "dat"); CHKERRQ(ierr);
 	
         // --- Read Particle Data (EVERY timestep) ---
         // ReadAllSwarmFields should read position and velocity for timestep 'ti'
