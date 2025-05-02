@@ -5,22 +5,6 @@
  * Initializes a particle swarm, reads velocity fields, and performs particle-grid interpolation.
  */
 
-#include <petscpf.h>
-#include <petscdmswarm.h>
-#include <stdlib.h>
-#include <time.h>
-#include <math.h>
-#include <petsctime.h>
-#include <petscdmcomposite.h>
-
-// Include the updated headers
-//#include "common.h"         // Shared type definitions
-//#include "ParticleSwarm.h"  // Particle swarm functions
-//#include "walkingsearch.h"  // Particle location functions
-//#include "grid.h"           // Grid functions
-//#include "logging.h"        // Logging macros
-//#include "io.h"             // Data Input and Output functions
-
 #include "setup.h"
 
 #undef _FUNCT_
@@ -51,6 +35,7 @@
  * @return int Returns 0 on success, non-zero on failure.
  */
 int main(int argc, char **argv) {
+  
     UserCtx *user = NULL;     // User context
     PetscErrorCode ierr;      // PETSc error handling
     PetscInt block_number = 1;
@@ -65,74 +50,16 @@ int main(int argc, char **argv) {
     PetscBool readFields = PETSC_FALSE;
     static char help[] = " Test for interpolation - swarm-curvIB";
     PetscViewer logviewer;
+    char allowedFile[PETSC_MAX_PATH_LEN]  = "config.dat";
+    PetscBool useCfg = PETSC_FALSE;
+    char **allowedFuncs  = NULL;
+    PetscInt nAllowed   = 0;
 
     // -------------------- 1. PETSc Initialization --------------------
     ierr = PetscInitialize(&argc, &argv, (char *)0, help); CHKERRQ(ierr);
 
-    // -------------------- 2. Setup Logging Allow-List ----------------
-    // Only these function names will produce LOG_ALLOW (or LOG_ALLOW_SYNC) output.
-    // You can add more as needed (e.g., "InitializeSimulation", "PerformParticleSwarmOperations", etc.).
-    const char *allowedFuncs[] = {
-        "main",
-       // "InitializeSimulation",                 
-       // "SetupGridAndVectors",
-       //"DefineGridCoordinates",
-       //"ParseGridInputs",
-       // "DetermineGridSizes",
-       //"InitializeGridDM",
-       //"AssignGridCoordinates",
-       //"FinalizeGridSetup",
-       //"SetAnalyticalCartesianField",
-       //"ApplyAnalyticalBC",
-       // "ApplyAnalyticalBC_Vector",
-       //"InterpolateFieldFromCornerToCenter_Vector",
-       //"WriteSimulationFields",
-       //"ReadSimulationFields",
-       //"GatherAllBoundingBoxes",
-       //"BroadcastAllBoundingBoxes",
-       //"InitializeParticleSwarm",
-       //"CreateParticleSwarm",
-       //"AssignInitialPropertiesToSwarm",
-       //"InitializeParticleBasicProperties",
-       //"FinalizeSwarmSetup",
-	// "LocateAllParticlesInGrid",
-	// "InterpolateAllFieldsToSwarm",
-       //"InterpolateEulerFieldToSwarm",
-       //"InterpolateFieldFromCenterToCorner_Vector",
-       //"ComputeTrilinearWeights",
-       //"InterpolateEulerFieldToSwarmForParticle",
-       //"TrilinearInterpolation_Vector",
-       //"FinalizeSimulation"
-       "AdvanceSimulation",
-       //"SetEulerianFields"
-       "CheckAndRemoveOutOfBoundsParticles",
-       //"IdentifyMigratingParticles",
-       //"SetMigrationRanks",
-       //"PerformMigration",
-       //"SetDMDAProcLayout",
-       //"ComputeAndStoreNeighborsRanks",
-       //"CalculateParticleCountPerCell",
-       //"ScatterAllParticleFieldsToEulerFields",
-       //"ScatterParticleFieldToEulerField",
-       //"ScatterParticleFieldToEulerField_Internal",
-       //"NormalizeGridVectorByCount",
-       //"AccumulateParticleField",
-       //"GetScatterTargetInfo"
-    };
-    set_allowed_functions(allowedFuncs, sizeof(allowedFuncs) / sizeof(allowedFuncs[0])); // Use sizeof for count
-
-    // Enable PETSc default logging
-    ierr = PetscLogDefaultBegin(); CHKERRQ(ierr);
-
-    registerEvents();   
-
-    print_log_level();
-
-    // Check if user requested to read fields instead of updating
-    ierr = PetscOptionsGetBool(NULL, NULL, "-read_fields", &readFields, NULL); CHKERRQ(ierr);
-
     // Initialize simulation: user context, MPI rank/size, np, etc.
-    ierr = InitializeSimulation(&user, &rank, &size, &np, &StartStep, &StepsToRun, &StartTime, &block_number, &OutputFreq); CHKERRQ(ierr);
+    ierr = InitializeSimulation(&user, &rank, &size, &np, &StartStep, &StepsToRun, &StartTime, &block_number, &OutputFreq,&readFields,&allowedFuncs,&nAllowed,allowedFile,&useCfg); CHKERRQ(ierr);
     
     LOG_ALLOW(GLOBAL,LOG_INFO," Simulation Initialized \n");
 
@@ -140,41 +67,13 @@ int main(int argc, char **argv) {
               "readFields = %s, size = %d, rank = %d\n",
 		   readFields ? "true" : "false", size,rank);
 
-
-    
     // Setup the computational grid
     ierr = SetupGridAndVectors(user, block_number); CHKERRQ(ierr);
 
-    // Compute and Store the neighboring ranks for each rank.
-    ierr = ComputeAndStoreNeighborRanks(user); CHKERRQ(ierr);
-
     LOG_ALLOW(GLOBAL,LOG_INFO," Grid & Fields Setup! \n");
 
-    // Get Domain bounds for display
-    PetscReal xMin,xMax,yMin,yMax,zMin,zMax;
-
-    ierr = PetscOptionsGetReal(NULL, NULL, "-xMin", &xMin, NULL); CHKERRQ(ierr);
-    ierr = PetscOptionsGetReal(NULL, NULL, "-xMax", &xMax, NULL); CHKERRQ(ierr);
-
-    ierr = PetscOptionsGetReal(NULL, NULL, "-yMin", &yMin, NULL); CHKERRQ(ierr);
-    ierr = PetscOptionsGetReal(NULL, NULL, "-yMax", &yMax, NULL); CHKERRQ(ierr);
-
-    ierr = PetscOptionsGetReal(NULL, NULL, "-zMin", &zMin, NULL); CHKERRQ(ierr);
-    ierr = PetscOptionsGetReal(NULL, NULL, "-zMax", &zMax, NULL); CHKERRQ(ierr);
-    
-    PetscPrintf(PETSC_COMM_WORLD," ---------------------------------------- \n");
-    PetscPrintf(PETSC_COMM_WORLD," Grid: %d,%d,%d \n",user->IM,user->JM,user->KM);
-    PetscPrintf(PETSC_COMM_WORLD," Domain: X: %.2f - %.2f | Y: %.2f - %.2f | Z: %.2f - %.2f \n",xMin,xMax,yMin,yMax,zMin,zMax); 
-    PetscPrintf(PETSC_COMM_WORLD," StartTime: %0.4f | Timestep: %0.4f \n",StartTime,user->dt);
-    PetscPrintf(PETSC_COMM_WORLD," StartStep: %d | Simulation Length (Timesteps): %d \n",StartStep,StepsToRun);
-    PetscPrintf(PETSC_COMM_WORLD," No.of Processors: %d \n",size);
-    PetscPrintf(PETSC_COMM_WORLD," No.of Particles: %d \n",np);
-    PetscPrintf(PETSC_COMM_WORLD," Particle Initialization Mode: %d \n",user->ParticleInitialization);
-    PetscPrintf(PETSC_COMM_WORLD," Field Initialization Mode: %d \n",user->FieldInitialization);
-    if(user->FieldInitialization == 0){
-    PetscPrintf(PETSC_COMM_WORLD," Constant Velocity: %.4f \n",user->ConstantVelocity); 
-    }
-    PetscPrintf(PETSC_COMM_WORLD," ---------------------------------------- \n");
+    // Display Banner for simulation
+    ierr = DisplayBanner(user, StartTime, StartStep, StepsToRun, size, np); CHKERRQ(ierr);
 
     LOG_ALLOW(GLOBAL,LOG_INFO," Simulation Fields %s \n",readFields ? "read":"generated");    
 
@@ -183,13 +82,10 @@ int main(int argc, char **argv) {
     ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
     LOG_ALLOW(GLOBAL,LOG_INFO,"Maximum velocity magnitude:%f \n", umax);
     }
+
+    // Setup the Domain Rank Information.
+    ierr = SetupDomainRankInfo(user, &bboxlist);
     
-    // Gather bounding boxes on rank 0
-    ierr = GatherAllBoundingBoxes(user, &bboxlist); CHKERRQ(ierr);
-
-    // Broadcast bboxlist to all ranks
-    ierr = BroadcastAllBoundingBoxes(user, &bboxlist); CHKERRQ(ierr);
-
     LOG_ALLOW(GLOBAL,LOG_INFO," Bounding Boxes setup \n");
 
     // Initialize particle swarm with bboxlist knowledge on all ranks
@@ -198,16 +94,8 @@ int main(int argc, char **argv) {
     // Advance the Lagrangian Particle Simulation
     ierr = AdvanceSimulation(user,StartStep,StartTime,StepsToRun,OutputFreq,readFields,bboxlist);
  
-    // Create an ASCII viewer to write log output to file
-    ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, "simulationlog.txt", &logviewer);
-
-    LOG_ALLOW(GLOBAL,LOG_INFO," PETSC Logs written \n");
-    
-    // Print PETSc logging results at the end
-    ierr = PetscLogView(logviewer); CHKERRQ(ierr);
-    
     // Finalize simulation
-    ierr = FinalizeSimulation(user, block_number, bboxlist); CHKERRQ(ierr);
+    ierr = FinalizeSimulation(user, block_number, bboxlist,allowedFuncs,nAllowed,&logviewer); CHKERRQ(ierr);
  
     return 0;
 }

@@ -62,10 +62,15 @@ PetscErrorCode registerEvents(void);
  * @param[out] ti      The timestep to start from if restarting.
  * @param[out] nblk    Number of grid blocks.
  * @param[out] outputFreq The Frequency at which data should be output from the simulation.
+ * @param[out] readFields The flag to decide if eulerian fields are read or generated.
+ * @param[out] allowedFuncs list of functions that are allowed to show output
+ * @param[out] nAllowed No.of functions allowed to show output
+ * @param[out] allowedFile indicates the file  that contains the list of allowed functions.
+ * @param[out] useCfg Flag for whether a config file is prescribed or to use default.
  *
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  */
-PetscErrorCode InitializeSimulation(UserCtx **user, PetscMPIInt *rank, PetscMPIInt *size, PetscInt *np, PetscInt *StartStep, PetscInt *StepsToRun,PetscReal *StartTime, PetscInt *nblk, PetscInt *outputFreq);
+PetscErrorCode InitializeSimulation(UserCtx **user, PetscMPIInt *rank, PetscMPIInt *size, PetscInt *np, PetscInt *StartStep, PetscInt *StepsToRun,PetscReal *StartTime, PetscInt *nblk, PetscInt *outputFreq, PetscBool *readFields, char ***allowedFuncs, PetscInt *nAllowed, char *allowedFile, PetscBool *useCfg);
 
 /** 
  * @brief Setup grid and vectors for the simulation.
@@ -82,9 +87,12 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number);
  * @param[in,out] user Pointer to the UserCtx structure.
  * @param[in] block_number The number of grid blocks in the domain.
  * @param[in,out] bboxlist  Pointer to the array of BoundingBoxes.
+ * @param[in,out] allowedFuncs list of functions that are allowed to show output.
+ * @param[in] nAllowed No.of functions allowed to show output.
+ * @param[in] PetSc viewer data type for logging 
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
- PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, BoundingBox *bboxlist);
+PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, BoundingBox *bboxlist, char **allowedFuncs, PetscInt nAllowed,PetscViewer *logviewer);
 
 /**
  * @brief Allocates a 3D array of PetscReal values using PetscCalloc.
@@ -279,40 +287,20 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user);
 PetscErrorCode SetDMDAProcLayout(DM dm, UserCtx *user);
 
 /**
- * @brief Counts particles in each cell of the DMDA 'da' and stores the result in user->ParticleCount.
+ * @brief Sets up the full rank communication infrastructure, including neighbor ranks and bounding box exchange.
  *
- * Assumes user->ParticleCount is a pre-allocated global vector associated with user->da
- * and initialized to zero before calling this function (though it resets it internally).
- * Assumes particle 'DMSwarm_CellID' field contains local cell indices.
+ * This function orchestrates the following steps:
+ * 1. Compute and store the neighbor ranks in the user context.
+ * 2. Gather all local bounding boxes to rank 0.
+ * 3. Broadcast the complete bounding box list to all ranks.
  *
- * @param[in,out] user Pointer to the UserCtx structure containing da, swarm, and ParticleCount.
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ * The final result is that each rank has access to its immediate neighbors and the bounding box information of all ranks.
+ *
+ * @param[in,out] user      Pointer to the UserCtx structure (must be initialized).
+ * @param[in,out] bboxlist  Pointer to BoundingBox array pointer; after this call, it will point to the broadcasted list.
+ *
+ * @return PetscErrorCode Returns 0 on success or non-zero PETSc error code.
  */
-PetscErrorCode CalculateParticleCountPerCell(UserCtx *user);
-
-// --- Helper function to resize swarm globally (add or remove) ---
-// This assumes removing excess particles means removing the globally last ones.
-PetscErrorCode ResizeSwarmGlobally(DM swarm, PetscInt N_target);
-
-/**
- * @brief Checks particle count in the reference file and resizes the swarm if needed.
- *
- * Reads the specified field file (e.g., position) into a temporary Vec to determine
- * the number of particles (`N_file`) represented in that file for the given timestep.
- * Compares `N_file` with the current swarm size (`N_current`). If they differ,
- * resizes the swarm globally (adds or removes particles) to match `N_file`.
- * Removal assumes excess particles are the globally last ones.
- *
- * @param[in,out] user      Pointer to the UserCtx structure containing the DMSwarm.
- * @param[in]     fieldName Name of the reference field (e.g., "position").
- * @param[in]     ti        Time index for constructing the file name.
- * @param[in]     ext       File extension (e.g., "dat").
- * @param[out]    skipStep  Pointer to boolean flag, set to PETSC_TRUE if the step
- *                          should be skipped (e.g., file not found), PETSC_FALSE otherwise.
- *
- * @return PetscErrorCode 0 on success, non-zero on critical failure.
- *         If the reference file is not found, returns 0 and sets skipStep = PETSC_TRUE.
- */
-PetscErrorCode PreCheckAndResizeSwarm(UserCtx *user, PetscInt ti, const char *ext);
+PetscErrorCode SetupDomainRankInfo(UserCtx *user, BoundingBox **bboxlist);
 
  #endif // SETUP_H

@@ -357,4 +357,23 @@ PetscErrorCode ReadFieldDataToRank0(PetscInt timeIndex,
 				    PetscInt *Nscalars);
 
 
+/**
+ * @brief Displays a structured banner summarizing the simulation configuration.
+ *
+ * This function prints key simulation parameters, including grid dimensions,
+ * domain bounds, start time, timestep, total steps, processor count, particle count,
+ * and initialization modes. Domain bounds are read from command-line options
+ * (-xMin, -xMax, etc.). The banner is designed for clear, professional console output.
+ *
+ * @param[in] user         Pointer to UserCtx structure containing simulation details.
+ * @param[in] StartTime    Initial simulation time.
+ * @param[in] StartStep    Starting timestep index.
+ * @param[in] StepsToRun   Total number of timesteps to run.
+ * @param[in] size         Number of MPI processes.
+ * @param[in] np           Number of particles.
+ *
+ * @return PetscErrorCode  Returns 0 on success or an appropriate error code.
+ */
+PetscErrorCode DisplayBanner(UserCtx *user, PetscReal StartTime, PetscInt StartStep, PetscInt StepsToRun, PetscMPIInt size, PetscInt np);
+
 #endif // IO_H

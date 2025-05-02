@@ -1698,3 +1698,63 @@ PetscErrorCode ReadFieldDataToRank0(PetscInt timeIndex,
   PetscFunctionReturn(0);
 }
 
+#include <petscsys.h>
+#include <petscoptions.h>
+
+/**
+ * @brief Displays a structured banner summarizing the simulation configuration.
+ *
+ * This function prints key simulation parameters, including grid dimensions,
+ * domain bounds, start time, timestep, total steps, processor count, particle count,
+ * and initialization modes. Domain bounds are read from command-line options
+ * (-xMin, -xMax, etc.). The banner is designed for clear, professional console output.
+ *
+ * @param[in] user         Pointer to UserCtx structure containing simulation details.
+ * @param[in] StartTime    Initial simulation time.
+ * @param[in] StartStep    Starting timestep index.
+ * @param[in] StepsToRun   Total number of timesteps to run.
+ * @param[in] size         Number of MPI processes.
+ * @param[in] np           Number of particles.
+ *
+ * @return PetscErrorCode  Returns 0 on success or an appropriate error code.
+ */
+PetscErrorCode DisplayBanner(UserCtx *user, PetscReal StartTime, PetscInt StartStep, PetscInt StepsToRun, PetscMPIInt size, PetscInt np) {
+    PetscErrorCode ierr;
+    PetscReal xMin, xMax, yMin, yMax, zMin, zMax;
+
+    PetscFunctionBeginUser;
+
+    // Retrieve domain bounds from command-line options
+    ierr = PetscOptionsGetReal(NULL, NULL, "-xMin", &xMin, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-xMax", &xMax, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-yMin", &yMin, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-yMax", &yMax, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-zMin", &zMin, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-zMax", &zMax, NULL); CHKERRQ(ierr);
+
+    // Print professional banner
+    PetscPrintf(PETSC_COMM_WORLD, "\n");
+    PetscPrintf(PETSC_COMM_WORLD, "=============================================================\n");
+    PetscPrintf(PETSC_COMM_WORLD, "                          CASE SUMMARY                       \n");
+    PetscPrintf(PETSC_COMM_WORLD, "=============================================================\n");
+    PetscPrintf(PETSC_COMM_WORLD, " Grid Dimensions             : %d X %d X %d\n", user->IM, user->JM, user->KM);
+    PetscPrintf(PETSC_COMM_WORLD, " Domain Bounds (X)           : %.2f to %.2f\n", xMin, xMax);
+    PetscPrintf(PETSC_COMM_WORLD, " Domain Bounds (Y)           : %.2f to %.2f\n", yMin, yMax);
+    PetscPrintf(PETSC_COMM_WORLD, " Domain Bounds (Z)           : %.2f to %.2f\n", zMin, zMax);
+    PetscPrintf(PETSC_COMM_WORLD, " Start Time                  : %.4f\n", StartTime);
+    PetscPrintf(PETSC_COMM_WORLD, " Timestep Size               : %.4f\n", user->dt);
+    PetscPrintf(PETSC_COMM_WORLD, " Starting Step               : %d\n", StartStep);
+    PetscPrintf(PETSC_COMM_WORLD, " Total Steps to Run          : %d\n", StepsToRun);
+    PetscPrintf(PETSC_COMM_WORLD, " Number of MPI Processes     : %d\n", size);
+    PetscPrintf(PETSC_COMM_WORLD, " Number of Particles         : %d\n", np);
+    PetscPrintf(PETSC_COMM_WORLD, " Particle Initialization Mode: %d\n", user->ParticleInitialization);
+    PetscPrintf(PETSC_COMM_WORLD, " Field Initialization Mode   : %d\n", user->FieldInitialization);
+    if (user->FieldInitialization == 0) {
+        PetscPrintf(PETSC_COMM_WORLD, " Constant Velocity           : %.4f\n", user->ConstantVelocity);
+    }
+    PetscPrintf(PETSC_COMM_WORLD, "=============================================================\n");
+    PetscPrintf(PETSC_COMM_WORLD, "\n");
+
+    PetscFunctionReturn(0);
+}
+

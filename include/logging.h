@@ -13,6 +13,8 @@
 #include <petsc.h>   // PETSc library header
 #include <stdlib.h>
 #include <string.h>
+#include <petscsys.h>
+#include <ctype.h>
 #include "common.h"
 #include "AnalyticalSolution.h"
 // --------------------- Logging Levels Definition ---------------------
@@ -535,5 +537,46 @@ PetscErrorCode LOG_PARTICLE_FIELDS(UserCtx* user, PetscInt printInterval);
   * @return PetscErrorCode Returns 0 on success.
   */
   PetscErrorCode LOG_INTERPOLATION_ERROR(UserCtx *user);
+
+/* ------------------------------------------------------------------------- */
+/**
+ * @brief Free an array previously returned by LoadAllowedFunctionsFromFile().
+ *
+ * @param[in,out] funcs Array of strings to release (may be @c NULL).
+ * @param[in]     n     Number of entries in @p funcs.  Ignored if @p funcs is
+ *                      @c NULL.
+ *
+ * @return 0 on success or a PETSc error code.
+ */
+PetscErrorCode FreeAllowedFunctions(char **funcs, PetscInt n);
+
+/**
+ * @brief Load function names from a text file.
+ *
+ * The file is expected to contain **one identifier per line**.  Blank lines and
+ * lines whose first non‑blank character is a <tt>#</tt> are silently skipped so
+ * the file can include comments.  Example:
+ *
+ * @code{.txt}
+ * # Allowed function list
+ * main
+ * InitializeSimulation
+ * InterpolateAllFieldsToSwarm  # inline comments are OK, too
+ * @endcode
+ *
+ * The routine allocates memory as needed (growing an internal buffer with
+ * @c PetscRealloc()) and returns the resulting array and its length to the
+ * caller.  Use FreeAllowedFunctions() to clean up when done.
+ *
+ * @param[in]  filename  Path of the configuration file to read.
+ * @param[out] funcsOut  On success, points to a freshly‑allocated array of
+ *                       <tt>char*</tt> (size @p nOut).
+ * @param[out] nOut      Number of valid entries in @p funcsOut.
+ *
+ * @return 0 on success, or a PETSc error code on failure (e.g. I/O error, OOM).
+ */
+PetscErrorCode LoadAllowedFunctionsFromFile(const char   filename[],
+                                            char      ***funcsOut,
+                                            PetscInt   *nOut);
 
 #endif // LOGGING_H

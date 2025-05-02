@@ -149,6 +149,10 @@ void set_allowed_functions(const char** functionList, int count)
  */
 PetscBool is_function_allowed(const char* functionName)
 {
+
+  if (gNumAllowed == 0)          /* no list ⇒ allow all */
+    return PETSC_TRUE;
+
     // If no allow-list entries, default to disallow all
     for (int i = 0; i < gNumAllowed; ++i) {
         if (strcmp(gAllowedFunctions[i], functionName) == 0) {
@@ -528,4 +532,121 @@ PetscErrorCode LOG_PARTICLE_FIELDS(UserCtx* user, PetscInt printInterval)
      LOG_ALLOW(GLOBAL, LOG_DEBUG, "LOG_INTERPOLATION_ERROR - Completed logging interpolation error.\n");
      return 0;
  }
- 
+
+
+
+static void trim(char *s)
+{
+    if (!s) return;
+
+    /* ---- 1. strip leading blanks ----------------------------------- */
+    char *p = s;
+    while (*p && isspace((unsigned char)*p))
+        ++p;
+
+    if (p != s)                      /* move the trimmed text forward   */
+        memmove(s, p, strlen(p) + 1);   /* +1 to copy the final NUL     */
+
+    /* ---- 2. strip trailing blanks ---------------------------------- */
+    size_t len = strlen(s);
+    while (len > 0 && isspace((unsigned char)s[len - 1]))
+        s[--len] = '\0';
+}
+
+/* ------------------------------------------------------------------------- */
+/**
+ * @brief Load function names from a text file.
+ *
+ * The file is expected to contain **one identifier per line**.  Blank lines and
+ * lines whose first non‑blank character is a <tt>#</tt> are silently skipped so
+ * the file can include comments.  Example:
+ *
+ * @code{.txt}
+ * # Allowed function list
+ * main
+ * InitializeSimulation
+ * InterpolateAllFieldsToSwarm  # inline comments are OK, too
+ * @endcode
+ *
+ * The routine allocates memory as needed (growing an internal buffer with
+ * @c PetscRealloc()) and returns the resulting array and its length to the
+ * caller.  Use FreeAllowedFunctions() to clean up when done.
+ *
+ * @param[in]  filename  Path of the configuration file to read.
+ * @param[out] funcsOut  On success, points to a freshly‑allocated array of
+ *                       <tt>char*</tt> (size @p nOut).
+ * @param[out] nOut      Number of valid entries in @p funcsOut.
+ *
+ * @return 0 on success, or a PETSc error code on failure (e.g. I/O error, OOM).
+ */
+PetscErrorCode LoadAllowedFunctionsFromFile(const char   filename[],
+                                            char      ***funcsOut,
+                                            PetscInt   *nOut)
+{
+  FILE          *fp    = NULL;
+  char         **funcs = NULL;
+  size_t         cap   = 16;   /* initial capacity */
+  size_t         n     = 0;    /* number of names  */
+  char           line[PETSC_MAX_PATH_LEN];
+  PetscErrorCode ierr;
+
+  PetscFunctionBegin;
+
+  /* ---------------------------------------------------------------------- */
+  /* 1. Open file                                                           */
+  fp = fopen(filename, "r");
+  if (!fp) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FILE_OPEN,
+                    "Cannot open %s", filename);
+
+  /* 2. Allocate initial pointer array                                      */
+  ierr = PetscMalloc1(cap, &funcs); CHKERRQ(ierr);
+
+  /* 3. Read file line by line                                              */
+  while (fgets(line, sizeof line, fp)) {
+    /* Strip everything after a comment character '#'. */
+    char *hash = strchr(line, '#');
+    if (hash) *hash = '\0';
+
+    trim(line);                 /* remove leading/trailing blanks */
+    if (!*line) continue;       /* skip if empty                  */
+
+    /* Grow the array if necessary */
+    if (n == cap) {
+      cap *= 2;
+      ierr = PetscRealloc(cap * sizeof(*funcs), (void **)&funcs); CHKERRQ(ierr);
+    }
+
+    /* Deep‑copy the cleaned identifier */
+    ierr = PetscStrallocpy(line, &funcs[n++]); CHKERRQ(ierr);
+  }
+  fclose(fp);
+
+  /* 4. Return results to caller                                           */
+  *funcsOut = funcs;
+  *nOut     = (PetscInt)n;
+
+  PetscFunctionReturn(0);
+}
+
+/* ------------------------------------------------------------------------- */
+/**
+ * @brief Free an array previously returned by LoadAllowedFunctionsFromFile().
+ *
+ * @param[in,out] funcs Array of strings to release (may be @c NULL).
+ * @param[in]     n     Number of entries in @p funcs.  Ignored if @p funcs is
+ *                      @c NULL.
+ *
+ * @return 0 on success or a PETSc error code.
+ */
+PetscErrorCode FreeAllowedFunctions(char **funcs, PetscInt n)
+{
+  PetscErrorCode ierr;
+  PetscFunctionBegin;
+  if (funcs) {
+    for (PetscInt i = 0; i < n; ++i) {
+      ierr = PetscFree(funcs[i]); CHKERRQ(ierr);
+    }
+    ierr = PetscFree(funcs); CHKERRQ(ierr);
+  }
+  PetscFunctionReturn(0);
+}

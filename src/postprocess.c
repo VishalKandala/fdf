@@ -533,6 +533,7 @@ int main(int argc, char **argv)
 
     // Setup Logging Allow-List (Keep as is or adjust)
     const char *allowedFuncs[] = {
+                                  "main"
 				  //"GatherAndWriteField",
 				  //"VecToArrayOnRank0",
 				  //"PrepareVTKMetaData",

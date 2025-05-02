@@ -127,4 +127,41 @@ PetscErrorCode SetMigrationRanks(UserCtx* user, const MigrationInfo *migrationLi
  */
 PetscErrorCode PerformMigration(UserCtx *user);
 
+/**
+ * @brief Counts particles in each cell of the DMDA 'da' and stores the result in user->ParticleCount.
+ *
+ * Assumes user->ParticleCount is a pre-allocated global vector associated with user->da
+ * and initialized to zero before calling this function (though it resets it internally).
+ * Assumes particle 'DMSwarm_CellID' field contains local cell indices.
+ *
+ * @param[in,out] user Pointer to the UserCtx structure containing da, swarm, and ParticleCount.
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ */
+PetscErrorCode CalculateParticleCountPerCell(UserCtx *user);
+
+// --- Helper function to resize swarm globally (add or remove) ---
+// This assumes removing excess particles means removing the globally last ones.
+PetscErrorCode ResizeSwarmGlobally(DM swarm, PetscInt N_target);
+
+/**
+ * @brief Checks particle count in the reference file and resizes the swarm if needed.
+ *
+ * Reads the specified field file (e.g., position) into a temporary Vec to determine
+ * the number of particles (`N_file`) represented in that file for the given timestep.
+ * Compares `N_file` with the current swarm size (`N_current`). If they differ,
+ * resizes the swarm globally (adds or removes particles) to match `N_file`.
+ * Removal assumes excess particles are the globally last ones.
+ *
+ * @param[in,out] user      Pointer to the UserCtx structure containing the DMSwarm.
+ * @param[in]     fieldName Name of the reference field (e.g., "position").
+ * @param[in]     ti        Time index for constructing the file name.
+ * @param[in]     ext       File extension (e.g., "dat").
+ * @param[out]    skipStep  Pointer to boolean flag, set to PETSC_TRUE if the step
+ *                          should be skipped (e.g., file not found), PETSC_FALSE otherwise.
+ *
+ * @return PetscErrorCode 0 on success, non-zero on critical failure.
+ *         If the reference file is not found, returns 0 and sets skipStep = PETSC_TRUE.
+ */
+PetscErrorCode PreCheckAndResizeSwarm(UserCtx *user, PetscInt ti, const char *ext);
+
  #endif // PARTICLE_MOTION_H
