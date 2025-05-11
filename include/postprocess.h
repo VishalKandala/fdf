@@ -8,6 +8,7 @@
 #include "interpolation.h"
 #include "grid.h"
 #include "setup.h"
+#include "Metric.h"
 /* --------------------------------------------------------------------
    postprocess.h
 
@@ -33,6 +34,7 @@
  *
  * @param[in]  user       Pointer to user context (contains swarm and Eulerian fields).
  * @param[in]  fieldName  Name of the field (e.g., "Ucat" for vts, "Velocity" for vtp).
+ * @param[in]  coorfieldName  Name of the coordinate field used (e.g., "positions" or "pos_phy".
  * @param[in]  timeIndex  Timestep index for filename (e.g., "Ucat_00010.vts").
  * @param[in]  outExt     File extension ("vts" for structured, "vtp" for particles).
  * @param[in]  prefix     File prefix(directory to store file in).
@@ -42,6 +44,7 @@
  */
 PetscErrorCode GatherAndWriteField(UserCtx *user,
                                    const char *fieldName,
+				   const char *coorfieldName,
                                    PetscInt timeIndex,
                                    const char *outExt,
 				   const char *prefix,

@@ -82,6 +82,9 @@ PetscErrorCode RegisterParticleFields(DM swarm)
     ierr = RegisterSwarmField(swarm,"P", 1); CHKERRQ(ierr);
     LOG_ALLOW(LOCAL,LOG_DEBUG,"RegisterParticleFields - Registered field 'P' - Pressure.\n");
 
+    ierr = RegisterSwarmField(swarm,"pos_phy", 3); CHKERRQ(ierr);
+    LOG_ALLOW(LOCAL,LOG_DEBUG,"RegisterParticleFields - Registered field 'pos_phy' - Physical Position.\n");
+    
     // Finalize the field registration after all fields have been added
     ierr = DMSwarmFinalizeFieldRegister(swarm); CHKERRQ(ierr);
     LOG_ALLOW(LOCAL,LOG_INFO,"RegisterParticleFields - Finalized field registration.\n");
@@ -160,6 +163,9 @@ static PetscErrorCode InitializeParticleBasicProperties(UserCtx *user,
     PetscReal *positions = NULL;
     PetscInt64 *particleIDs = NULL, *cellIDs = NULL;
     PetscMPIInt rank;
+    const Cmpnts ***coor;
+    Vec Coor;
+    PetscReal *pos_phys = NULL;
     PetscFunctionBeginUser;
 
     // Validate input pointers
@@ -171,6 +177,9 @@ static PetscErrorCode InitializeParticleBasicProperties(UserCtx *user,
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
     swarm = user->swarm;
 
+    ierr = DMGetCoordinatesLocal(user->da,&Coor);
+    ierr = DMDAVecGetArrayRead(user->fda,Coor,&coor);
+    
     LOG_ALLOW(LOCAL, LOG_INFO, "InitializeParticleBasicProperties - Initializing %d particles on rank %d.\n", 
               particlesPerProcess, rank);
 
@@ -179,22 +188,53 @@ static PetscErrorCode InitializeParticleBasicProperties(UserCtx *user,
     ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
     ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&particleIDs); CHKERRQ(ierr);
     ierr = DMSwarmGetField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs); CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "pos_phy",NULL,NULL,(void**)&pos_phys); CHKERRQ(ierr);
 
     LOG_ALLOW(LOCAL, LOG_DEBUG, "InitializeParticleBasicProperties - Particle Initialization = %d\n",user->ParticleInitialization);
 
-      // Initialize random number generators
-      ierr = InitializeRandomGenerators(user, randx, randy, randz); CHKERRQ(ierr);
-    
+    // Initialize random number generators
+    ierr = InitializeRandomGenerators(user, randx, randy, randz); CHKERRQ(ierr);
+
+    /// EXPERIMENTAL CODE ! LOGICAL to PHYSICAL SPACE///
+    /* choose cell indices owned by this rank */
+    PetscInt is,js,ks,nx,ny,nz;
+    DMDAGetCorners(user->da,&is,&js,&ks,&nx,&ny,&nz);    
     /*--- Loop over each particle and initialize the basic properties ---*/
     for (PetscInt p = 0; p < particlesPerProcess; p++) {
+      PetscReal r;                       /* temporary */
+      PetscInt ci,cj,ck;
+      PetscRandomGetValueReal(*randx,&r);   /* correct signature */
+      ci = is + (PetscInt)((nx-3) * r);
+
+      PetscRandomGetValueReal(*randy,&r);
+      cj = js + (PetscInt)((ny-3) * r);
+
+      PetscRandomGetValueReal(*randz,&r);
+      ck = ks + (PetscInt)((nz-3) * r);
+
+      /* draw logical coordinates */
+      PetscReal xi,eta,zta;
+      PetscRandomGetValueReal(*randx,&xi);
+      PetscRandomGetValueReal(*randy,&eta);
+      PetscRandomGetValueReal(*randz,&zta);
         if (user->ParticleInitialization == 1) {
+	  /* logical storage (unchanged) */
+	  positions[3*p+0] = xi;
+	  positions[3*p+1] = eta;
+	  positions[3*p+2] = zta;	   
+	  /*
             ierr = PetscRandomGetValue(*randx, &positions[3 * p + 0]); CHKERRQ(ierr);
             ierr = PetscRandomGetValue(*randy, &positions[3 * p + 1]); CHKERRQ(ierr);
             ierr = PetscRandomGetValue(*randz, &positions[3 * p + 2]); CHKERRQ(ierr);
+	  */
         } else if (user->ParticleInitialization == 0){
+	  /*
 	    ierr = PetscRandomGetValue(*randx, &positions[3 * p + 0]); CHKERRQ(ierr);
             ierr = PetscRandomGetValue(*randy, &positions[3 * p + 1]); CHKERRQ(ierr);
-            positions[3 * p + 2] = user->zMin;
+	  */
+	  positions[3*p+0] = xi;
+	  positions[3*p+1] = eta;
+	  positions[3 * p + 2] = user->zMin;
 	}
 
             LOG_LOOP_ALLOW(LOCAL,LOG_DEBUG,p,10,"InitializeParticleBasicProperties - Particle %d initialized at (%.6f, %.6f, %.6f).\n",
@@ -208,6 +248,13 @@ static PetscErrorCode InitializeParticleBasicProperties(UserCtx *user,
         cellIDs[3 * p + 0] = -1;
         cellIDs[3 * p + 1] = -1;
         cellIDs[3 * p + 2] = -1;
+
+	/* NEW : physical mapping */
+	Cmpnts phys;
+	ierr = MetricLogicalToPhysical(user,coor,ci,cj,ck,xi,eta,zta,&phys); CHKERRQ(ierr);
+	pos_phys[3*p+0] = phys.x;
+	pos_phys[3*p+1] = phys.y;
+	pos_phys[3*p+2] = phys.z;
     }
 
     /*--- Restore the swarm fields ---*/
@@ -215,6 +262,9 @@ static PetscErrorCode InitializeParticleBasicProperties(UserCtx *user,
     ierr = DMSwarmRestoreField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
     ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&particleIDs); CHKERRQ(ierr);
     ierr = DMSwarmRestoreField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm,"pos_phy",NULL,NULL,(void**)&pos_phys); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArrayRead(user->fda,Coor,&coor);CHKERRQ(ierr);
+
 
     LOG_ALLOW(LOCAL, LOG_INFO, "InitializeParticleBasicProperties - Successfully initialized %d particles on rank %d.\n",
               particlesPerProcess, rank);

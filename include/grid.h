@@ -43,7 +43,7 @@
  */
 PetscErrorCode ParseGridInputs(UserCtx *user, PetscInt *generate_grid, PetscInt *grid1d, PetscReal *xMin, PetscReal *xMax,
                                PetscReal *yMin, PetscReal *yMax, PetscReal *zMin, PetscReal *zMax,  PetscInt **imm, PetscInt **jmm, PetscInt **kmm,
-                               PetscInt *nblk, FILE *fd);
+                               PetscInt *nblk, FILE **fd);
 
 /**
  * @brief Determines grid sizes for a specific block.
@@ -72,14 +72,17 @@ PetscErrorCode DetermineGridSizes(PetscInt bi, UserCtx *user, PetscInt *IM, Pets
  * @param[in,out] user Pointer to the UserCtx structure containing grid details.
  *                     This structure must include information such as global grid
  *                     dimensions (`IM`, `JM`, `KM`) and the DMDA handles (`da`, `fda`).
+ * @param[in] generate_grid Flag indicating if the grid is being generated (1) or read from file (0).
+ *                         Used to control logging verbosity.
  *
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  *
  * @note
  * - The global dimensions of the grid are read from the `user` structure.
  * - The function also sets up uniform coordinates in the range [0,Lx],[0,Ly],[0,Lz].
+ * - When generate_grid=0 (reading from file), certain log messages about temporary coordinates are suppressed.
  */
-PetscErrorCode InitializeGridDM(UserCtx *user);
+PetscErrorCode InitializeGridDM(UserCtx *user, PetscInt *generate_grid);
 
 /**
  * @brief Populates the DMDA grid with coordinates from a file or generates them based on input parameters.

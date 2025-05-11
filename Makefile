@@ -116,7 +116,8 @@ inttest: dirs $(INTTEST_EXE)
 
 $(INTTEST_EXE): $(OBJDIR)/inttest.o $(OBJDIR)/interpolation.o $(OBJDIR)/walkingsearch.o \
                 $(OBJDIR)/ParticleSwarm.o $(OBJDIR)/logging.o $(OBJDIR)/setup.o \
-                $(OBJDIR)/AnalyticalSolution.o $(OBJDIR)/grid.o $(OBJDIR)/io.o $(OBJDIR)/ParticleMotion.o
+                $(OBJDIR)/AnalyticalSolution.o $(OBJDIR)/grid.o $(OBJDIR)/io.o $(OBJDIR)/ParticleMotion.o \
+                $(OBJDIR)/Metric.o
 	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(LDFLAGS) $(LIBS)
 
 # -----------------------------------------------------
@@ -170,7 +171,7 @@ postprocess: dirs $(POSTPROCESS_EXE)
 
 $(POSTPROCESS_EXE): $(OBJDIR)/postprocess.o $(OBJDIR)/interpolation.o \
 			$(OBJDIR)/walkingsearch.o $(OBJDIR)/grid.o $(OBJDIR)/ParticleSwarm.o \
-			$(OBJDIR)/logging.o $(OBJDIR)/io.o $(OBJDIR)/setup.o \
+			$(OBJDIR)/logging.o $(OBJDIR)/io.o $(OBJDIR)/setup.o $(OBJDIR)/Metric.o \
                         $(OBJDIR)/AnalyticalSolution.o $(OBJDIR)/ParticleMotion.o
 	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(LDFLAGS) $(LIBS)
 

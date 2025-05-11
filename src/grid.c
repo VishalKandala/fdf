@@ -19,17 +19,21 @@
  * @param[in,out] user Pointer to the UserCtx structure containing grid details.
  *                     This structure must include information such as global grid
  *                     dimensions (`IM`, `JM`, `KM`) and the DMDA handles (`da`, `fda`).
+ * @param[in] generate_grid Flag indicating if the grid is being generated (1) or read from file (0).
+ *                         Used to control logging verbosity.
  *
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  *
  * @note
  * - The global dimensions of the grid are read from the `user` structure.
  * - The function also sets up uniform coordinates in the range [0,Lx],[0,Ly],[0,Lz].
+ * - When generate_grid=0 (reading from file), certain log messages about temporary coordinates are suppressed.
  */
-PetscErrorCode InitializeGridDM(UserCtx *user) {
+PetscErrorCode InitializeGridDM(UserCtx *user, PetscInt *generate_grid) {
     PetscErrorCode ierr; // PETSc error handling
     PetscInt M,N,P; // No.of grid points/vector length
     PetscInt stencil_width = 2; //
+    PetscBool file_grid_mode = (generate_grid && *generate_grid == 0) ? PETSC_TRUE : PETSC_FALSE;
     
     // Validate grid dimensions
     if (user->IM <= 0 || user->JM <= 0 || user->KM <= 0) {
@@ -37,7 +41,7 @@ PetscErrorCode InitializeGridDM(UserCtx *user) {
                 "InitializeGridDM - Grid dimensions (IM, JM, KM) must be positive.");
     }
 
-    // Log the start of grid initialization
+    // Log the start of grid initialization (always shown)
     LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - Starting DMDA grid initialization for IM=%d, JM=%d, KM=%d.\n",
         user->IM, user->JM, user->KM);
 
@@ -45,9 +49,11 @@ PetscErrorCode InitializeGridDM(UserCtx *user) {
     N = user->JM+1;
     P = user->KM+1;
 
-
     // --- Option 1: Standard Approach (da=DOF1, fda=Derived DOF3) ---
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Creating DMDA 'da' (DOF=1, s=%d).\n", stencil_width);
+    if (!file_grid_mode) {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Creating DMDA 'da' (DOF=1, s=%d).\n", stencil_width);
+    }
+    
     ierr = DMDACreate3d(PETSC_COMM_WORLD,
                         DM_BOUNDARY_NONE, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE,  // Boundary types
                         DMDA_STENCIL_BOX,                                      // Stencil type
@@ -66,7 +72,163 @@ PetscErrorCode InitializeGridDM(UserCtx *user) {
     ierr = DMSetUp(user->da); CHKERRQ(ierr);
     ierr = PetscObjectSetName((PetscObject)user->da, "Scalar_Cell_DM"); CHKERRQ(ierr);
     
+    // Retrieve the coordinate DM (PETSc creates/associates this)
+    // This fda will have DOF=3 and compatible stencil width s=2
+    ierr = DMGetCoordinateDM(user->da, &(user->fda)); CHKERRQ(ierr);
+    ierr = PetscObjectSetName((PetscObject)user->fda, "Vector_Coord_DM_Derived"); CHKERRQ(ierr);
+    
+    if (!file_grid_mode) {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Coordinate DM 'fda' retrieved/created by PETSc.\n");
+    }
 
+    // --- [DEBUGGING STEP 1: Explicitly Set Coordinate DM] ---
+    // Although DMGetCoordinateDM likely does this, adding an explicit call
+    // can sometimes resolve subtle association issues.
+    ierr = DMSetCoordinateDM(user->da, user->fda); CHKERRQ(ierr);
+    
+    if (!file_grid_mode) {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - EXPLICITLY associated 'fda' as coordinate DM for 'da'.\n");
+    }
+    
+    // Assign coordinates based on domain size
+    PetscReal x_min = user->xMin, x_max = user->xMax;
+    PetscReal y_min = user->yMin, y_max = user->yMax;
+    PetscReal z_min = user->zMin, z_max = user->zMax;
+
+    // Set coordinates using the DM that holds the coordinate vector.
+    DM dm_for_coords = (user->da) ? user->da : user->fda; // Use da if it exists, else fda
+    
+    if (!file_grid_mode) {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Setting uniform coordinates using DM %s...\n", 
+                 (user->da)?"da":"fda");
+    }
+    
+    ierr = DMDASetUniformCoordinates(dm_for_coords, x_min, x_max, y_min, y_max, z_min, z_max); CHKERRQ(ierr);
+    
+    if (!file_grid_mode) {
+        LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "InitializeGridDM - Coordinates set in the range [%f, %f] x [%f, %f] x [%f, %f].\n",
+            x_min, x_max, y_min, y_max, z_min, z_max);
+    } else {
+        // For file grid mode, we'll add a more informative message
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Creating initial uniform grid as placeholder (will be replaced by file data).\n");
+    }
+
+    // Verify fda is correctly retrieved/set if we used Option 1
+    if (user->da) {
+         ierr = DMGetCoordinateDM(user->da, &(user->fda)); CHKERRQ(ierr); // Re-get to be sure
+         if (!user->fda) {
+             SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONGSTATE, "Failed to retrieve Coordinate DM 'fda' after setting coordinates.");
+         }
+         
+         if (!file_grid_mode) {
+             LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Verified Coordinate DM 'fda' retrieval after setting coords.\n");
+         }
+    } else {
+         if (!file_grid_mode) {
+             LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Running in simplified mode (only fda).\n");
+         }
+    }
+
+    // Debugging logs for DMDA and its coordinate DM - only when not in file grid mode
+    if (!file_grid_mode && get_log_level() == LOG_DEBUG && is_function_allowed(__func__)) {
+        if (user->da) {
+             LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - Viewing DMDA ('da'):\n");
+             ierr = DMView(user->da, PETSC_VIEWER_STDOUT_WORLD); CHKERRQ(ierr);
+        } else {
+             LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - 'da' is NULL (Simplified Setup).\n");
+        }
+        if (user->fda) {
+             LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - Viewing Coordinate DM ('fda'):\n");
+             ierr = DMView(user->fda, PETSC_VIEWER_STDOUT_WORLD); CHKERRQ(ierr);
+        } else {
+            // This should not happen if Option 1 ran correctly
+             LOG_ALLOW(GLOBAL, LOG_ERROR, "InitializeGridDM - 'fda' is NULL!\n");
+        }
+    }
+
+    // Log the successful completion of grid initialization
+    if (!file_grid_mode) {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - DMDA grid initialization completed successfully.\n");
+    } else {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - DMDA grid structure initialized (coordinates will be updated from file).\n");
+    }
+
+    return 0;
+}
+
+
+
+
+/**
+ * @brief Initializes the DMDA grid for the simulation.
+ *
+ * This function sets up a 3D DMDA (Distributed Memory Distributed Array) grid with uniform
+ * coordinates. The DMDA is essential for managing simulation data distributed across
+ * multiple MPI processes. It assigns the global dimensions of the grid and partitions
+ * it among processes based on the stencil width and degrees of freedom.
+ *
+ * @param[in,out] user Pointer to the UserCtx structure containing grid details.
+ *                     This structure must include information such as global grid
+ *                     dimensions (`IM`, `JM`, `KM`) and the DMDA handles (`da`, `fda`).
+ *
+ * @param[in] generate_grid Flag indicating if the grid is being generated (1) or read from file (0).
+ *                         Used to control logging verbosity.
+ * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
+ *
+ * @note
+ * - The global dimensions of the grid are read from the `user` structure.
+ * - The function also sets up uniform coordinates in the range [0,Lx],[0,Ly],[0,Lz].
+ */
+/*
+PetscErrorCode InitializeGridDM(UserCtx *user, PetscInt *generate_grid) {
+    PetscErrorCode ierr; // PETSc error handling
+    PetscInt M,N,P; // No.of grid points/vector length
+    PetscInt stencil_width = 2; //
+    PetscBool file_grid_mode = (generate_grid && *generate_grid == 0) ? PETSC_TRUE : PETSC_FALSE;
+    
+    // Validate grid dimensions
+    if (user->IM <= 0 || user->JM <= 0 || user->KM <= 0) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_OUTOFRANGE,
+                "InitializeGridDM - Grid dimensions (IM, JM, KM) must be positive.");
+    }
+
+    // Log the start of grid initialization
+    LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeGridDM - Starting DMDA grid initialization for IM=%d, JM=%d, KM=%d.\n",
+        user->IM, user->JM, user->KM);
+
+    M = user->IM+1;
+    N = user->JM+1;
+    P = user->KM+1;
+
+
+    // --- Option 1: Standard Approach (da=DOF1, fda=Derived DOF3) ---
+    
+    if (!file_grid_mode) {
+      LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Creating DMDA 'da' (DOF=1, s=%d).\n", stencil_width);
+    }
+    
+    ierr = DMDACreate3d(PETSC_COMM_WORLD,
+                        DM_BOUNDARY_NONE, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE,  // Boundary types
+                        DMDA_STENCIL_BOX,                                      // Stencil type
+                        M,N,P,                                                 // Global dimensions (Nodes)
+                        PETSC_DECIDE, PETSC_DECIDE, PETSC_DECIDE,             // Dimensions per process
+                        1,                                                     // Degrees of freedom (Scalar)
+                        stencil_width,                                         // Stencil width (s=2)
+                        NULL, NULL, NULL,                                      // Array partitioning
+                        &(user->da)); CHKERRQ(ierr);
+
+    // --- Explicitly set the process grid layout ---
+
+    // --- Set the Processor Layout from Options ---
+    ierr = SetDMDAProcLayout(user->da, user); CHKERRQ(ierr); // Call the new function
+    
+    ierr = DMSetUp(user->da); CHKERRQ(ierr);
+    ierr = PetscObjectSetName((PetscObject)user->da, "Scalar_Cell_DM"); CHKERRQ(ierr);
+    
+    if (!file_grid_mode) {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Coordinate DM 'fda' retrieved/created by PETSc.\n");
+    }
+    
     // Retrieve the coordinate DM (PETSc creates/associates this)
     // This fda will have DOF=3 and compatible stencil width s=2
     ierr = DMGetCoordinateDM(user->da, &(user->fda)); CHKERRQ(ierr);
@@ -80,33 +242,7 @@ PetscErrorCode InitializeGridDM(UserCtx *user) {
     LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - EXPLICITLY associated 'fda' as coordinate DM for 'da'.\n");
     
     // ---------------------------------------------------------
-
-    // --- Option 2: Simplified DM Setup (DEBUGGING ONLY) ---
-    // --- Comment out Option 1 above and uncomment this section to test ---
-    /*
-    LOG_ALLOW(GLOBAL, LOG_WARNING, "[DEBUG] Using Simplified DM Setup (Only FDA)\n");
-    // Destroy da if it was created by mistake earlier in the run
-    if (user->da) { ierr = DMDestroy(&user->da); CHKERRQ(ierr); user->da = NULL;}
-
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Creating DMDA 'fda' directly (DOF=3, s=%d).\n", stencil_width);
-    ierr = DMDACreate3d(PETSC_COMM_WORLD,
-                        DM_BOUNDARY_NONE, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE,
-                        DMDA_STENCIL_BOX,
-                        M, N, P,             // Global dimensions (nodes)
-                        PETSC_DECIDE, PETSC_DECIDE, PETSC_DECIDE,
-                        3,                   // DOF = 3
-                        stencil_width,       // Stencil width = 2
-                        NULL, NULL, NULL,
-                        &(user->fda)); CHKERRQ(ierr);
-    ierr = DMSetUp(user->fda); CHKERRQ(ierr);
-    ierr = PetscObjectSetName((PetscObject)user->fda, "Vector_Coord_DM_Direct"); CHKERRQ(ierr);
-    // In this simplified setup, da is NULL. Scalar vectors would need to use fda (wasteful)
-    // or a separate scalar DM would need to be created later if required.
-    user->da = NULL; // Explicitly set da to NULL for this test case
-    */
-    // --- End Option 2 ---
-
-
+  
     // Assign coordinates based on domain size
     PetscReal x_min = user->xMin, x_max = user->xMax;
     PetscReal y_min = user->yMin, y_max = user->yMax;
@@ -118,6 +254,7 @@ PetscErrorCode InitializeGridDM(UserCtx *user) {
     DM dm_for_coords = (user->da) ? user->da : user->fda; // Use da if it exists, else fda
     LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeGridDM - Setting uniform coordinates using DM %s...\n", (user->da)?"da":"fda");
     ierr = DMDASetUniformCoordinates(dm_for_coords, x_min, x_max, y_min, y_max, z_min, z_max); CHKERRQ(ierr);
+    
     LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "InitializeGridDM - Coordinates set in the range [%f, %f] x [%f, %f] x [%f, %f].\n",
         x_min, x_max, y_min, y_max, z_min, z_max);
 
@@ -155,6 +292,7 @@ PetscErrorCode InitializeGridDM(UserCtx *user) {
 
     return 0;
 }
+*/
 
 /**
  * @brief Parses grid-related inputs for setting up the simulation.
@@ -181,7 +319,7 @@ PetscErrorCode InitializeGridDM(UserCtx *user) {
  */
 PetscErrorCode ParseGridInputs(UserCtx *user, PetscInt *generate_grid, PetscInt *grid1d, PetscReal *xMin, PetscReal *xMax,
                                PetscReal *yMin, PetscReal *yMax, PetscReal *zMin, PetscReal *zMax,  PetscInt **imm, PetscInt **jmm, PetscInt **kmm,
-                               PetscInt *nblk, FILE *fd) {
+                               PetscInt *nblk, FILE **fd) {
     PetscErrorCode ierr;
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "ParseGridInputs - Starting retrieval of grid inputs.\n");
@@ -197,17 +335,33 @@ PetscErrorCode ParseGridInputs(UserCtx *user, PetscInt *generate_grid, PetscInt 
         // Delegate the reading of grid generation inputs
       ierr = ReadGridGenerationInputs(user, grid1d, xMin, xMax, yMin, yMax, zMin, zMax, imm, jmm, kmm, nblk); CHKERRQ(ierr);
     } else {
-        // We are reading grid data from a file, check if 'grid.dat' is accessible
-        FILE *testFile = fopen("grid.dat", "r");
-        if (!testFile) {
-            SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_OPEN,
-                    "ParseGridInputs - Could not open 'grid.dat'. Please ensure it exists in the current directory.");
-        } else {
-            fclose(testFile);
-        }
+      // We are reading grid data from a file, check if 'grid.dat' is accessible
+      char grid_filename[PETSC_MAX_PATH_LEN] = "grid.dat";
+      ierr = PetscOptionsGetString(NULL, NULL, "-grid_file", grid_filename, 
+				   PETSC_MAX_PATH_LEN, NULL); CHKERRQ(ierr);
+    
+      *fd = fopen(grid_filename, "r");
+      if (!*fd) {
+        SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_OPEN,
+                "ParseGridInputs - Could not open grid file '%s'...", grid_filename);
+      }
 
-        // If file is accessible, delegate reading of grid file data, including grid1d
-        ierr = ReadGridFile("grid.dat", nblk, imm, jmm, kmm, grid1d, PETSC_COMM_WORLD); CHKERRQ(ierr);
+      LOG_ALLOW(GLOBAL, LOG_INFO, "ParseGridInputs - Reading grid from file: %s\n", grid_filename);
+    
+      // Validate file format with a magic number or header check
+      char header[256];
+      if (fgets(header, sizeof(header), *fd) == NULL || 
+	  strncmp(header, "FDFGRID", 7) != 0) {
+        fclose(*fd);
+        SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_OPEN,
+                "ParseGridInputs - Invalid grid file format. Expected FDFGRID header.");
+      }
+      rewind(*fd); // Reset file position for normal reading
+      
+      // If file is accessible, delegate reading of grid file data, including grid1d
+      ierr = ReadGridFile(grid_filename, nblk, imm, jmm, kmm, grid1d, PETSC_COMM_WORLD); CHKERRQ(ierr);
+      // HACK needs to be fixed later in a better way!!
+      *xMax = *yMax = *zMax = 1.0; 
     }
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "ParseGridInputs - Grid inputs retrieved successfully.\n");
@@ -335,11 +489,26 @@ PetscErrorCode AssignGridCoordinates(UserCtx *user, PetscInt generate_grid, Pets
         } else {
             // Generate 3D grid coordinates
             if (!generate_grid) {
+	      // Skipping header
+	      /* we are in AssignGridCoordinates(), rank==0, !generate_grid, grid1d==0 */
+	      if (rank == 0 && !generate_grid && !grid1d) {
+		/* skip the header line, nblk line + one IM‑JM‑KM line per block */
+		PetscInt headerLines = user->nblk + 2;          /* e.g. 1 + 1 = 2 */
+		char dummy[256];
+		for (PetscInt s = 0; s < headerLines; ++s) {
+		  if (!fgets(dummy, sizeof(dummy), fd))
+		    SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FILE_READ,
+			    "Unexpected EOF while skipping grid header");
+		}
+		LOG_ALLOW(GLOBAL,LOG_DEBUG,
+			  "AssignGridCoordinates - skipped %d header lines, now at coordinates.\n",
+			  headerLines);
+	      }
                 // Read coordinates from file
                 for (k = 0; k <= KM; k++) {
                     for (j = 0; j <= JM; j++) {
                         for (i = 0; i <= IM; i++) {
-                            PetscInt index = ((k * (JM + 1) * (IM + 1)) + (j * (IM + 1)) + i) * 3;
+			  PetscInt index = (((k * (JM + 1) * (IM + 1)) + (j * (IM + 1)) + i) * 3); 
                             if (fscanf(fd, "%le %le %le\n", &gc[index], &gc[index + 1], &gc[index + 2]) != 3) {
                                 SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FILE_READ, "Error reading grid coordinates from file");
                             }
@@ -458,27 +627,14 @@ PetscErrorCode DetermineGridSizes(PetscInt bi, UserCtx *user, PetscInt *IM, Pets
     LOG_ALLOW(GLOBAL, LOG_INFO, "DetermineGridSizes - Starting grid size determination for block %d on rank %d.\n", bi, rank);
 
     if (rank == 0) {
-        if (!generate_grid) {
-            // Read grid dimensions from file
-            if (!fd) {
-                SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FILE_OPEN, 
-                        "DetermineGridSizes - File Pointer (fd) is NULL. Cannot read grid dimensions from file.");
-            }
-            if (fscanf(fd, "%i %i %i\n", IM, JM, KM) != 3) {
-                SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FILE_READ, 
-                        "DetermineGridSizes - Failed to read grid dimensions from file.");
-            }
-            LOG_ALLOW(GLOBAL, LOG_DEBUG, "DetermineGridSizes - Read grid dimensions from file: IM=%d, JM=%d, KM=%d.\n", 
-                *IM, *JM, *KM);
-        } else {
             // Get grid dimensions from input arrays
             *IM = imm[bi];
             *JM = jmm[bi];
             *KM = kmm[bi];
             LOG_ALLOW(GLOBAL, LOG_DEBUG, 
-                "DetermineGridSizes - Programmatically generated grid dimensions: IM=%d, JM=%d, KM=%d.\n", 
+                "grid dimensions(No.of cells) : IM=%d, JM=%d, KM=%d.\n", 
                 *IM, *JM, *KM);
-        }
+      // }
     }
 
     // Broadcast dimensions to all ranks
@@ -568,6 +724,7 @@ PetscErrorCode FinalizeGridSetup(PetscInt generate_grid, FILE *fd, PetscInt *imm
  *
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  */
+/*
 PetscErrorCode DefineGridCoordinates(UserCtx *user) {
     PetscErrorCode ierr;         // PETSc error handling
     PetscMPIInt rank;               // MPI rank
@@ -588,16 +745,17 @@ PetscErrorCode DefineGridCoordinates(UserCtx *user) {
     LOG_ALLOW(GLOBAL, LOG_INFO, "DefineGridCoordinates - Starting grid configuration on rank %d.\n", rank);
 
     // Parse input parameters for grid setup
-    ierr = ParseGridInputs(user, &generate_grid, &grid1d, &xMin, &xMax, &yMin, &yMax, &zMin, &zMax, &imm, &jmm, &kmm, &block_number, fd); CHKERRQ(ierr);
+    ierr = ParseGridInputs(user, &generate_grid, &grid1d, &xMin, &xMax, &yMin, &yMax, &zMin, &zMax, &imm, &jmm, &kmm, &block_number, &fd); CHKERRQ(ierr);
 
-    // Update grid boundaries in user.
+    // Update grid boundaries & number of blocks in user.
     user->xMin = xMin;
     user->xMax = xMax;
     user->yMin = yMin;
     user->yMax = yMax;
     user->zMin = zMin;
     user->zMax = zMax;
-
+    user->nblk  = block_number;
+    
     // Validate block number
     if (block_number <= 0) {
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_OUTOFRANGE, "Number of blocks must be greater than 0.");
@@ -611,7 +769,7 @@ PetscErrorCode DefineGridCoordinates(UserCtx *user) {
         LOG_ALLOW(GLOBAL,LOG_INFO,"DefineGridCoordinates - IM,JM,KM - %d,%d,%d \n",IM,JM,KM);
 
         // Set up the DM for the current block
-        ierr = InitializeGridDM(user); CHKERRQ(ierr);
+        ierr = InitializeGridDM(user,&generate_grid   ); CHKERRQ(ierr);
 
         // Populate grid coordinates for the current block
         ierr = AssignGridCoordinates(user, generate_grid, grid1d, IM, JM, KM,fd); CHKERRQ(ierr);
@@ -632,7 +790,90 @@ PetscErrorCode DefineGridCoordinates(UserCtx *user) {
 
     return 0;
 }
+*/
 
+/**
+ * @brief Configures grid coordinates and initializes grid management structures.
+ *
+ * This function sets up the grid using either programmatic generation or file input, initializes 
+ * the DMDA structures for each grid block, and assigns grid coordinates.
+ *
+ * @param[in,out] user Pointer to the UserCtx structure containing the simulation context.
+ *
+ * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
+ */
+PetscErrorCode DefineGridCoordinates(UserCtx *user) {
+    PetscErrorCode ierr;         // PETSc error handling
+    PetscMPIInt rank;               // MPI rank
+    PetscInt bi;                 // Block index
+    PetscInt IM, JM, KM;         // Grid dimensions for a block
+    FILE *fd = NULL;             // File Pointer for reading grid input
+    PetscInt generate_grid = 0;  // Flag for programmatic grid generation
+    PetscInt grid1d = 0;         // Flag for 1D grid input
+    PetscInt block_number = 1;   // Number of grid blocks
+    PetscReal xMin,yMin,zMin;    // Lower bound of grid in all dimensions.
+    PetscReal xMax,yMax,zMax;    // Upper bound of grid in all dimensions.
+    PetscInt *imm = NULL, *jmm = NULL, *kmm = NULL;  // Grid sizes for blocks
+
+    // Retrieve MPI rank 
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    
+    // Log the start of the function
+    LOG_ALLOW(GLOBAL, LOG_INFO, "DefineGridCoordinates - Starting grid configuration on rank %d.\n", rank);
+    
+    // Parse input parameters for grid setup
+    ierr = ParseGridInputs(user, &generate_grid, &grid1d, &xMin, &xMax, &yMin, &yMax, &zMin, &zMax, &imm, &jmm, &kmm, &block_number, &fd); CHKERRQ(ierr);
+    
+    // Update grid boundaries & number of blocks in user.
+    user->xMin = xMin;
+    user->xMax = xMax;
+    user->yMin = yMin;
+    user->yMax = yMax;
+    user->zMin = zMin;
+    user->zMax = zMax;
+    user->nblk  = block_number;
+    
+    // Validate block number
+    if (block_number <= 0) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_OUTOFRANGE, "Number of blocks must be greater than 0.");
+    }
+    
+    // Iterate over blocks to configure their respective grids
+    for (bi = 0; bi < block_number; bi++) {
+        // Determine grid sizes for the current block
+        ierr = DetermineGridSizes(bi, user, &IM, &JM, &KM, fd, generate_grid, imm, jmm, kmm, &block_number); CHKERRQ(ierr);
+        
+        // Only log grid dimensions when actually generating a grid or in debug mode
+        if (generate_grid || get_log_level() >= LOG_DEBUG) {
+            LOG_ALLOW(GLOBAL, LOG_INFO, "DefineGridCoordinates - IM,JM,KM - %d,%d,%d \n", IM, JM, KM);
+        }
+        
+        // Set up the DM for the current block - pass generate_grid to control logging
+        ierr = InitializeGridDM(user, &generate_grid); CHKERRQ(ierr);
+        
+        // Populate grid coordinates for the current block
+        ierr = AssignGridCoordinates(user, generate_grid, grid1d, IM, JM, KM, fd); CHKERRQ(ierr);
+        
+        // Log the block's subdomain ownership details - always useful regardless of grid source
+        DMDALocalInfo info = user->info;
+        ierr = DMDAGetLocalInfo(user->da, &info);
+        LOG_ALLOW(GLOBAL, LOG_INFO, 
+            "DefineGridCoordinates - Rank %d owns subdomain for block %d: xs=%d, xe=%d, ys=%d, ye=%d, zs=%d, ze=%d.\n", 
+            rank, bi, info.xs, info.xs + info.xm, info.ys, info.ys + info.ym, info.zs, info.zs + info.zm);
+    }
+    
+    // Finalize grid setup by closing the input file (if applicable) and freeing allocated memory
+    ierr = FinalizeGridSetup(generate_grid, fd, imm, jmm, kmm); CHKERRQ(ierr);
+    
+    // Log the end of the function
+    if (generate_grid) {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "DefineGridCoordinates - Completed grid generation on rank %d.\n", rank);
+    } else {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "DefineGridCoordinates - Completed grid loading from file on rank %d.\n", rank);
+    }
+    
+    return 0;
+}
 
 /**
  * @brief Computes the local bounding box of the grid on the current process.

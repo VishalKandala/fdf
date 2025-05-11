@@ -17,7 +17,7 @@
 #include "common.h"       // Common type definitions
 #include "logging.h"      // Logging macros and definitions
 #include "walkingsearch.h"
-
+#include "Metric.h"
 // --------------------- Function Declarations ---------------------
 
 /**

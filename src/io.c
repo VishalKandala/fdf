@@ -79,79 +79,99 @@ PetscErrorCode ReadGridGenerationInputs(UserCtx *user, PetscInt *grid1d, PetscRe
     return 0;
 }
 
-
 /**
- * @brief Reads grid parameters from a file.
+ * @brief Reads grid parameters from a file, ignoring an optional "FDFGRID" header line.
  *
- * This function retrieves grid block dimensions, number of blocks, and grid type (1D or 3D)
- * from a file and broadcasts the data to all MPI processes.
+ * The first non‑blank line may be the literal string "FDFGRID". If present, it is skipped.
+ * The next line must contain the number of blocks (nblk).  Subsequent lines list the
+ * I-, J-, and K‑dimensions for each block.
+ *
+ * All data are broadcast to every MPI rank.
  *
  * @param[in]  filename  Name of the file containing grid data.
  * @param[out] nblk      Pointer to store the number of blocks.
- * @param[out] imm       Pointer to Array to store the i-dimensions for each block.
- * @param[out] jmm       Pointer to Array to store the j-dimensions for each block.
- * @param[out] kmm       Pointer to Array to store the k-dimensions for each block.
- * @param[out] grid1d    Pointer to store the grid type (1 for 1D, 0 for 3D).
+ * @param[out] imm       Pointer to array of I‑dimensions (length nblk).
+ * @param[out] jmm       Pointer to array of J‑dimensions (length nblk).
+ * @param[out] kmm       Pointer to array of K‑dimensions (length nblk).
+ * @param[out] grid1d    Pointer to store the grid type (1 = 1‑D, 0 = 3‑D).
  * @param[in]  comm      MPI communicator for broadcasting data.
  *
- * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
+ * @return PetscErrorCode 0 on success, otherwise a PETSc error code.
  */
-PetscErrorCode ReadGridFile(const char *filename, PetscInt *nblk, PetscInt **imm, PetscInt **jmm, 
-                            PetscInt **kmm, PetscInt *grid1d, MPI_Comm comm) {
+PetscErrorCode ReadGridFile(const char *filename, PetscInt *nblk,
+                            PetscInt **imm, PetscInt **jmm, PetscInt **kmm,
+                            PetscInt *grid1d, MPI_Comm comm)
+{
     PetscErrorCode ierr;
-    PetscMPIInt rank;
+    PetscMPIInt    rank;
 
-    
-    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridFile - Reading grid data from file: %s.\n", filename);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridFile ‑ reading grid data from file: %s\n", filename);
 
     ierr = MPI_Comm_rank(comm, &rank); CHKERRQ(ierr);
 
-
+    /* ---------------- Rank‑0 reads the file ---------------- */
     if (rank == 0) {
         FILE *fd = fopen(filename, "r");
-        if (!fd) {
-            SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Cannot open file: %s", filename);
+        if (!fd) SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Cannot open file: %s", filename);
+
+        /* ---- Read first token; decide whether it is the header or nblk ---- */
+        char firstTok[32] = {0};
+        if (fscanf(fd, "%31s", firstTok) != 1)
+            SETERRQ(comm, PETSC_ERR_FILE_READ, "Empty grid file: %s", filename);
+
+        if (strcmp(firstTok, "FDFGRID") == 0) {
+            /* Header is present – read nblk from the next line */
+            if (fscanf(fd, "%" PetscInt_FMT, nblk) != 1)
+                SETERRQ(comm, PETSC_ERR_FILE_READ,
+                        "Expected number of blocks after \"FDFGRID\" in %s", filename);
+        } else {
+            /* No header – the token we just read is actually nblk */
+            *nblk = (PetscInt)strtol(firstTok, NULL, 10);
         }
 
-        // Read number of blocks
-        fscanf(fd, "%d\n", nblk);
+        LOG_ALLOW(GLOBAL, LOG_INFO, "Number of grid blocks: %d\n", *nblk);
+        if (*nblk == 0) *nblk = 1;               /* default to one block */
 
-	LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridGridFile - Number of grid blocks: %d.\n", *nblk);
-  
-	// Ensure if 'nblk' is not mentioned in the control.dat file, the default value is set to 1.
-	if(*nblk==0) *nblk = 1;
+        /* Allocate arrays */
+        ierr = PetscCalloc1(*nblk, imm); CHKERRQ(ierr);
+        ierr = PetscCalloc1(*nblk, jmm); CHKERRQ(ierr);
+        ierr = PetscCalloc1(*nblk, kmm); CHKERRQ(ierr);
 
-	// Allocate memory for imm, jmm, kmm
-	ierr = PetscCalloc1(*nblk, imm); CHKERRQ(ierr);
-	ierr = PetscCalloc1(*nblk, jmm); CHKERRQ(ierr);
-	ierr = PetscCalloc1(*nblk, kmm); CHKERRQ(ierr);
-
-        // Read block dimensions
-        for (PetscInt i = 0; i < *nblk; i++) {
-            fscanf(fd, "%" PetscInt_FMT " %" PetscInt_FMT " %" PetscInt_FMT "\n", imm[i], jmm[i], kmm[i]);
-
-	    //	    fscanf(fd, "%" PetscInt_FMT " %" PetscInt_FMT " %" PetscInt_FMT "\n", &imm[i], &jmm[i], &kmm[i]);
-	    //  fscanf(fd, "%ld %ld %ld\n", &imm[i], &jmm[i], &kmm[i]);
+        /* Read block sizes */
+        for (PetscInt i = 0; i < *nblk; ++i) {
+            if (fscanf(fd, "%" PetscInt_FMT " %" PetscInt_FMT " %" PetscInt_FMT,
+                       &(*imm)[i], &(*jmm)[i], &(*kmm)[i]) != 3)
+                SETERRQ(comm, PETSC_ERR_FILE_READ,
+                        "Expected 3 integers for block %d in %s", (int)i, filename);
         }
 
-        // Determine if it's a 1D grid (all dimensions > 1)
-	*grid1d = ((*nblk == 1) && (*jmm[0] == 1) && (*kmm[0] == 1)) ? 1 : 0;
-
-	//  *grid1d = ((*nblk == 1) && (jmm[0] == 1) && (kmm[0] == 1)) ? 1 : 0;
+        /* 1‑D grid if there is only one block and J=K=1 */
+        *grid1d = ((*nblk == 1) && ((*jmm)[0] == 1) && ((*kmm)[0] == 1)) ? 1 : 0;
 
         fclose(fd);
     }
 
-    // Broadcast data to all processes
-    ierr = MPI_Bcast(nblk, 1, MPI_INT, 0, comm); CHKERRQ(ierr);
-    ierr = MPI_Bcast(imm, *nblk, MPI_INT, 0, comm); CHKERRQ(ierr);
-    ierr = MPI_Bcast(jmm, *nblk, MPI_INT, 0, comm); CHKERRQ(ierr);
-    ierr = MPI_Bcast(kmm, *nblk, MPI_INT, 0, comm); CHKERRQ(ierr);
-    ierr = MPI_Bcast(grid1d, 1, MPI_INT, 0, comm); CHKERRQ(ierr);
+    /* ------------- Broadcast metadata and arrays to every rank ------------- */
+    ierr = MPI_Bcast(nblk, 1, MPI_INT, 0, comm);                CHKERRQ(ierr);
 
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadGridFile - Blocks: nblk=%d, grid1d=%d.\n", *nblk, *grid1d);
-    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridFile - Grid file data retrieved successfully.\n");
+    if (rank != 0) { /* allocate on the other ranks before receiving */
+        ierr = PetscCalloc1(*nblk, imm); CHKERRQ(ierr);
+        ierr = PetscCalloc1(*nblk, jmm); CHKERRQ(ierr);
+        ierr = PetscCalloc1(*nblk, kmm); CHKERRQ(ierr);
+    }
+    ierr = MPI_Bcast(*imm,  *nblk, MPI_INT, 0, comm);           CHKERRQ(ierr);
+    ierr = MPI_Bcast(*jmm,  *nblk, MPI_INT, 0, comm);           CHKERRQ(ierr);
+    ierr = MPI_Bcast(*kmm,  *nblk, MPI_INT, 0, comm);           CHKERRQ(ierr);
+    ierr = MPI_Bcast(grid1d, 1,     MPI_INT, 0, comm);          CHKERRQ(ierr);
 
+    /* ------------- Verbose diagnostic output ------------- */
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Grid is %s\n", *grid1d ? "1‑D" : "3‑D");
+    for (PetscInt i = 0; i < *nblk; ++i)
+        LOG_ALLOW(LOCAL, LOG_DEBUG,
+                  "Block %d: IM=%d  JM=%d  KM=%d\n",
+                  (int)i, (int)(*imm)[i], (int)(*jmm)[i], (int)(*kmm)[i]);
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadGridFile – grid file data retrieved successfully\n");
     return 0;
 }
 
@@ -1549,6 +1569,17 @@ PetscErrorCode ReadAllSwarmFields(UserCtx *user, PetscInt ti)
         LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadAllSwarmFields - Successfully read velocity field for step %d.\n", ti);
    }
 
+  // 3) Read pos_phy
+  ierr = ReadSwarmField(user, "pos_phy", ti, "dat");
+   if (ierr == PETSC_ERR_FILE_OPEN) { // Handle potentially missing file as warning
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadAllSwarmFields - Physical position file for step %d not found. physical position data may be invalid/uninitialized.\n", ti);
+   } else if (ierr) {
+       LOG_ALLOW(GLOBAL, LOG_ERROR, "ReadAllSwarmFields - Failed to read physical position field for step %d (Error %d). File might be corrupt or size incorrect despite pre-check.\n", ti, ierr);
+       CHKERRQ(ierr); // Treat other errors as fatal
+   } else {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadAllSwarmFields - Successfully read physical position field for step %d.\n", ti);
+   }
+   
   // 3) Read CellID (Optional)
   // ierr = ReadSwarmField(user, "DMSwarm_CellID", ti, "dat");
   // if (ierr == PETSC_ERR_FILE_OPEN) { LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadAllSwarmFields - CellID file for step %d not found.\n", ti); }

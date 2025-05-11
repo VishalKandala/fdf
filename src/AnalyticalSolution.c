@@ -39,6 +39,11 @@ PetscErrorCode SetLocalCartesianField_Vector(const char *fieldName, Cmpnts *vecF
       vecField->y = sin(coor->y);
       vecField->z = sin(coor->z);
     }
+    else if(FieldInitialization == 2){
+      vecField->x = cos(coor->x)*sin(coor->y)*sin(coor->z);
+      vecField->y = sin(coor->x)*cos(coor->y)*sin(coor->z);
+      vecField->z = sin(coor->x)*sin(coor->y)*cos(coor->z);
+    }
     else if(FieldInitialization == 0){
       vecField->x = 0.0;
       vecField->y = 0.0;

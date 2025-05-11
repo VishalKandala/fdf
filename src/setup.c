@@ -783,13 +783,14 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
 		 
                  ierr = WriteSwarmField(user, "position", step, "dat"); CHKERRQ(ierr);
                  ierr = WriteSwarmField(user, "velocity", step, "dat"); CHKERRQ(ierr);
+		 ierr = WriteSwarmField(user, "pos_phy",  step, "dat"); CHKERRQ(ierr);
                  if (!readFields) { ierr = WriteSimulationFields(user); CHKERRQ(ierr); } // Optional initial grid write
              }
         }
      
 	// --- Step 3: Update Particle Positions ---
         // Moves particle from currentTime to currentTime + dt using velocity interpolated at currentTime
-        LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f -> T=%.4f, Step=%d] Updating particle positions.\n", currentTime, currentTime+dt, step);
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f -> T=%.4f, Step=%d] Updating particle positions(Rank: %d).\n", currentTime, currentTime+dt, step,rank);
         ierr = UpdateAllParticlePositions(user); CHKERRQ(ierr); // P(t+dt) = P(t) + V(t)*dt
 	
         // --- Step 4: Check Boundaries and Remove Out-Of-Bounds Particles ---
@@ -813,16 +814,16 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
         currentTime += dt;
 	
         // --- Step 8: Locate Particles at New Positions (t = currentTime) ---
-        LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Locating particles at new positions.\n", currentTime, step);
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Locating particles at new positions.(Rank: %d)\n", currentTime, step,rank);
         ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr); // Finds cell/weights for P(t+dt)
 
         // --- Step 9: Interpolate Field at New Positions (for the *next* step's update) ---
-        LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Interpolating field at new particle positions.\n", currentTime, step);
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Interpolating field at new particle positions.(Rank: %d)\n", currentTime, step,rank);
         ierr = InterpolateAllFieldsToSwarm(user); CHKERRQ(ierr); // Calculates V_interp @ P(t+dt)
 
 	// --- Step 10: Scatter Fields from particles to grid
 	ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
-	LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Scattering particle fields to grid at new particle positions.\n", currentTime, step);
+	LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Scattering particle fields to grid at new particle positions.(Rank: %d)\n", currentTime, step,rank);
 
 	user->step = step + 1;
         // --- Step 10: Output and Error Logging (based on the step *just completed*) ---

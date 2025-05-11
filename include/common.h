@@ -98,6 +98,7 @@ typedef struct {
     PetscReal xMin,yMin,zMin; /// Minimum bounds of the grid.
     PetscReal xMax,yMax,zMax; /// Maximum bounds of the grid.
     PetscInt IM, JM, KM;    ///< Global grid dimensions in x, y, z directions.
+    PetscInt nblk;          /// No.of blocks in the grid.  
     BoundingBox bbox;       ///< Bounding box for the local grid domain.
     DMDALocalInfo info;     ///< Local information about the DMDA.
     PetscReal rx;           // Stretching ratio in x-direction
