@@ -787,3 +787,120 @@ PetscErrorCode InterpolateParticleVelocities(UserCtx *user) {
 
     return 0;
 }
+
+
+/////////////////////////////////////
+
+
+/**
+ * @brief Initialize the simulation context.
+ *
+ * Checks for the presence of "control.dat" file, reads runtime options, and sets up the user context.
+ *
+ * @param[out] user    Pointer to the allocated UserCtx structure.
+ * @param[out] rank    MPI rank of the process.
+ * @param[out] size    Number of MPI processes.
+ * @param[out] np      Number of particles.
+ * @param[out] StartStep Simulation Starting Timestep
+ * @param[out] StepsToRun No.of Timesteps to run simulation.
+ * @param[out] StartTIme Time of start of simulation.
+ * @param[out] ti      The timestep to start from if restarting.
+ * @param[out] nblk    Number of grid blocks.
+ * @param[out] outputFreq The Frequency at which data should be output from the simulation.
+ * @param[out] readFields The flag to decide if eulerian fields are read or generated.
+ * @param[out] allowedFuncs list of functions that are allowed to show output
+ * @param[out] nAllowed No.of functions allowed to show output
+ * @param[out] allowedFile indicates the file  that contains the list of allowed functions.
+ * @param[out] useCfg Flag for whether a config file is prescribed or to use default.
+ *
+ * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
+ */
+PetscErrorCode InitializeSimulation(UserCtx **user, PetscMPIInt *rank, PetscMPIInt *size, PetscInt *np, PetscInt *StartStep, PetscInt *StepsToRun,PetscReal *StartTime, PetscInt *nblk, PetscInt *outputFreq, PetscBool *readFields,char ***allowedFuncs, PetscInt *nAllowed, char *allowedFile, PetscBool *useCfg) {
+    PetscErrorCode ierr;
+
+    ierr = PetscOptionsGetString(NULL,NULL,
+				 "-allowed_funcs_file",
+				 (char *)allowedFile,
+				 PETSC_MAX_PATH_LEN,
+				 useCfg);CHKERRQ(ierr);
+
+    /*  Read the allowed functions list from disk */
+    ierr = LoadAllowedFunctionsFromFile(allowedFile,allowedFuncs,nAllowed);CHKERRQ(ierr);
+
+        
+    /* 2c  Register Allowed functions with logger. */
+    set_allowed_functions((const char **)*allowedFuncs,(size_t)*nAllowed);
+    
+    // Attempt to insert options from "control.dat"
+    ierr = PetscOptionsInsertFile(PETSC_COMM_WORLD, NULL, "control.dat", PETSC_TRUE);
+    if (ierr == PETSC_ERR_FILE_OPEN) {
+        SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_OPEN,
+                "InitializeSimulation - Could not open 'control.dat'. Please ensure it exists in the current directory.");
+    } else {
+        CHKERRQ(ierr);
+    }
+
+    // Allocate user context
+    ierr = PetscCalloc1(1, user); CHKERRQ(ierr);
+
+    // Get MPI rank and size
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, rank); CHKERRQ(ierr);
+    ierr = MPI_Comm_size(PETSC_COMM_WORLD, size); CHKERRQ(ierr);
+
+    // Initialize user context flags
+    (*user)->averaging = PETSC_FALSE;
+    (*user)->les = PETSC_FALSE;
+    (*user)->rans = PETSC_FALSE;
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeSimulation - Initialized on rank %d out of %d processes.\n", *rank, *size);
+
+    // Read runtime options
+    ierr = PetscOptionsGetInt(NULL, NULL, "-numParticles", np, NULL); CHKERRQ(ierr);
+    (*user)->NumberofParticles = *np; 
+    ierr = PetscOptionsGetInt(NULL, NULL, "-rstart", StartStep, NULL); CHKERRQ(ierr);
+    if((*StartStep)>0) {
+        ierr = PetscOptionsGetReal(NULL, NULL, "-ti", StartTime, NULL); CHKERRQ(ierr);
+    }
+    ierr = PetscOptionsGetInt(NULL,NULL, "-totalsteps",StepsToRun,NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetInt(NULL, NULL, "-nblk", nblk, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetInt(NULL, NULL, "-pinit", &((*user)->ParticleInitialization), NULL);
+    ierr = PetscOptionsGetInt(NULL, NULL, "-finit", &((*user)->FieldInitialization), NULL);
+    ierr = PetscOptionsGetInt(NULL, NULL, "-tio",outputFreq,NULL);
+    ierr = PetscOptionsGetInt(NULL, NULL, "-logfreq", &((*user)->LoggingFrequency), NULL);
+
+    ierr = PetscOptionsGetReal(NULL, NULL, "-dt", &((*user)->dt), NULL);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-uin",&((*user)->ConstantVelocity), NULL);
+
+    // Check if user requested to read fields instead of updating
+    ierr = PetscOptionsGetBool(NULL, NULL, "-read_fields", readFields, NULL); CHKERRQ(ierr);
+    
+    LOG_ALLOW(GLOBAL,LOG_DEBUG," -- Console Output Functions[Total : %d] : --\n",*nAllowed);
+    
+    for (int i = 0; i < *nAllowed; ++i)
+      LOG_ALLOW(GLOBAL,LOG_DEBUG,"   [%2d] «%s»\n", i, (*allowedFuncs)[i]);
+
+    if (*user->ParticleInitialization == 0) {
+         if(rank == 0) { // Only rank 0 parses, then bcasts
+            ierr = ParseBCSFileForInlet(user); CHKERRQ(ierr);
+         } else { // Non-root ranks receive broadcasted info
+            PetscInt temp_inlet_face_int_bcast;
+            PetscMPIInt temp_found_flag_int;
+            ierr = MPI_Bcast(&temp_found_flag_int, 1, MPI_INT, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
+            ierr = MPI_Bcast(&temp_inlet_face_int_bcast, 1, MPI_INT, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
+            user->inletFaceDefined = (PetscBool)temp_found_flag_int;
+            if (user->inletFaceDefined) {
+                user->identifiedInletBCFace = (BCFace)temp_inlet_face_int_bcast;
+            }
+         }
+    }
+    
+    
+    // Enable PETSc default logging
+    ierr = PetscLogDefaultBegin(); CHKERRQ(ierr);
+    
+    registerEvents();   
+
+    print_log_level();
+    
+    return 0;
+}

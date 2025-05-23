@@ -138,140 +138,551 @@ PetscErrorCode InitializeRandomGenerators(UserCtx* user, PetscRandom *randx, Pet
 }
 
 /**
- * @brief Initializes basic particle properties: position, particle ID, and cell ID.
+ * @brief Initializes random number generators for logical space operations [0.0, 1.0).
  *
- * This function sets the position field using either random values (if ParticleInitialization==1)
- * or at the z=0 plane. It also assigns a unique particle ID and initializes
- * cell IDs to -1.
+ * This function creates and configures three separate PETSc random number generators,
+ * one for each logical dimension (i, j, k or xi, eta, zeta equivalent).
+ * Each RNG is configured to produce uniformly distributed real numbers in the interval [0.0, 1.0).
+ * These are typically used for selecting owned cells or generating intra-cell logical coordinates.
  *
- * @param[in,out] user               Pointer to the UserCtx structure containing the swarm.
- * @param[in]     particlesPerProcess Number of particles assigned to this MPI process.
- * @param[in]     randx              Random number generator for the x-coordinate.
- * @param[in]     randy              Random number generator for the y-coordinate.
- * @param[in]     randz              Random number generator for the z-coordinate.
- * @param[in]     bboxlist           Array of BoundingBox structures (one per MPI rank).
+ * @param[out]   rand_logic_i Pointer to store the RNG for the i-logical dimension.
+ * @param[out]   rand_logic_j Pointer to store the RNG for the j-logical dimension.
+ * @param[out]   rand_logic_k Pointer to store the RNG for the k-logical dimension.
  *
- * @return PetscErrorCode            Returns 0 on success, non-zero on failure.
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-static PetscErrorCode InitializeParticleBasicProperties(UserCtx *user,
-                                                   PetscInt particlesPerProcess,
-                                                   PetscRandom *randx, PetscRandom *randy, PetscRandom *randz,
-                                                   BoundingBox *bboxlist)
-{
+PetscErrorCode InitializeLogicalSpaceRNGs(PetscRandom *rand_logic_i, PetscRandom *rand_logic_j, PetscRandom *rand_logic_k) {
     PetscErrorCode ierr;
-    DM swarm;
-    PetscReal *positions = NULL;
-    PetscInt64 *particleIDs = NULL, *cellIDs = NULL;
     PetscMPIInt rank;
-    const Cmpnts ***coor;
-    Vec Coor;
-    PetscReal *pos_phys = NULL;
     PetscFunctionBeginUser;
 
-    // Validate input pointers
-    if (!user || !randx || !randy || !randz || !bboxlist) {
-        LOG_ALLOW(GLOBAL, LOG_ERROR, "InitializeParticleBasicProperties - One or more input pointers are NULL.\n");
-        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "InitializeParticleBasicProperties - Null input detected.");
-    }
-
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
-    swarm = user->swarm;
 
-    ierr = DMGetCoordinatesLocal(user->da,&Coor);
-    ierr = DMDAVecGetArrayRead(user->fda,Coor,&coor);
-    
-    LOG_ALLOW(LOCAL, LOG_INFO, "InitializeParticleBasicProperties - Initializing %d particles on rank %d.\n", 
-              particlesPerProcess, rank);
+    // --- RNG for i-logical dimension ---
+    ierr = PetscRandomCreate(PETSC_COMM_WORLD, rand_logic_i); CHKERRQ(ierr);
+    ierr = PetscRandomSetType((*rand_logic_i), PETSCRAND48); CHKERRQ(ierr);
+    ierr = PetscRandomSetInterval(*rand_logic_i, 0.0, 1.0); CHKERRQ(ierr); // Key change: [0,1)
+    ierr = PetscRandomSetSeed(*rand_logic_i, rank + 202401); CHKERRQ(ierr); // Unique seed
+    ierr = PetscRandomSeed(*rand_logic_i); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(LOCAL,LOG_DEBUG, "InitializeLogicalSpaceRNGs - Initialized RNG for i-logical dimension [0,1).\n");
 
-    /*--- Retrieve the swarm fields for position, particle IDs, and cell IDs ---*/
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "InitializeParticleBasicProperties - Retrieving swarm fields.\n");
-    ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
-    ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&particleIDs); CHKERRQ(ierr);
-    ierr = DMSwarmGetField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs); CHKERRQ(ierr);
-    ierr = DMSwarmGetField(swarm, "pos_phy",NULL,NULL,(void**)&pos_phys); CHKERRQ(ierr);
+    // --- RNG for j-logical dimension ---
+    ierr = PetscRandomCreate(PETSC_COMM_WORLD, rand_logic_j); CHKERRQ(ierr);
+    ierr = PetscRandomSetType((*rand_logic_j), PETSCRAND48); CHKERRQ(ierr);
+    ierr = PetscRandomSetInterval(*rand_logic_j, 0.0, 1.0); CHKERRQ(ierr); // Key change: [0,1)
+    ierr = PetscRandomSetSeed(*rand_logic_j, rank + 202402); CHKERRQ(ierr);
+    ierr = PetscRandomSeed(*rand_logic_j); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(LOCAL,LOG_DEBUG, "InitializeLogicalSpaceRNGs - Initialized RNG for j-logical dimension [0,1).\n");
 
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "InitializeParticleBasicProperties - Particle Initialization = %d\n",user->ParticleInitialization);
-
-    // Initialize random number generators
-    ierr = InitializeRandomGenerators(user, randx, randy, randz); CHKERRQ(ierr);
-
-    /// EXPERIMENTAL CODE ! LOGICAL to PHYSICAL SPACE///
-    /* choose cell indices owned by this rank */
-    PetscInt is,js,ks,nx,ny,nz;
-    DMDAGetCorners(user->da,&is,&js,&ks,&nx,&ny,&nz);    
-    /*--- Loop over each particle and initialize the basic properties ---*/
-    for (PetscInt p = 0; p < particlesPerProcess; p++) {
-      PetscReal r;                       /* temporary */
-      PetscInt ci,cj,ck;
-      PetscRandomGetValueReal(*randx,&r);   /* correct signature */
-      ci = is + (PetscInt)((nx-3) * r);
-
-      PetscRandomGetValueReal(*randy,&r);
-      cj = js + (PetscInt)((ny-3) * r);
-
-      PetscRandomGetValueReal(*randz,&r);
-      ck = ks + (PetscInt)((nz-3) * r);
-
-      /* draw logical coordinates */
-      PetscReal xi,eta,zta;
-      PetscRandomGetValueReal(*randx,&xi);
-      PetscRandomGetValueReal(*randy,&eta);
-      PetscRandomGetValueReal(*randz,&zta);
-        if (user->ParticleInitialization == 1) {
-	  /* logical storage (unchanged) */
-	  positions[3*p+0] = xi;
-	  positions[3*p+1] = eta;
-	  positions[3*p+2] = zta;	   
-	  /*
-            ierr = PetscRandomGetValue(*randx, &positions[3 * p + 0]); CHKERRQ(ierr);
-            ierr = PetscRandomGetValue(*randy, &positions[3 * p + 1]); CHKERRQ(ierr);
-            ierr = PetscRandomGetValue(*randz, &positions[3 * p + 2]); CHKERRQ(ierr);
-	  */
-        } else if (user->ParticleInitialization == 0){
-	  /*
-	    ierr = PetscRandomGetValue(*randx, &positions[3 * p + 0]); CHKERRQ(ierr);
-            ierr = PetscRandomGetValue(*randy, &positions[3 * p + 1]); CHKERRQ(ierr);
-	  */
-	  positions[3*p+0] = xi;
-	  positions[3*p+1] = eta;
-	  positions[3 * p + 2] = user->zMin;
-	}
-
-            LOG_LOOP_ALLOW(LOCAL,LOG_DEBUG,p,10,"InitializeParticleBasicProperties - Particle %d initialized at (%.6f, %.6f, %.6f).\n",
-                      p, positions[3 * p + 0], positions[3 * p + 1], positions[3 * p + 2]);
-        /* Assign unique particle IDs */
-        particleIDs[p] = rank * particlesPerProcess + p;
-        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG,p,10, "InitializeParticleBasicProperties - Assigned particle ID %lld to particle %d.\n",
-                  (long long)particleIDs[p], p);
-
-        /* Initialize cell IDs to -1 */
-        cellIDs[3 * p + 0] = -1;
-        cellIDs[3 * p + 1] = -1;
-        cellIDs[3 * p + 2] = -1;
-
-	/* NEW : physical mapping */
-	Cmpnts phys;
-	ierr = MetricLogicalToPhysical(user,coor,ci,cj,ck,xi,eta,zta,&phys); CHKERRQ(ierr);
-	pos_phys[3*p+0] = phys.x;
-	pos_phys[3*p+1] = phys.y;
-	pos_phys[3*p+2] = phys.z;
-    }
-
-    /*--- Restore the swarm fields ---*/
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "InitializeParticleBasicProperties - Restoring swarm fields.\n");
-    ierr = DMSwarmRestoreField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
-    ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&particleIDs); CHKERRQ(ierr);
-    ierr = DMSwarmRestoreField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs); CHKERRQ(ierr);
-    ierr = DMSwarmRestoreField(swarm,"pos_phy",NULL,NULL,(void**)&pos_phys); CHKERRQ(ierr);
-    ierr = DMDAVecRestoreArrayRead(user->fda,Coor,&coor);CHKERRQ(ierr);
-
-
-    LOG_ALLOW(LOCAL, LOG_INFO, "InitializeParticleBasicProperties - Successfully initialized %d particles on rank %d.\n",
-              particlesPerProcess, rank);
+    // --- RNG for k-logical dimension ---
+    ierr = PetscRandomCreate(PETSC_COMM_WORLD, rand_logic_k); CHKERRQ(ierr);
+    ierr = PetscRandomSetType((*rand_logic_k), PETSCRAND48); CHKERRQ(ierr);
+    ierr = PetscRandomSetInterval(*rand_logic_k, 0.0, 1.0); CHKERRQ(ierr); // Key change: [0,1)
+    ierr = PetscRandomSetSeed(*rand_logic_k, rank + 202403); CHKERRQ(ierr);
+    ierr = PetscRandomSeed(*rand_logic_k); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(LOCAL,LOG_DEBUG, "InitializeLogicalSpaceRNGs - Initialized RNG for k-logical dimension [0,1).\n");
 
     PetscFunctionReturn(0);
 }
 
+/**
+ * @brief Determines cell selection and intra-cell logical coordinates for surface initialization (Mode 0).
+ *
+ * This function is called when `user->ParticleInitialization == 0`. Based on the
+ * `user->identifiedInletBCFace` (which is determined by parsing "bcs.dat"), this function
+ * calculates parameters for placing a particle on the specified global inlet face.
+ *
+ * The process involves:
+ * 1. Checking if the current MPI rank owns any portion of the designated global inlet face.
+ * 2. If it does, it randomly selects an *owned cell* that lies on this rank's portion of the inlet face.
+ *    The selection uses the number of owned cells in the two dimensions tangential to the face.
+ * 3. It sets the intra-cell logical coordinate normal to the inlet face to a very small value
+ *    (e.g., 1e-6 for a MIN face like BC_FACE_NEG_X, or 1.0 - 1.0e-6 for a MAX face like BC_FACE_POS_X),
+ *    ensuring the particle is just inside the chosen cell, on its "inlet-facing" logical surface.
+ * 4. The other two intra-cell logical coordinates (tangential to the inlet face) are chosen randomly
+ *    within the `[0,1)` range.
+ * 5. The outputs are the local node indices (`ci/cj/ck_metric_lnode_out`) of the origin of the
+ *    selected cell (for use with `MetricLogicalToPhysical`) and the calculated intra-cell
+ *    logical coordinates (`xi/eta/zta_metric_logic_out`).
+ * 6. A flag (`can_place_on_surface_out`) indicates if a valid placement could be determined by this rank.
+ *
+ * **Important Note on `DMDALocalInfo info` members:**
+ *   - `info->xs, info->ys, info->zs`: Global starting indices of *owned cells*.
+ *   - `info->mx, info->my, info->mz`: Number of *grid points (nodes)* in each local dimension on this process.
+ *     Therefore, the number of *owned cells* in a dimension is `info->mX - 1` (if `info->mX > 0`).
+ *
+ * @param[in]  user Pointer to `UserCtx` (contains `identifiedInletBCFace`).
+ * @param[in]  info Pointer to `DMDALocalInfo` for the current rank's grid portion.
+ * @param[in]  xs_gnode, ys_gnode, zs_gnode Local indices (in the ghosted array) of the first *owned node*.
+ * @param[in]  IM_gcells, JM_gcells, KM_gcells Total number of cells in the global domain in I, J, K.
+ * @param[in]  rand_logic_i_ptr Pointer to the RNG for i-dimension tasks [0,1).
+ * @param[in]  rand_logic_j_ptr Pointer to the RNG for j-dimension tasks [0,1).
+ * @param[in]  rand_logic_k_ptr Pointer to the RNG for k-dimension tasks [0,1).
+ * @param[out] ci_metric_lnode_out Pointer to store the local i-node index of the selected cell's origin.
+ * @param[out] cj_metric_lnode_out Pointer to store the local j-node index of the selected cell's origin.
+ * @param[out] ck_metric_lnode_out Pointer to store the local k-node index of the selected cell's origin.
+ * @param[out] xi_metric_logic_out Pointer to store the intra-cell logical xi-coordinate [0,1).
+ * @param[out] eta_metric_logic_out Pointer to store the intra-cell logical eta-coordinate [0,1).
+ * @param[out] zta_metric_logic_out Pointer to store the intra-cell logical zeta-coordinate [0,1).
+ * @param[out] can_place_on_surface_out PETSC_TRUE if placement parameters were successfully determined, PETSC_FALSE otherwise.
+ * @return PetscErrorCode 0 on success, or a PETSc error code.
+ */
+static PetscErrorCode DetermineSurfaceInitializationParameters(
+    UserCtx *user, DMDALocalInfo *info,
+    PetscInt xs_gnode, PetscInt ys_gnode, PetscInt zs_gnode,
+    PetscInt IM_gcells, PetscInt JM_gcells, PetscInt KM_gcells,
+    PetscRandom *rand_logic_i_ptr, PetscRandom *rand_logic_j_ptr, PetscRandom *rand_logic_k_ptr, /* Pointers to RNGs */
+    PetscInt *ci_metric_lnode_out, PetscInt *cj_metric_lnode_out, PetscInt *ck_metric_lnode_out,
+    PetscReal *xi_metric_logic_out, PetscReal *eta_metric_logic_out, PetscReal *zta_metric_logic_out,
+    PetscBool *can_place_on_surface_out)
+{
+    PetscErrorCode ierr = 0;
+    PetscReal r_val; // For storing random numbers from [0,1) RNGs
+    PetscInt local_owned_cell_idx_face_dim1 = 0; // Local owned cell index in the first tangential dimension of the face
+    PetscInt local_owned_cell_idx_face_dim2 = 0; // Local owned cell index in the second tangential dimension of the face
+    PetscMPIInt rank_for_logging; // For more informative logs if needed
+
+    PetscFunctionBeginUser;
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank_for_logging); CHKERRQ(ierr); // Get rank for detailed logging
+
+    *can_place_on_surface_out = PETSC_FALSE; // Default to: cannot place on surface from this rank
+
+    // Check the flag set by ParseBCSFileForInlet
+    if (user->inletFaceDefined == PETSC_FALSE) { // Or simply: if (!user->inletFaceDefined)
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP - Rank %d: Inlet face is not defined (from bcs.dat). Cannot place particle on surface.", rank_for_logging);
+        PetscFunctionReturn(0); // Exit early if no inlet face was defined
+    }
+    
+    // Default intra-cell logicals to cell center; will be overridden for the face-normal direction
+    // and the other two will be randomized if placement occurs.
+    *xi_metric_logic_out = 0.5; *eta_metric_logic_out = 0.5; *zta_metric_logic_out = 0.5;
+    // Default cell node indices to the start of the rank's owned region
+    *ci_metric_lnode_out = xs_gnode; *cj_metric_lnode_out = ys_gnode; *ck_metric_lnode_out = zs_gnode;
+
+    // A rank must own some 3D cells to be able to define a face for particle placement.
+    // info->mx,my,mz are number of NODES in local processor including ghosts if any that are not part of global domain.
+    // So, number of CELLS is (info->mX - 1), (info->mY - 1), (info->mZ - 1) for non-zero node counts.
+    PetscInt num_owned_cells_i = (info->mx > 1) ? info->mx - 1 : 0; // Num cells = Num nodes - 1
+    PetscInt num_owned_cells_j = (info->my > 1) ? info->my - 1 : 0;
+    PetscInt num_owned_cells_k = (info->mz > 1) ? info->mz - 1 : 0;
+
+    if (num_owned_cells_i == 0 || num_owned_cells_j == 0 || num_owned_cells_k == 0) {
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP - Rank %d: Has zero cells in at least one dimension (owned cells i,j,k: %d,%d,%d). Cannot place particle on surface.",
+                  rank_for_logging, num_owned_cells_i, num_owned_cells_j, num_owned_cells_k);
+        PetscFunctionReturn(0);
+    }
+
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP - Rank %d: Processing inlet face %d. Owned cell counts (i,j,k): (%d,%d,%d). Global cell counts (I,J,K): (%d,%d,%d). Ghosted node starts (xs_g,ys_g,zs_g): (%d,%d,%d). Owned cell starts (info.xs/ys/ks): (%d,%d,%d)",
+        rank_for_logging, user->identifiedInletBCFace, num_owned_cells_i, num_owned_cells_j, num_owned_cells_k, IM_gcells, JM_gcells, KM_gcells, xs_gnode, ys_gnode, zs_gnode, info->xs, info->ys, info->zs);
+
+    switch (user->identifiedInletBCFace) {
+        case BC_FACE_NEG_X: // Global I-MIN face (DMDA 'x'-min)
+            // Check if this rank owns cells at the global I=0 boundary
+            if (info->xs == 0) {
+                *can_place_on_surface_out = PETSC_TRUE;
+                *ci_metric_lnode_out = xs_gnode;         // Cell origin is at the first layer of owned nodes in i
+                *xi_metric_logic_out = 1.0e-6;           // Intra-cell logical xi is near the "left" face of this cell
+
+                // Tangential dimensions for an I-face are J and K. Select a cell randomly on this face.
+                // Select local owned cell index in J-direction
+                ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, &r_val); CHKERRQ(ierr); // Dereference RNG pointer
+                local_owned_cell_idx_face_dim1 = (PetscInt)(r_val * num_owned_cells_j);
+                local_owned_cell_idx_face_dim1 = PetscMin(PetscMax(0, local_owned_cell_idx_face_dim1), num_owned_cells_j - 1);
+                *cj_metric_lnode_out = ys_gnode + local_owned_cell_idx_face_dim1;
+
+                // Select local owned cell index in K-direction
+                ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, &r_val); CHKERRQ(ierr); // Dereference RNG pointer
+                local_owned_cell_idx_face_dim2 = (PetscInt)(r_val * num_owned_cells_k);
+                local_owned_cell_idx_face_dim2 = PetscMin(PetscMax(0, local_owned_cell_idx_face_dim2), num_owned_cells_k - 1);
+                *ck_metric_lnode_out = zs_gnode + local_owned_cell_idx_face_dim2;
+
+                // Random intra-cell logical coordinates for eta and zeta (tangential to I-face)
+                ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, eta_metric_logic_out); CHKERRQ(ierr);
+                ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, zta_metric_logic_out); CHKERRQ(ierr);
+                LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/NEG_Xi: Target. CellNode(i,j,k)=(%d,%d,%d). Logic(xi,et,zt)=(%.2e,%.2f,%.2f)", *ci_metric_lnode_out, *cj_metric_lnode_out, *ck_metric_lnode_out, *xi_metric_logic_out, *eta_metric_logic_out, *zta_metric_logic_out);
+            } else { LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/NEG_Xi: Rank %d not on this face (info->xs=%d).", rank_for_logging, info->xs); }
+            break;
+
+        case BC_FACE_POS_X: // Global I-MAX face
+            if (info->xs + num_owned_cells_i == IM_gcells) {
+                *can_place_on_surface_out = PETSC_TRUE;
+                *ci_metric_lnode_out = xs_gnode + (num_owned_cells_i - 1); // Node starting the last layer of owned cells in i
+                *xi_metric_logic_out = 1.0 - 1.0e-6;            // Intra-cell logical xi is near the "right" face
+                
+                ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, &r_val); CHKERRQ(ierr);
+                local_owned_cell_idx_face_dim1 = (PetscInt)(r_val * num_owned_cells_j);
+                local_owned_cell_idx_face_dim1 = PetscMin(PetscMax(0, local_owned_cell_idx_face_dim1), num_owned_cells_j - 1);
+                *cj_metric_lnode_out = ys_gnode + local_owned_cell_idx_face_dim1;
+
+                ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, &r_val); CHKERRQ(ierr);
+                local_owned_cell_idx_face_dim2 = (PetscInt)(r_val * num_owned_cells_k);
+                local_owned_cell_idx_face_dim2 = PetscMin(PetscMax(0, local_owned_cell_idx_face_dim2), num_owned_cells_k - 1);
+                *ck_metric_lnode_out = zs_gnode + local_owned_cell_idx_face_dim2;
+
+                ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, eta_metric_logic_out); CHKERRQ(ierr);
+                ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, zta_metric_logic_out); CHKERRQ(ierr);
+                LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/POS_Xi: Target. CellNode(i,j,k)=(%d,%d,%d). Logic(xi,et,zt)=(%.2e,%.2f,%.2f)", *ci_metric_lnode_out, *cj_metric_lnode_out, *ck_metric_lnode_out, *xi_metric_logic_out, *eta_metric_logic_out, *zta_metric_logic_out);
+            } else { LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/POS_Xi: Rank %d not on this face (info->xs=%d, num_i_cells=%d, IM_gcells=%d).", rank_for_logging, info->xs, num_owned_cells_i, IM_gcells); }
+            break;
+
+        case BC_FACE_NEG_Y: // Global J-MIN face
+             if (info->ys == 0) {
+                *can_place_on_surface_out = PETSC_TRUE;
+                *cj_metric_lnode_out = ys_gnode;
+                *eta_metric_logic_out = 1.0e-6;
+
+                ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, &r_val); CHKERRQ(ierr);
+                local_owned_cell_idx_face_dim1 = (PetscInt)(r_val * num_owned_cells_i);
+                local_owned_cell_idx_face_dim1 = PetscMin(PetscMax(0, local_owned_cell_idx_face_dim1), num_owned_cells_i - 1);
+                *ci_metric_lnode_out = xs_gnode + local_owned_cell_idx_face_dim1;
+                
+                ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, &r_val); CHKERRQ(ierr);
+                local_owned_cell_idx_face_dim2 = (PetscInt)(r_val * num_owned_cells_k);
+                local_owned_cell_idx_face_dim2 = PetscMin(PetscMax(0, local_owned_cell_idx_face_dim2), num_owned_cells_k - 1);
+                *ck_metric_lnode_out = zs_gnode + local_owned_cell_idx_face_dim2;
+                
+                ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, xi_metric_logic_out); CHKERRQ(ierr);
+                ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, zta_metric_logic_out); CHKERRQ(ierr);
+                LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/NEG_Eta: Target. CellNode(i,j,k)=(%d,%d,%d). Logic(xi,et,zt)=(%.2f,%.2e,%.2f)", *ci_metric_lnode_out, *cj_metric_lnode_out, *ck_metric_lnode_out, *xi_metric_logic_out, *eta_metric_logic_out, *zta_metric_logic_out);
+            } else { LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/NEG_Eta: Rank %d not on this face (info->ys=%d).", rank_for_logging, info->ys); }
+            break;
+
+        case BC_FACE_POS_Y: // Global J-MAX face
+            if (info->ys + num_owned_cells_j == JM_gcells) {
+                *can_place_on_surface_out = PETSC_TRUE;
+                *cj_metric_lnode_out = ys_gnode + (num_owned_cells_j - 1);
+                *eta_metric_logic_out = 1.0 - 1.0e-6;
+
+                ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, &r_val); CHKERRQ(ierr);
+                local_owned_cell_idx_face_dim1 = (PetscInt)(r_val * num_owned_cells_i);
+                local_owned_cell_idx_face_dim1 = PetscMin(PetscMax(0, local_owned_cell_idx_face_dim1), num_owned_cells_i - 1);
+                *ci_metric_lnode_out = xs_gnode + local_owned_cell_idx_face_dim1;
+
+                ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, &r_val); CHKERRQ(ierr);
+                local_owned_cell_idx_face_dim2 = (PetscInt)(r_val * num_owned_cells_k);
+                local_owned_cell_idx_face_dim2 = PetscMin(PetscMax(0, local_owned_cell_idx_face_dim2), num_owned_cells_k - 1);
+                *ck_metric_lnode_out = zs_gnode + local_owned_cell_idx_face_dim2;
+
+                ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, xi_metric_logic_out); CHKERRQ(ierr);
+                ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, zta_metric_logic_out); CHKERRQ(ierr);
+                LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/POS_Eta: Target. CellNode(i,j,k)=(%d,%d,%d). Logic(xi,et,zt)=(%.2f,%.2e,%.2f)", *ci_metric_lnode_out, *cj_metric_lnode_out, *ck_metric_lnode_out, *xi_metric_logic_out, *eta_metric_logic_out, *zta_metric_logic_out);
+            } else { LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/POS_Eta: Rank %d not on this face (info->ys=%d, num_j_cells=%d, JM_gcells=%d).", rank_for_logging, info->ys, num_owned_cells_j, JM_gcells); }
+            break;
+
+        case BC_FACE_NEG_Z: // Global K-MIN face
+            if (info->zs == 0) {
+                *can_place_on_surface_out = PETSC_TRUE;
+                *ck_metric_lnode_out = zs_gnode;
+                *zta_metric_logic_out = 1.0e-6;
+
+                ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, &r_val); CHKERRQ(ierr);
+                local_owned_cell_idx_face_dim1 = (PetscInt)(r_val * num_owned_cells_i); // Scale by num_owned_cells_i
+                *ci_metric_lnode_out = xs_gnode + PetscMin(PetscMax(0, local_owned_cell_idx_face_dim1), num_owned_cells_i - 1); // Clamp with num_owned_cells_i -1
+
+                ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, &r_val); CHKERRQ(ierr);
+                local_owned_cell_idx_face_dim2 = (PetscInt)(r_val * num_owned_cells_j); // Scale by num_owned_cells_j
+                *cj_metric_lnode_out = ys_gnode + PetscMin(PetscMax(0, local_owned_cell_idx_face_dim2), num_owned_cells_j - 1); // Clamp with num_owned_cells_j - 1
+                
+                LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/NEG_Zeta Pre-Metric: r_val_i=%.10g, num_i_cells=%d, unclamp_idx_i=%d, clamp_idx_i=%d (rel. to owned), xs_gnode=%d, ci_node=%d",
+                          (double)r_val, num_owned_cells_i, (PetscInt)(r_val*num_owned_cells_i), local_owned_cell_idx_face_dim1, xs_gnode, *ci_metric_lnode_out); // r_val here is last one used (for j)
+                LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/NEG_Zeta Pre-Metric: r_val_j=%.10g, num_j_cells=%d, unclamp_idx_j=%d, clamp_idx_j=%d (rel. to owned), ys_gnode=%d, cj_node=%d",
+                          (double)r_val, num_owned_cells_j, (PetscInt)(r_val*num_owned_cells_j), local_owned_cell_idx_face_dim2, ys_gnode, *cj_metric_lnode_out); // r_val here is last one used (for j)
+
+
+                ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, xi_metric_logic_out); CHKERRQ(ierr);
+                ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, eta_metric_logic_out); CHKERRQ(ierr);
+                LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/NEG_Zeta: Target. CellNode(i,j,k)=(%d,%d,%d). Logic(xi,et,zt)=(%.2f,%.2f,%.2e)", *ci_metric_lnode_out, *cj_metric_lnode_out, *ck_metric_lnode_out, *xi_metric_logic_out, *eta_metric_logic_out, *zta_metric_logic_out);
+            } else { LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/NEG_Zeta: Rank %d not on this face (info->zs=%d).", rank_for_logging, info->zs); }
+            break;
+
+        case BC_FACE_POS_Z: // Global K-MAX face
+            if (info->zs + num_owned_cells_k == KM_gcells) {
+                *can_place_on_surface_out = PETSC_TRUE;
+                *ck_metric_lnode_out = zs_gnode + (num_owned_cells_k - 1);
+                *zta_metric_logic_out = 1.0 - 1.0e-6;
+
+                ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, &r_val); CHKERRQ(ierr);
+                local_owned_cell_idx_face_dim1 = (PetscInt)(r_val * num_owned_cells_i);
+                *ci_metric_lnode_out = xs_gnode + PetscMin(PetscMax(0, local_owned_cell_idx_face_dim1), num_owned_cells_i - 1);
+
+                ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, &r_val); CHKERRQ(ierr);
+                local_owned_cell_idx_face_dim2 = (PetscInt)(r_val * num_owned_cells_j);
+                *cj_metric_lnode_out = ys_gnode + PetscMin(PetscMax(0, local_owned_cell_idx_face_dim2), num_owned_cells_j - 1);
+
+                ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, xi_metric_logic_out); CHKERRQ(ierr);
+                ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, eta_metric_logic_out); CHKERRQ(ierr);
+                LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/POS_Zeta: Target. CellNode(i,j,k)=(%d,%d,%d). Logic(xi,et,zt)=(%.2f,%.2f,%.2e)", *ci_metric_lnode_out, *cj_metric_lnode_out, *ck_metric_lnode_out, *xi_metric_logic_out, *eta_metric_logic_out, *zta_metric_logic_out);
+            } else { LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/POS_Zeta: Rank %d not on this face (info->zs=%d, num_k_cells=%d, KM_gcells=%d).", rank_for_logging, info->zs, num_owned_cells_k, KM_gcells); }
+            break;
+        default:
+            LOG_ALLOW(LOCAL, LOG_ERROR, "DSP - Rank %d: Invalid user->identifiedInletBCFace value: %d\n", rank_for_logging, user->identifiedInletBCFace);
+            *can_place_on_surface_out = PETSC_FALSE; // Should already be false
+            break;
+    }
+
+    if (*can_place_on_surface_out) {
+        // Clamp the two random intra-cell logical coordinates (tangential to the face)
+        // The one normal to the face is already set (e.g., xi_metric_logic_out for I-faces)
+        if (user->identifiedInletBCFace == BC_FACE_NEG_X || user->identifiedInletBCFace == BC_FACE_POS_X) {
+            *eta_metric_logic_out = PetscMin(*eta_metric_logic_out, 1.0 - 1.0e-7);
+            *zta_metric_logic_out = PetscMin(*zta_metric_logic_out, 1.0 - 1.0e-7);
+        } else if (user->identifiedInletBCFace == BC_FACE_NEG_Y || user->identifiedInletBCFace == BC_FACE_POS_Y) {
+            *xi_metric_logic_out  = PetscMin(*xi_metric_logic_out,  1.0 - 1.0e-7);
+            *zta_metric_logic_out = PetscMin(*zta_metric_logic_out, 1.0 - 1.0e-7);
+        } else { // Z-faces (NEG_Z or POS_Z)
+            *xi_metric_logic_out  = PetscMin(*xi_metric_logic_out,  1.0 - 1.0e-7);
+            *eta_metric_logic_out = PetscMin(*eta_metric_logic_out, 1.0 - 1.0e-7);
+        }
+    }
+    PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Determines cell selection and intra-cell logical coordinates for volumetric initialization (Mode 1).
+ *
+ * This function is called when `user->ParticleInitialization == 1`. It randomly selects
+ * an *owned cell* on the current MPI rank and then generates random intra-cell logical
+ * coordinates `[0,1)^3` within that chosen cell.
+ *
+ * The process involves:
+ * 1. Checking if the current MPI rank owns any 3D cells.
+ * 2. If it does, it randomly selects an *owned cell index* in each logical direction (i, j, k)
+ *    by scaling a `[0,1)` random number with the number of owned cells in that direction.
+ * 3. These local owned cell indices are then converted to the *local node indices*
+ *    (`ci/cj/ck_metric_lnode_out`) corresponding to the origin of the selected cell,
+ *    for use with `MetricLogicalToPhysical`. This conversion uses `xs/ys/zs_gnode`.
+ * 4. All three intra-cell logical coordinates (`xi/eta/zta_metric_logic_out`) for
+ *    `MetricLogicalToPhysical` are chosen randomly within the `[0,1)` range.
+ * 5. A flag (`can_place_in_volume_out`) indicates if a valid placement could be determined.
+ *
+ * **Important Note on `DMDALocalInfo info` members (same as for surface init):**
+ *   - `info->xs, info->ys, info->ks`: Global starting indices of *owned cells*.
+ *   - `info->mx, info->my, info->mz`: Number of *grid points (nodes)* in each local dimension on this process.
+ *     Therefore, the number of *owned cells* in a dimension is `info->mX - 1` (if `info->mX > 0`).
+ *
+ * @param[in]  user Pointer to `UserCtx`. (Currently not used in this specific helper, but kept for API consistency).
+ * @param[in]  info Pointer to `DMDALocalInfo` for the current rank's grid portion.
+ * @param[in]  xs_gnode, ys_gnode, zs_gnode Local indices (in the ghosted array) of the first *owned node*.
+ * @param[in]  rand_logic_i_ptr Pointer to the RNG for i-dimension tasks [0,1).
+ * @param[in]  rand_logic_j_ptr Pointer to the RNG for j-dimension tasks [0,1).
+ * @param[in]  rand_logic_k_ptr Pointer to the RNG for k-dimension tasks [0,1).
+ * @param[out] ci_metric_lnode_out Pointer to store the local i-node index of the selected cell's origin.
+ * @param[out] cj_metric_lnode_out Pointer to store the local j-node index of the selected cell's origin.
+ * @param[out] ck_metric_lnode_out Pointer to store the local k-node index of the selected cell's origin.
+ * @param[out] xi_metric_logic_out Pointer to store the intra-cell logical xi-coordinate [0,1).
+ * @param[out] eta_metric_logic_out Pointer to store the intra-cell logical eta-coordinate [0,1).
+ * @param[out] zta_metric_logic_out Pointer to store the intra-cell logical zeta-coordinate [0,1).
+ * @param[out] can_place_in_volume_out PETSC_TRUE if placement parameters were successfully determined, PETSC_FALSE otherwise.
+ * @return PetscErrorCode 0 on success, or a PETSc error code.
+ */
+static PetscErrorCode DetermineVolumetricInitializationParameters(
+    UserCtx *user, DMDALocalInfo *info,
+    PetscInt xs_gnode, PetscInt ys_gnode, PetscInt zs_gnode,
+    PetscRandom *rand_logic_i_ptr, PetscRandom *rand_logic_j_ptr, PetscRandom *rand_logic_k_ptr, /* Pointers to RNGs */
+    PetscInt *ci_metric_lnode_out, PetscInt *cj_metric_lnode_out, PetscInt *ck_metric_lnode_out,
+    PetscReal *xi_metric_logic_out, PetscReal *eta_metric_logic_out, PetscReal *zta_metric_logic_out,
+    PetscBool *can_place_in_volume_out)
+{
+    PetscErrorCode ierr = 0;
+    PetscReal      r_val; // Temporary for random numbers from [0,1) RNGs
+    PetscInt       local_owned_cell_idx_i, local_owned_cell_idx_j, local_owned_cell_idx_k;
+    PetscMPIInt    rank_for_logging; // For logging if needed
+
+    PetscFunctionBeginUser;
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank_for_logging); CHKERRQ(ierr);
+
+    *can_place_in_volume_out = PETSC_FALSE; // Default to: cannot place
+
+    // Default intra-cell logicals and cell node indices (e.g. if placement fails)
+    *xi_metric_logic_out = 0.5; *eta_metric_logic_out = 0.5; *zta_metric_logic_out = 0.5;
+    *ci_metric_lnode_out = xs_gnode; *cj_metric_lnode_out = ys_gnode; *ck_metric_lnode_out = zs_gnode;
+
+    // Calculate number of owned cells in each direction from node counts in info
+    // Assumes info->mx, info->my, info->mz are node counts on this process for each dimension.
+    // Number of cells = Number of nodes - 1 (if > 0 nodes).
+    PetscInt num_owned_cells_i = (info->mx > 1) ? info->mx - 1 : 0;
+    PetscInt num_owned_cells_j = (info->my > 1) ? info->my - 1 : 0;
+    PetscInt num_owned_cells_k = (info->mz > 1) ? info->mz - 1 : 0;
+
+    if (num_owned_cells_i > 0 && num_owned_cells_j > 0 && num_owned_cells_k > 0) { // If rank owns any 3D cells
+        *can_place_in_volume_out = PETSC_TRUE;
+
+        // --- 1. Select a Random Owned Cell ---
+        // The selected index will be a 0-based index relative to the start of this rank's owned cells.
+
+        // Select random local owned cell index in I-direction
+        ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, &r_val); CHKERRQ(ierr); // Dereference RNG pointer
+        local_owned_cell_idx_i = (PetscInt)(r_val * num_owned_cells_i);
+        // Clamp to be safe: local_owned_cell_idx_i should be in [0, num_owned_cells_i - 1]
+        local_owned_cell_idx_i = PetscMin(PetscMax(0, local_owned_cell_idx_i), num_owned_cells_i - 1);
+        *ci_metric_lnode_out = xs_gnode + local_owned_cell_idx_i; // Convert to local node index for cell origin
+
+        // Select random local owned cell index in J-direction
+        ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, &r_val); CHKERRQ(ierr); // Dereference RNG pointer
+        local_owned_cell_idx_j = (PetscInt)(r_val * num_owned_cells_j);
+        local_owned_cell_idx_j = PetscMin(PetscMax(0, local_owned_cell_idx_j), num_owned_cells_j - 1);
+        *cj_metric_lnode_out = ys_gnode + local_owned_cell_idx_j;
+
+        // Select random local owned cell index in K-direction
+        ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, &r_val); CHKERRQ(ierr); // Dereference RNG pointer
+        local_owned_cell_idx_k = (PetscInt)(r_val * num_owned_cells_k);
+        local_owned_cell_idx_k = PetscMin(PetscMax(0, local_owned_cell_idx_k), num_owned_cells_k - 1);
+        *ck_metric_lnode_out = zs_gnode + local_owned_cell_idx_k;
+
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "DVP - Rank %d: Selected Cell (Owned Idx: %d,%d,%d -> LNodeStart: %d,%d,%d). OwnedCells(i,j,k): (%d,%d,%d). GhostNodeStarts(xs,ys,zs): (%d,%d,%d)",
+                  rank_for_logging, local_owned_cell_idx_i, local_owned_cell_idx_j, local_owned_cell_idx_k,
+                  *ci_metric_lnode_out, *cj_metric_lnode_out, *ck_metric_lnode_out,
+                  num_owned_cells_i, num_owned_cells_j, num_owned_cells_k,
+                  xs_gnode, ys_gnode, zs_gnode);
+
+
+        // --- 2. Generate Random Intra-Cell Logical Coordinates [0,1) for MetricLogicalToPhysical ---
+        ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, xi_metric_logic_out);  CHKERRQ(ierr); // Re-use RNGs
+        ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, eta_metric_logic_out); CHKERRQ(ierr);
+        ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, zta_metric_logic_out); CHKERRQ(ierr);
+
+        // Ensure logical coordinates are strictly within [0,1) for robustness with MetricLogicalToPhysical
+        *xi_metric_logic_out  = PetscMin(*xi_metric_logic_out,  1.0 - 1.0e-7);
+        *eta_metric_logic_out = PetscMin(*eta_metric_logic_out, 1.0 - 1.0e-7);
+        *zta_metric_logic_out = PetscMin(*zta_metric_logic_out, 1.0 - 1.0e-7);
+        // Ensure they are not negative either (though [0,1) RNGs shouldn't produce this)
+        *xi_metric_logic_out  = PetscMax(*xi_metric_logic_out,  0.0);
+        *eta_metric_logic_out = PetscMax(*eta_metric_logic_out, 0.0);
+        *zta_metric_logic_out = PetscMax(*zta_metric_logic_out, 0.0);
+
+    } else {
+        // This rank does not own any 3D cells (e.g., in a 1D or 2D decomposition,
+        // or if the global domain itself is not 3D in terms of cells).
+        // *can_place_in_volume_out remains PETSC_FALSE.
+        LOG_ALLOW(LOCAL, LOG_WARNING, "DVP - Rank %d: Cannot place particle volumetrically. Rank has zero owned cells in at least one dimension (owned cells i,j,k: %d,%d,%d).\n",
+                  rank_for_logging, num_owned_cells_i, num_owned_cells_j, num_owned_cells_k);
+    }
+    PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Initializes basic particle properties: physical position, particle ID, and cell ID placeholder.
+ *
+ * This function orchestrates the initialization of particles based on `user->ParticleInitialization`.
+ * It retrieves necessary grid and swarm information, then loops through particles, calling
+ * helper subroutines to determine cell selection and intra-cell logical coordinates.
+ * It then performs the logical-to-physical transformation and sets standard particle fields.
+ *
+ * @param[in,out] user               Pointer to the `UserCtx` structure.
+ * @param[in]     particlesPerProcess Number of particles to initialize on this MPI process.
+ * @param[in]     rand_logic_i       RNG for i-dimension tasks, range `[0.0, 1.0)`.
+ * @param[in]     rand_logic_j       RNG for j-dimension tasks, range `[0.0, 1.0)`.
+ * @param[in]     rand_logic_k       RNG for k-dimension tasks, range `[0.0, 1.0)`.
+ * @param[in]     bboxlist           (Currently unused).
+ * @return PetscErrorCode Returns `0` on success, or a PETSc error code on failure.
+ */
+static PetscErrorCode InitializeParticleBasicProperties(UserCtx *user,
+                                                   PetscInt particlesPerProcess,
+                                                   PetscRandom *rand_logic_i,
+                                                   PetscRandom *rand_logic_j,
+                                                   PetscRandom *rand_logic_k,
+                                                   BoundingBox *bboxlist)
+{
+    PetscErrorCode ierr;
+    DM             swarm;
+    PetscReal      *positions_field = NULL, *pos_phy_field = NULL;
+    PetscInt64     *particleIDs = NULL, *cellIDs_petsc = NULL;
+    PetscMPIInt    rank;
+    const Cmpnts   ***coor_nodes_local_array;
+    Vec            Coor_local;
+    DMDALocalInfo  info;
+    PetscInt       xs_gnode, ys_gnode, zs_gnode;
+    PetscInt       xm_onode, ym_onode, zm_onode; // Unused in this main func but fetched
+    PetscInt       IM_gcells, JM_gcells, KM_gcells;
+
+    PetscFunctionBeginUser;
+
+    // --- 1. Input Validation and Basic Setup ---
+    if (!user || !rand_logic_i || !rand_logic_j || !rand_logic_k) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "InitializeParticleBasicProperties - Null user or RNG pointer.");
+    }
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    swarm = user->swarm;
+
+    ierr = DMGetCoordinatesLocal(user->da, &Coor_local); CHKERRQ(ierr);
+    if (!Coor_local) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_PLIB, "DMGetCoordinatesLocal for user->da returned NULL.");
+    ierr = DMDAVecGetArrayRead(user->fda, Coor_local, (void*)&coor_nodes_local_array); CHKERRQ(ierr);
+
+    LOG_ALLOW(LOCAL, LOG_INFO, "InitializeParticleBasicProperties - Rank %d: Initializing %d particles. Mode: %d. Identified Inlet (if Mode 0): %d\n",
+              rank, particlesPerProcess, user->ParticleInitialization, (user->ParticleInitialization == 0) ? user->identifiedInletBCFace : -1);
+
+    ierr = DMSwarmGetField(swarm, "position",       NULL, NULL, (void**)&positions_field); CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "pos_phy",        NULL, NULL, (void**)&pos_phy_field);   CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "DMSwarm_pid",    NULL, NULL, (void**)&particleIDs);    CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs_petsc);  CHKERRQ(ierr);
+
+    // --- 2. Get Grid Information (once for all particles on this rank) ---
+    ierr = DMDAGetLocalInfo(user->da, &info); CHKERRQ(ierr);
+    ierr = DMDAGetGhostCorners(user->da, &xs_gnode, &ys_gnode, &zs_gnode, &xm_onode, &ym_onode, &zm_onode); CHKERRQ(ierr);
+    ierr = DMDAGetInfo(user->da, NULL, &IM_gcells, &JM_gcells, &KM_gcells, NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL); CHKERRQ(ierr);
+
+    // --- 3. Loop Over Particles ---
+    for (PetscInt p = 0; p < particlesPerProcess; p++) {
+        PetscInt  ci_metric_lnode = 0, cj_metric_lnode = 0, ck_metric_lnode = 0; // Cell origin local node index
+        PetscReal xi_metric_logic = 0.5, eta_metric_logic = 0.5, zta_metric_logic = 0.5; // Intra-cell logical [0,1]
+        Cmpnts    phys_coords = {0.0, 0.0, 0.0}; // Default physical coordinates
+        PetscBool can_place_particle = PETSC_FALSE;    // Flag: can this particle be properly placed by this rank
+
+        // --- 3.a. Determine Cell and Intra-Cell Logical Coordinates ---
+        if (user->ParticleInitialization == 0) {
+            ierr = DetermineSurfaceInitializationParameters(user, &info, xs_gnode, ys_gnode, zs_gnode,
+                                                            IM_gcells, JM_gcells, KM_gcells,
+                                                            rand_logic_i, rand_logic_j, rand_logic_k,
+                                                            &ci_metric_lnode, &cj_metric_lnode, &ck_metric_lnode,
+                                                            &xi_metric_logic, &eta_metric_logic, &zta_metric_logic,
+                                                            &can_place_particle); CHKERRQ(ierr);
+        } else { // user->ParticleInitialization == 1
+            ierr = DetermineVolumetricInitializationParameters(user, &info, xs_gnode, ys_gnode, zs_gnode,
+                                                               rand_logic_i, rand_logic_j, rand_logic_k,
+                                                               &ci_metric_lnode, &cj_metric_lnode, &ck_metric_lnode,
+                                                               &xi_metric_logic, &eta_metric_logic, &zta_metric_logic,
+                                                               &can_place_particle); CHKERRQ(ierr);
+        }
+
+        // --- 3.b. Perform Logical to Physical Transformation if placement is possible ---
+        if (can_place_particle) {
+            ierr = MetricLogicalToPhysical(user, coor_nodes_local_array,
+                                           ci_metric_lnode, cj_metric_lnode, ck_metric_lnode,
+                                           xi_metric_logic, eta_metric_logic, zta_metric_logic,
+                                           &phys_coords); CHKERRQ(ierr);
+        } else {
+            // phys_coords remains (0,0,0) or whatever default you prefer for unplaced particles
+            LOG_LOOP_ALLOW(LOCAL, LOG_WARNING, p, 1,
+                "InitProps - Rank %d: Particle %d - Placement parameters not determined (e.g., not on inlet face, or no owned cells). Phys default: (%.2f,%.2f,%.2f).\n",
+                rank, p, phys_coords.x, phys_coords.y, phys_coords.z);
+        }
+
+        // --- 3.c. Store Common Particle Properties ---
+        positions_field[3*p+0] = phys_coords.x; positions_field[3*p+1] = phys_coords.y; positions_field[3*p+2] = phys_coords.z;
+        pos_phy_field[3*p+0]   = phys_coords.x; pos_phy_field[3*p+1]   = phys_coords.y; pos_phy_field[3*p+2]   = phys_coords.z;
+        particleIDs[p]         = (PetscInt64)rank * particlesPerProcess + p;
+        cellIDs_petsc[3*p+0]   = -1; cellIDs_petsc[3*p+1] = -1; cellIDs_petsc[3*p+2] = -1;
+
+        // --- 3.d. Logging for this particle ---
+        if (can_place_particle) {
+            LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, p, (particlesPerProcess > 20 ? particlesPerProcess/10 : 1),
+                "InitProps - Rank %d: PID %lld (idx %d) PLACED. Mode %d. Cell(LNodeStart):(%d,%d,%d). Logic(Metric): (%.2e,%.2f,%.2f). Phys: (%.6f,%.6f,%.6f).\n",
+                rank, (long long)particleIDs[p], p, user->ParticleInitialization, ci_metric_lnode, cj_metric_lnode, ck_metric_lnode,
+                xi_metric_logic, eta_metric_logic, zta_metric_logic, phys_coords.x, phys_coords.y, phys_coords.z);
+        } // Warning for unplaced particles already logged in step 3.b
+    } // --- End of per-particle loop ---
+
+    // --- 4. Restore Pointers ---
+    ierr = DMSwarmRestoreField(swarm, "position",       NULL, NULL, (void**)&positions_field); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "pos_phy",        NULL, NULL, (void**)&pos_phy_field);   CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid",    NULL, NULL, (void**)&particleIDs);    CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs_petsc);  CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArrayRead(user->fda, Coor_local, (void*)&coor_nodes_local_array); CHKERRQ(ierr);
+
+    LOG_ALLOW(LOCAL, LOG_INFO, "InitializeParticleBasicProperties - Rank %d: Completed processing for %d particles.\n",
+              rank, particlesPerProcess);
+    PetscFunctionReturn(0);
+}
 
 /**
  * @brief Helper function to update a given particle’s field value.
@@ -363,71 +774,98 @@ static PetscErrorCode AssignInitialFieldToSwarm(UserCtx *user, const char *field
 }
 
 /**
- * @brief Initializes all particle properties in the swarm, using a field-agnostic pipeline.
+ * @brief Initializes all particle properties in the swarm.
  *
- * This function first initializes the basic particle properties (position, particle ID, cell ID)
- * by calling InitializeParticleBasicProperties. Then it calls the field-agnostic
- * initializer for additional fields such as "velocity", "weight", and "temperature".
+ * This function orchestrates the initialization of particle properties.
+ * It first determines the inlet face if surface initialization (Mode 0) is selected
+ * by parsing "bcs.dat".
+ * Then, it initializes basic particle properties (physical position, Particle ID,
+ * and placeholder Cell IDs) by calling `InitializeParticleBasicProperties`. This call
+ * uses the provided `rand_logic_i/j/k` RNGs, which must be pre-initialized for [0,1).
+ * The `rand_phys_x/y/z` RNGs (physically bounded) are passed but may not be used by
+ * `InitializeParticleBasicProperties` for position setting if all initialization paths
+ * use logical-to-physical mapping.
+ * Finally, it calls helper functions to initialize other registered swarm fields
+ * like "velocity", "weight", and "P" (pressure) to default values.
  *
- * @param[in,out] user               Pointer to the UserCtx structure containing simulation context.
+ * @param[in,out] user               Pointer to the `UserCtx` structure.
  * @param[in]     particlesPerProcess Number of particles assigned to this MPI process.
- * @param[in]     randx              Random number generator for the x-coordinate (if ParticleInitialization==1).
- * @param[in]     randy              Random number generator for the y-coordinate.
- * @param[in]     randz              Random number generator for the z-coordinate.
- * @param[in]     bboxlist           Array of BoundingBox structures, one per MPI rank.
+ * @param[in]     rand_phys_x        RNG for physical x-coordinates (from `InitializeRandomGenerators`).
+ * @param[in]     rand_phys_y        RNG for physical y-coordinates (from `InitializeRandomGenerators`).
+ * @param[in]     rand_phys_z        RNG for physical z-coordinates (from `InitializeRandomGenerators`).
+ * @param[in]     rand_logic_i       RNG for i-logical dimension tasks [0,1) (from `InitializeLogicalSpaceRNGs`).
+ * @param[in]     rand_logic_j       RNG for j-logical dimension tasks [0,1) (from `InitializeLogicalSpaceRNGs`).
+ * @param[in]     rand_logic_k       RNG for k-logical dimension tasks [0,1) (from `InitializeLogicalSpaceRNGs`).
+ * @param[in]     bboxlist           Array of BoundingBox structures (potentially unused by IPBP).
  *
  * @return PetscErrorCode            Returns 0 on success, non-zero on failure.
  */
 PetscErrorCode AssignInitialPropertiesToSwarm(UserCtx* user,
                                               PetscInt particlesPerProcess,
-                                              PetscRandom *randx, PetscRandom *randy, PetscRandom *randz,
+                                              PetscRandom *rand_phys_x, // RNG from original InitializeRandomGenerators
+                                              PetscRandom *rand_phys_y, // RNG from original InitializeRandomGenerators
+                                              PetscRandom *rand_phys_z, // RNG from original InitializeRandomGenerators
+                                              PetscRandom *rand_logic_i, // RNG from InitializeLogicalSpaceRNGs
+                                              PetscRandom *rand_logic_j, // RNG from InitializeLogicalSpaceRNGs
+                                              PetscRandom *rand_logic_k, // RNG from InitializeLogicalSpaceRNGs
                                               BoundingBox *bboxlist)
 {
     PetscErrorCode ierr;
     PetscFunctionBeginUser;
 
-    // Validate input pointers
-    if (!user || !randx || !randy || !randz || !bboxlist) {
-        LOG_ALLOW(GLOBAL, LOG_ERROR, "AssignInitialPropertiesToSwarm - One or more input pointers are NULL.\n");
+    // --- 0. Input Validation ---
+    if (!user || !bboxlist || !rand_logic_i || !rand_logic_j || !rand_logic_k || !rand_phys_x || !rand_phys_y || !rand_phys_z) {
+        // Check all RNGs now as they are passed in
+        LOG_ALLOW(GLOBAL, LOG_ERROR, "AssignInitialPropertiesToSwarm - Null user, bboxlist, or RNG pointer.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "AssignInitialPropertiesToSwarm - Null input detected.");
     }
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "AssignInitialPropertiesToSwarm - Initializing swarm with %d particles per process.\n",
-              particlesPerProcess);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "AssignInitialPropertiesToSwarm - Initializing swarm with %d particles per process. Mode: %d.\n",
+              particlesPerProcess, user->ParticleInitialization);
 
-    /*--- Step 1: Initialize basic particle properties (position, PID, cell IDs) ---*/
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "AssignInitialPropertiesToSwarm - Initializing basic particle properties.\n");
-    ierr = InitializeParticleBasicProperties(user, particlesPerProcess, randx, randy, randz, bboxlist);
+    // --- 1. Parse BCS File for Inlet Information (if Mode 0) ---
+    if (user->ParticleInitialization == 0) {
+      if(user->inletFaceDefined == PETSC_FALSE){
+	LOG_ALLOW(GLOBAL, LOG_ERROR, "AssignInitialPropertiesToSwarm - ParticleInitialization Mode 0 (Surface Init) selected, but no INLET face was identified from bcs.dat. Cannot proceed.\n");
+        SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_ARG_WRONGSTATE, "ParticleInitialization Mode 0 requires an INLET face to be defined in bcs.dat.");
+      }else{
+	LOG_ALLOW(GLOBAL, LOG_INFO, "AssignInitialPropertiesToSwarm - After ParseBCSFileForInlet, identifiedInletBCFace = %d\n", user->identifiedInletBCFace);
+      }
+    }
+
+    // --- 2. Initialize Basic Particle Properties (Position, PID, Cell IDs placeholder) ---
+    // The rand_logic_i/j/k are now passed directly.
+    // The rand_phys_x/y/z are passed but InitializeParticleBasicProperties (refactored version)
+    // will not use them for setting positions if all its paths use logical-to-physical mapping.
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "AssignInitialPropertiesToSwarm - Calling InitializeParticleBasicProperties.\n");
+    ierr = InitializeParticleBasicProperties(user, particlesPerProcess,
+                                             rand_logic_i, rand_logic_j, rand_logic_k,
+                                             bboxlist); // bboxlist passed along
     CHKERRQ(ierr);
     LOG_ALLOW(LOCAL, LOG_INFO, "AssignInitialPropertiesToSwarm - Successfully initialized basic particle properties.\n");
 
-    /*--- Step 2: Initialize fields using the generic pipeline ---*/
-    /* Initialize velocity (3 components) */
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "AssignInitialPropertiesToSwarm - Initializing velocity field.\n");
-    ierr = AssignInitialFieldToSwarm(user, "velocity", 3);
-    CHKERRQ(ierr);
-    LOG_ALLOW(LOCAL, LOG_INFO, "AssignInitialPropertiesToSwarm - Velocity field initialization complete.\n");
+    // Note: The logical RNGs (rand_logic_i/j/k) are NOT destroyed here.
+    // They were created externally (e.g., by InitializeLogicalSpaceRNGs) and
+    // should be destroyed externally (e.g., in FinalizeSwarmSetup).
+    // Same for rand_phys_x/y/z.
 
-    /* Initialize interpolation weights (3 components) */
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "AssignInitialPropertiesToSwarm - Initializing weight field.\n");
-    ierr = AssignInitialFieldToSwarm(user, "weight", 3);
-    CHKERRQ(ierr);
-    LOG_ALLOW(LOCAL, LOG_INFO, "AssignInitialPropertiesToSwarm - Weight field initialization complete.\n");
+    // --- 3. Initialize Other Swarm Fields (Velocity, Weight, Pressure, etc.) ---
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "AssignInitialPropertiesToSwarm - Initializing 'velocity' field.\n");
+    ierr = AssignInitialFieldToSwarm(user, "velocity", 3); CHKERRQ(ierr);
+    LOG_ALLOW(LOCAL, LOG_INFO, "AssignInitialPropertiesToSwarm - 'velocity' field initialization complete.\n");
 
-    /* Initialize interpolation Pressure (1 component) */
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "AssignInitialPropertiesToSwarm - Initializing Pressure field.\n");
-    ierr = AssignInitialFieldToSwarm(user, "P", 1);
-    CHKERRQ(ierr);
-    LOG_ALLOW(LOCAL, LOG_INFO, "AssignInitialPropertiesToSwarm - Pressure field initialization complete.\n");
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "AssignInitialPropertiesToSwarm - Initializing 'weight' field.\n");
+    ierr = AssignInitialFieldToSwarm(user, "weight", 3); CHKERRQ(ierr); // Assuming weight is vec3
+    LOG_ALLOW(LOCAL, LOG_INFO, "AssignInitialPropertiesToSwarm - 'weight' field initialization complete.\n");
+
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "AssignInitialPropertiesToSwarm - Initializing 'P' (Pressure) field.\n");
+    ierr = AssignInitialFieldToSwarm(user, "P", 1); CHKERRQ(ierr);
+    LOG_ALLOW(LOCAL, LOG_INFO, "AssignInitialPropertiesToSwarm - 'P' field initialization complete.\n");
     
-    // Future extensions can be added here (ensure corresponding fields are registered)
-
-    LOG_ALLOW(GLOBAL, LOG_INFO, "AssignInitialPropertiesToSwarm - Successfully completed swarm initialization.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "AssignInitialPropertiesToSwarm - Successfully completed all swarm property initialization.\n");
 
     PetscFunctionReturn(0);
 }
-
-
 
 /**
  * @brief Distributes particles evenly across MPI processes, handling any remainders.
@@ -468,10 +906,13 @@ PetscErrorCode DistributeParticles(PetscInt numParticles, PetscMPIInt rank, Pets
  * @param[in]     randx             Random number generator for the x-coordinate.
  * @param[in]     randy             Random number generator for the y-coordinate.
  * @param[in]     randz             Random number generator for the z-coordinate.
+ * @param[in]     rand_logic_i      Random number generator for the xi-coordinate.
+ * @param[in]     rand_logic_j      Random number generator for the eta-coordinate.
+ * @param[in]     rand_logic_k      Random number generator for the zeta-coordinate.
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode FinalizeSwarmSetup(PetscRandom *randx, PetscRandom *randy, PetscRandom *randz) {
+PetscErrorCode FinalizeSwarmSetup(PetscRandom *randx, PetscRandom *randy, PetscRandom *randz, PetscRandom *rand_logic_i, PetscRandom *rand_logic_j, PetscRandom *rand_logic_k) {
     PetscErrorCode ierr;  // Error code for PETSc functions
     PetscInt  ParticleInitialization; 
 
@@ -480,9 +921,16 @@ PetscErrorCode FinalizeSwarmSetup(PetscRandom *randx, PetscRandom *randy, PetscR
     if(ParticleInitialization==1){
 
       // Destroy random number generators to free resources
+      // Physical space
       ierr = PetscRandomDestroy(randx); CHKERRQ(ierr);
       ierr = PetscRandomDestroy(randy); CHKERRQ(ierr);
       ierr = PetscRandomDestroy(randz); CHKERRQ(ierr);
+
+      // Logical space
+      ierr = PetscRandomDestroy(rand_logic_i); CHKERRQ(ierr);
+      ierr = PetscRandomDestroy(rand_logic_j); CHKERRQ(ierr);
+      ierr = PetscRandomDestroy(rand_logic_k); CHKERRQ(ierr);      
+      
       LOG_ALLOW(LOCAL,LOG_DEBUG,"FinalizeSwarmSetup - Destroyed all random number generators.\n");
     }else if(ParticleInitialization==0){
       LOG_ALLOW(LOCAL,LOG_DEBUG,"FinalizeSwarmSetup - Not a Random Initialization of Particles.\n");
@@ -923,7 +1371,8 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
  PetscErrorCode InitializeParticleSwarm(UserCtx *user, PetscInt np, BoundingBox *bboxlist) {
     PetscErrorCode ierr;
     PetscInt particlesPerProcess = 0;         // Number of particles assigned to the local MPI process.
-    PetscRandom randx,randy,randz;     // Random number generators[x,y,z]. (used if ParticleInitialization==1).       
+    PetscRandom randx,randy,randz;     // Random number generators[x,y,z]. (used if ParticleInitialization==1).
+    PetscRandom rand_logic_i, rand_logic_j,rand_logic_k; // RNGs for Logical space. 
     LOG_ALLOW(GLOBAL, LOG_INFO, "Starting particle swarm Initialization with %d particles.\n", np);
 
     // Step 1: Create and initialize the particle swarm
@@ -933,12 +1382,18 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
     ierr = CreateParticleSwarm(user, np, &particlesPerProcess,bboxlist); CHKERRQ(ierr);
     LOG_ALLOW(GLOBAL, LOG_INFO, "Particle swarm created successfully.\n");
 
+    // Create the RNGs
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "Initializing physical space RNGs.\n");
+    ierr = InitializeRandomGenerators(user, &randx, &randy, &randz); CHKERRQ(ierr);
+    
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "Initializing logical space RNGs [0,1).\n");
+    ierr = InitializeLogicalSpaceRNGs(&rand_logic_i, &rand_logic_j, &rand_logic_k); CHKERRQ(ierr);
     // Assign initial properties to particles
     // The bboxlist array is passed here so that if ParticleInitialization == 0,
     // particles can be placed at the midpoint of the local bounding box corresponding to this rank.
-    ierr = AssignInitialPropertiesToSwarm(user, particlesPerProcess, &randx, &randy, &randz, bboxlist); CHKERRQ(ierr);
+    ierr = AssignInitialPropertiesToSwarm(user, particlesPerProcess, &randx, &randy, &randz, &rand_logic_i,&rand_logic_j,&rand_logic_k,bboxlist); CHKERRQ(ierr);
     // Finalize swarm setup by destroying RNGs if ParticleInitialization == 1
-    ierr = FinalizeSwarmSetup(&randx, &randy, &randz); CHKERRQ(ierr);
+    ierr = FinalizeSwarmSetup(&randx, &randy, &randz, &rand_logic_i, &rand_logic_j, &rand_logic_k); CHKERRQ(ierr);
 
     // Ensure all ranks complete before proceeding
     LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, " Particles generated & initialized.\n");

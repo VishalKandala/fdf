@@ -507,7 +507,7 @@ PetscErrorCode WriteParticleVTK(UserCtx *user, PetscInt timeIndex, const char *o
     // 1) Velocity field (assumes particles have a "Velocity" field)
     ierr = GatherAndWriteField(user, "velocity", NULL, timeIndex, outExt, prefix,PETSC_COMM_WORLD);CHKERRQ(ierr); // logical positions
 
-    ierr = GatherAndWriteField(user,"velocity","pos_phy",timeIndex,outExt,prefix,PETSC_COMM_WORLD);CHKERRQ(ierr); // physical positions.
+    // ierr = GatherAndWriteField(user,"velocity","pos_phy",timeIndex,outExt,prefix,PETSC_COMM_WORLD);CHKERRQ(ierr); // physical positions.
 
     // 2) Additional fields, e.g., Temperature (optional, add more as needed)
     //   ierr = GatherAndWriteSwarmField(user, "Temperature",

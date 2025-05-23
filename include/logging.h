@@ -579,4 +579,19 @@ PetscErrorCode LoadAllowedFunctionsFromFile(const char   filename[],
                                             char      ***funcsOut,
                                             PetscInt   *nOut);
 
+
+/**
+ * @brief Helper function to convert BCFace enum to a string representation.
+ * @param[in] face The BCFace enum value.
+ * @return Pointer to a constant string representing the face.
+ */
+const char* BCFaceToString(BCFace face);
+
+/**
+ * @brief Helper function to convert BCType enum to a string representation.
+ * @param[in] type The BCType enum value.
+ * @return Pointer to a constant string representing the BC type.
+ */
+const char* BCTypeToString(BCType type);
+
 #endif // LOGGING_H

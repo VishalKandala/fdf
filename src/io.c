@@ -1729,63 +1729,255 @@ PetscErrorCode ReadFieldDataToRank0(PetscInt timeIndex,
   PetscFunctionReturn(0);
 }
 
-#include <petscsys.h>
-#include <petscoptions.h>
-
 /**
  * @brief Displays a structured banner summarizing the simulation configuration.
  *
- * This function prints key simulation parameters, including grid dimensions,
- * domain bounds, start time, timestep, total steps, processor count, particle count,
- * and initialization modes. Domain bounds are read from command-line options
- * (-xMin, -xMax, etc.). The banner is designed for clear, professional console output.
+ * This function prints key simulation parameters to standard output.
+ * It is intended to be called ONLY by MPI rank 0.
+ * It retrieves global domain bounds from `user->global_domain_bbox` and boundary
+ * conditions for all faces from `user->face_bc_types`.
  *
- * @param[in] user         Pointer to UserCtx structure containing simulation details.
+ * @param[in] user         Pointer to `UserCtx` structure.
  * @param[in] StartTime    Initial simulation time.
  * @param[in] StartStep    Starting timestep index.
  * @param[in] StepsToRun   Total number of timesteps to run.
- * @param[in] size         Number of MPI processes.
- * @param[in] np           Number of particles.
+ * @param[in] num_mpi_procs Total number of MPI processes.
+ * @param[in] total_num_particles Total number of particles.
+ * @param[in] bboxlist     (If rank 0 needed to compute global_domain_bbox here, otherwise NULL)
  *
- * @return PetscErrorCode  Returns 0 on success or an appropriate error code.
+ * @return PetscErrorCode  Returns `0` on success.
  */
-PetscErrorCode DisplayBanner(UserCtx *user, PetscReal StartTime, PetscInt StartStep, PetscInt StepsToRun, PetscMPIInt size, PetscInt np) {
+PetscErrorCode DisplayBanner(UserCtx *user,
+                             PetscReal StartTime,
+                             PetscInt StartStep,
+                             PetscInt StepsToRun,
+                             PetscMPIInt num_mpi_procs,
+                             PetscInt total_num_particles,
+                             BoundingBox *bboxlist_on_rank0) // bboxlist is only valid on rank 0
+{
     PetscErrorCode ierr;
-    PetscReal xMin, xMax, yMin, yMax, zMin, zMax;
+    PetscMPIInt    rank;
+    Cmpnts         global_min_coords, global_max_coords;
 
     PetscFunctionBeginUser;
 
-    // Retrieve domain bounds from command-line options
-    ierr = PetscOptionsGetReal(NULL, NULL, "-xMin", &xMin, NULL); CHKERRQ(ierr);
-    ierr = PetscOptionsGetReal(NULL, NULL, "-xMax", &xMax, NULL); CHKERRQ(ierr);
-    ierr = PetscOptionsGetReal(NULL, NULL, "-yMin", &yMin, NULL); CHKERRQ(ierr);
-    ierr = PetscOptionsGetReal(NULL, NULL, "-yMax", &yMax, NULL); CHKERRQ(ierr);
-    ierr = PetscOptionsGetReal(NULL, NULL, "-zMin", &zMin, NULL); CHKERRQ(ierr);
-    ierr = PetscOptionsGetReal(NULL, NULL, "-zMax", &zMax, NULL); CHKERRQ(ierr);
+    if (!user) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "DisplayBanner - UserCtx pointer is NULL.");
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
 
-    // Print professional banner
-    PetscPrintf(PETSC_COMM_WORLD, "\n");
-    PetscPrintf(PETSC_COMM_WORLD, "=============================================================\n");
-    PetscPrintf(PETSC_COMM_WORLD, "                          CASE SUMMARY                       \n");
-    PetscPrintf(PETSC_COMM_WORLD, "=============================================================\n");
-    PetscPrintf(PETSC_COMM_WORLD, " Grid Dimensions             : %d X %d X %d\n", user->IM, user->JM, user->KM);
-    PetscPrintf(PETSC_COMM_WORLD, " Domain Bounds (X)           : %.2f to %.2f\n", xMin, xMax);
-    PetscPrintf(PETSC_COMM_WORLD, " Domain Bounds (Y)           : %.2f to %.2f\n", yMin, yMax);
-    PetscPrintf(PETSC_COMM_WORLD, " Domain Bounds (Z)           : %.2f to %.2f\n", zMin, zMax);
-    PetscPrintf(PETSC_COMM_WORLD, " Start Time                  : %.4f\n", StartTime);
-    PetscPrintf(PETSC_COMM_WORLD, " Timestep Size               : %.4f\n", user->dt);
-    PetscPrintf(PETSC_COMM_WORLD, " Starting Step               : %d\n", StartStep);
-    PetscPrintf(PETSC_COMM_WORLD, " Total Steps to Run          : %d\n", StepsToRun);
-    PetscPrintf(PETSC_COMM_WORLD, " Number of MPI Processes     : %d\n", size);
-    PetscPrintf(PETSC_COMM_WORLD, " Number of Particles         : %d\n", np);
-    PetscPrintf(PETSC_COMM_WORLD, " Particle Initialization Mode: %d\n", user->ParticleInitialization);
-    PetscPrintf(PETSC_COMM_WORLD, " Field Initialization Mode   : %d\n", user->FieldInitialization);
-    if (user->FieldInitialization == 0) {
-        PetscPrintf(PETSC_COMM_WORLD, " Constant Velocity           : %.4f\n", user->ConstantVelocity);
+    if (rank == 0) {
+        // If global_domain_bbox is not pre-populated in UserCtx, compute it here from bboxlist_on_rank0
+        // This assumes bboxlist_on_rank0 is valid and contains all local bounding boxes on rank 0.
+        if (bboxlist_on_rank0 && num_mpi_procs > 0) {
+            global_min_coords = bboxlist_on_rank0[0].min_coords;
+            global_max_coords = bboxlist_on_rank0[0].max_coords;
+            for (PetscMPIInt p = 1; p < num_mpi_procs; ++p) {
+                global_min_coords.x = PetscMin(global_min_coords.x, bboxlist_on_rank0[p].min_coords.x);
+                global_min_coords.y = PetscMin(global_min_coords.y, bboxlist_on_rank0[p].min_coords.y);
+                global_min_coords.z = PetscMin(global_min_coords.z, bboxlist_on_rank0[p].min_coords.z);
+                global_max_coords.x = PetscMax(global_max_coords.x, bboxlist_on_rank0[p].max_coords.x);
+                global_max_coords.y = PetscMax(global_max_coords.y, bboxlist_on_rank0[p].max_coords.y);
+                global_max_coords.z = PetscMax(global_max_coords.z, bboxlist_on_rank0[p].max_coords.z);
+            }
+            // Optionally store this in user->global_domain_bbox if it's useful elsewhere
+            // user->global_domain_bbox.min_coords = global_min_coords;
+            // user->global_domain_bbox.max_coords = global_max_coords;
+        } else {
+            // Fallback or warning if bboxlist is not available for global calculation
+            LOG_ALLOW(PETSC_COMM_SELF, LOG_WARNING, "DisplayBanner (Rank 0) - bboxlist not provided or num_mpi_procs <=0; using user->bbox for domain bounds.\n");
+            global_min_coords = user->bbox.min_coords; // Use local bbox of rank 0 as fallback
+            global_max_coords = user->bbox.max_coords;
+        }
+
+
+        ierr = PetscPrintf(PETSC_COMM_SELF, "\n"); CHKERRQ(ierr);
+        ierr = PetscPrintf(PETSC_COMM_SELF, "=============================================================\n"); CHKERRQ(ierr);
+        ierr = PetscPrintf(PETSC_COMM_SELF, "                          CASE SUMMARY                       \n"); CHKERRQ(ierr);
+        ierr = PetscPrintf(PETSC_COMM_SELF, "=============================================================\n"); CHKERRQ(ierr);
+        ierr = PetscPrintf(PETSC_COMM_SELF, " Grid Dimensions (Cells)     : %d X %d X %d\n", user->IM, user->JM, user->KM); CHKERRQ(ierr);
+        ierr = PetscPrintf(PETSC_COMM_SELF, " Global Domain Bounds (X)    : %.6f to %.6f\n", (double)global_min_coords.x, (double)global_max_coords.x); CHKERRQ(ierr);
+        ierr = PetscPrintf(PETSC_COMM_SELF, " Global Domain Bounds (Y)    : %.6f to %.6f\n", (double)global_min_coords.y, (double)global_max_coords.y); CHKERRQ(ierr);
+        ierr = PetscPrintf(PETSC_COMM_SELF, " Global Domain Bounds (Z)    : %.6f to %.6f\n", (double)global_min_coords.z, (double)global_max_coords.z); CHKERRQ(ierr);
+        ierr = PetscPrintf(PETSC_COMM_SELF, "-------------------- Boundary Conditions --------------------\n"); CHKERRQ(ierr);
+	const int face_name_width = 17; // Adjusted for longer names (Zeta,Eta,Xi)
+        for (PetscInt i_face = 0; i_face < 6; ++i_face) {
+	  BCFace current_face = (BCFace)i_face;
+	  // The BCFaceToString will now return the Xi, Eta, Zeta versions
+	  const char* face_str = BCFaceToString(current_face); 
+	  const char* bc_type_str = BCTypeToString(user->face_bc_types[current_face]);
+            
+	  ierr = PetscPrintf(PETSC_COMM_SELF, " Face %-*s : %s\n", 
+			     face_name_width, face_str, bc_type_str); CHKERRQ(ierr);
+        }
+        ierr = PetscPrintf(PETSC_COMM_SELF, "-------------------------------------------------------------\n"); CHKERRQ(ierr);
+        ierr = PetscPrintf(PETSC_COMM_SELF, " Start Time                  : %.4f\n", (double)StartTime); CHKERRQ(ierr);
+        ierr = PetscPrintf(PETSC_COMM_SELF, " Timestep Size               : %.4f\n", (double)user->dt); CHKERRQ(ierr);
+        ierr = PetscPrintf(PETSC_COMM_SELF, " Starting Step               : %d\n", StartStep); CHKERRQ(ierr);
+        ierr = PetscPrintf(PETSC_COMM_SELF, " Total Steps to Run          : %d\n", StepsToRun); CHKERRQ(ierr);
+        ierr = PetscPrintf(PETSC_COMM_SELF, " Number of MPI Processes     : %d\n", num_mpi_procs); CHKERRQ(ierr);
+        ierr = PetscPrintf(PETSC_COMM_WORLD," Number of Particles         : %d\n", total_num_particles); CHKERRQ(ierr);
+        ierr = PetscPrintf(PETSC_COMM_SELF, " Particle Initialization Mode: %d\n", user->ParticleInitialization); CHKERRQ(ierr);
+        if (user->ParticleInitialization == 0) {
+            if (user->inletFaceDefined) {
+                ierr = PetscPrintf(PETSC_COMM_SELF, " Particles Initialized At    : %s (Enum Val: %d)\n", BCFaceToString(user->identifiedInletBCFace), user->identifiedInletBCFace); CHKERRQ(ierr);
+            } else {
+                ierr = PetscPrintf(PETSC_COMM_SELF, " Particles Initialized At    : --- (No INLET face identified)\n"); CHKERRQ(ierr);
+            }
+        }
+        ierr = PetscPrintf(PETSC_COMM_SELF, " Field Initialization Mode   : %d\n", user->FieldInitialization); CHKERRQ(ierr);
+        if (user->FieldInitialization == 0) {
+            ierr = PetscPrintf(PETSC_COMM_SELF, " Constant Velocity           : %.4f\n", (double)user->ConstantVelocity); CHKERRQ(ierr);
+        }
+        ierr = PetscPrintf(PETSC_COMM_SELF, "=============================================================\n"); CHKERRQ(ierr);
+        ierr = PetscPrintf(PETSC_COMM_SELF, "\n"); CHKERRQ(ierr);
     }
-    PetscPrintf(PETSC_COMM_WORLD, "=============================================================\n");
-    PetscPrintf(PETSC_COMM_WORLD, "\n");
-
     PetscFunctionReturn(0);
 }
 
+/**
+ * @brief Parses the specified boundary conditions file to identify BC types for all 6 global faces
+ *        and specifically notes the first "INLET" face found.
+ *
+ * Reads the file specified by `bcs_input_filename`. The file is expected to specify
+ * boundary conditions for the six logical faces of the global computational domain
+ * (-Xi, +Xi, -Eta, +Eta, -Zeta, +Zeta).
+ * - Populates `user->face_bc_types[BCFace]` with the `BCType` for each face.
+ * - Sets `user->inletFaceDefined` to `PETSC_TRUE` if at least one "INLET" is found.
+ * - Sets `user->identifiedInletBCFace` to the `BCFace` of the *first* "INLET" found.
+ *
+ * @param[in,out] user                 Pointer to the UserCtx structure where parsed BC info will be stored.
+ * @param[in]     bcs_input_filename   The name/path of the boundary conditions file to parse.
+ * @return PetscErrorCode 0 on success, error code on failure.
+ */
+PetscErrorCode ParseAllBoundaryConditions(UserCtx *user, const char *bcs_input_filename) { // Added const char *bcs_input_filename
+    PetscErrorCode ierr = 0;
+    FILE           *file;
+    char           line[256];
+    char           face_specifier_str[10];
+    char           bc_type_str[100];
+    PetscMPIInt    rank;
+
+    BCType    parsed_face_bc_types_rank0[6];
+    BCFace    parsed_inlet_face_rank0 = BC_FACE_NEG_X; 
+    PetscBool inlet_defined_on_rank0 = PETSC_FALSE;
+    PetscInt  i;
+
+    PetscFunctionBeginUser;
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+
+    // Initialize UserCtx fields (these will be set by rank 0 and then broadcasted)
+    // These initializations on non-root ranks are temporary until broadcast.
+    for (i = 0; i < 6; ++i) { user->face_bc_types[i] = WALL; }
+    user->inletFaceDefined = PETSC_FALSE;
+    user->identifiedInletBCFace = BC_FACE_NEG_X; // A default valid BCFace
+
+    if (rank == 0) {
+        // Initialize rank 0's temporary parsing buffers
+        for (i = 0; i < 6; ++i) { parsed_face_bc_types_rank0[i] = WALL; }
+        // inlet_defined_on_rank0 and parsed_inlet_face_rank0 already have defaults.
+
+        LOG_ALLOW(GLOBAL, LOG_INFO, "ParseAllBoundaryConditions (Rank 0) - Attempting to open BCs file: %s\n", bcs_input_filename);
+        file = fopen(bcs_input_filename, "r"); // Use filename passed as argument
+        if (!file) {
+            LOG_ALLOW(GLOBAL, LOG_WARNING, "ParseAllBoundaryConditions (Rank 0) - Could not open BCs file '%s'. All faces will default to WALL, no INLET identified.\n", bcs_input_filename);
+        } else {
+            LOG_ALLOW(GLOBAL, LOG_INFO, "ParseAllBoundaryConditions (Rank 0) - Reading BCs file: %s\n", bcs_input_filename);
+            if (fgets(line, sizeof(line), file) != NULL) {
+                line[strcspn(line, "\r\n")] = 0;
+                if (strcmp(line, "BCS") != 0) { fseek(file, 0, SEEK_SET); }
+            }
+
+            PetscInt inlet_count_temp = 0; // To track multiple INLET definitions
+
+            while (fgets(line, sizeof(line), file) != NULL) {
+                if (sscanf(line, "%9s %99s", face_specifier_str, bc_type_str) == 2) {
+                    BCFace current_face_enum_temp; 
+                    PetscBool valid_face_specifier = PETSC_TRUE;
+
+                    if      (strcmp(face_specifier_str, "-Xi") == 0) current_face_enum_temp = BC_FACE_NEG_X;
+                    else if (strcmp(face_specifier_str, "+Xi") == 0) current_face_enum_temp = BC_FACE_POS_X;
+                    else if (strcmp(face_specifier_str, "-Eta") == 0) current_face_enum_temp = BC_FACE_NEG_Y;
+                    else if (strcmp(face_specifier_str, "+Eta") == 0) current_face_enum_temp = BC_FACE_POS_Y;
+                    else if (strcmp(face_specifier_str, "-Zeta") == 0) current_face_enum_temp = BC_FACE_NEG_Z;
+                    else if (strcmp(face_specifier_str, "+Zeta") == 0) current_face_enum_temp = BC_FACE_POS_Z;
+                    else {
+                        LOG_ALLOW(GLOBAL, LOG_WARNING, "ParseAllBoundaryConditions (Rank 0) - Unknown face specifier '%s' in %s. Line ignored.\n", face_specifier_str, bcs_input_filename);
+                        valid_face_specifier = PETSC_FALSE;
+                    }
+
+                    if (valid_face_specifier) {
+                        BCType current_bc_type_enum_temp = WALL; // Default for this line
+                        for (i = 0; bc_type_str[i]; i++) { bc_type_str[i] = toupper(bc_type_str[i]); }
+
+                        if      (strcmp(bc_type_str, "DIRICHLET") == 0) current_bc_type_enum_temp = DIRICHLET;
+                        else if (strcmp(bc_type_str, "NEUMANN")   == 0) current_bc_type_enum_temp = NEUMANN;
+                        else if (strcmp(bc_type_str, "WALL")      == 0) current_bc_type_enum_temp = WALL;
+                        else if (strcmp(bc_type_str, "INLET")     == 0) current_bc_type_enum_temp = INLET;
+                        else if (strcmp(bc_type_str, "OUTLET")    == 0) current_bc_type_enum_temp = OUTLET;
+                        // else if (strcmp(bc_type_str, "CUSTOM") == 0) current_bc_type_enum_temp = CUSTOM;
+                        else {
+                            LOG_ALLOW(GLOBAL, LOG_WARNING, "ParseAllBoundaryConditions (Rank 0) - Unknown BC type '%s' for face '%s' in %s. Defaulting to WALL.\n", bc_type_str, face_specifier_str, bcs_input_filename);
+                            // current_bc_type_enum_temp remains WALL
+                        }
+                        
+                        parsed_face_bc_types_rank0[current_face_enum_temp] = current_bc_type_enum_temp;
+
+                        if (current_bc_type_enum_temp == INLET) {
+                            inlet_count_temp++;
+                            if (!inlet_defined_on_rank0) { // Store the first INLET found
+                                inlet_defined_on_rank0 = PETSC_TRUE;
+                                parsed_inlet_face_rank0 = current_face_enum_temp;
+                                LOG_ALLOW(GLOBAL, LOG_INFO, "ParseAllBoundaryConditions (Rank 0) - Identified FIRST INLET face: %s (BCFace Enum: %d) from %s\n", face_specifier_str, parsed_inlet_face_rank0, bcs_input_filename);
+                            } else if (inlet_count_temp > 1) {
+                                LOG_ALLOW(GLOBAL, LOG_WARNING, "ParseAllBoundaryConditions (Rank 0) - Additional INLET face '%s' found. Only the first one ('%d') will be used for particle init.\n", face_specifier_str, parsed_inlet_face_rank0);
+                            }
+                        }
+                    }
+                }
+            }
+            fclose(file);
+            if (!inlet_defined_on_rank0 && inlet_count_temp == 0) { // Check inlet_count_temp as well
+                 LOG_ALLOW(GLOBAL, LOG_WARNING, "ParseAllBoundaryConditions (Rank 0) - No INLET face defined in %s.\n", bcs_input_filename);
+            }
+        } // end if file opened
+
+        // Update UserCtx directly on rank 0 with the parsed values
+        for(i=0; i<6; ++i) {
+            user->face_bc_types[i] = parsed_face_bc_types_rank0[i];
+        }
+        user->inletFaceDefined = inlet_defined_on_rank0;
+        if (inlet_defined_on_rank0) {
+            user->identifiedInletBCFace = parsed_inlet_face_rank0;
+        }
+    } // end if rank == 0
+
+    // Broadcast the UserCtx fields that were populated by rank 0
+    ierr = MPI_Bcast(user->face_bc_types, 6 * sizeof(BCType), MPI_BYTE, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
+    
+    PetscMPIInt temp_inlet_defined_bcast = (PetscMPIInt)user->inletFaceDefined; // Use user struct directly on rank 0
+    PetscInt    temp_inlet_face_bcast    = (PetscInt)user->identifiedInletBCFace;  // Use user struct directly on rank 0
+
+    ierr = MPI_Bcast(&temp_inlet_defined_bcast, 1, MPI_INT, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
+    ierr = MPI_Bcast(&temp_inlet_face_bcast, 1, MPI_INT, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
+
+    if (rank != 0) { // Non-root ranks update from broadcasted values (face_bc_types already updated by Bcast above)
+        user->inletFaceDefined = (PetscBool)temp_inlet_defined_bcast;
+        if (user->inletFaceDefined) {
+            user->identifiedInletBCFace = (BCFace)temp_inlet_face_bcast;
+        }
+    }
+
+    // Log final status on all ranks
+    for(i=0; i<6; ++i) {
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "ParseAllBoundaryConditions - Rank %d: Face %d (%s) has BC Type %d (%s)\n",
+                  rank, i, BCFaceToString((BCFace)i), user->face_bc_types[i], BCTypeToString(user->face_bc_types[i]));
+    }
+    if (user->inletFaceDefined) {
+        LOG_ALLOW(LOCAL, LOG_INFO, "ParseAllBoundaryConditions - Rank %d confirmed INLET face for particle init: %d (%s) from %s.\n",
+                  rank, user->identifiedInletBCFace, BCFaceToString(user->identifiedInletBCFace), bcs_input_filename);
+    } else if (user->ParticleInitialization == 0) { // Only warn if Mode 0 and no inlet was found
+        LOG_ALLOW(LOCAL, LOG_WARNING, "ParseAllBoundaryConditions - Rank %d: Mode 0 particle init, but NO INLET face identified from %s.\n",
+                  rank, bcs_input_filename);
+    }
+
+    PetscFunctionReturn(0);
+}

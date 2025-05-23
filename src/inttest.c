@@ -72,9 +72,6 @@ int main(int argc, char **argv) {
 
     LOG_ALLOW(GLOBAL,LOG_INFO," Grid & Fields Setup! \n");
 
-    // Display Banner for simulation
-    ierr = DisplayBanner(user, StartTime, StartStep, StepsToRun, size, np); CHKERRQ(ierr);
-
     LOG_ALLOW(GLOBAL,LOG_INFO," Simulation Fields %s \n",readFields ? "read":"generated");    
 
     if(get_log_level() == LOG_INFO && is_function_allowed(__func__)){
@@ -87,6 +84,10 @@ int main(int argc, char **argv) {
     ierr = SetupDomainRankInfo(user, &bboxlist);
     
     LOG_ALLOW(GLOBAL,LOG_INFO," Bounding Boxes setup \n");
+
+
+    // Display Banner for simulation
+    ierr = DisplayBanner(user, StartTime, StartStep, StepsToRun, size, np, bboxlist); CHKERRQ(ierr);
 
     // Initialize particle swarm with bboxlist knowledge on all ranks
     ierr = InitializeParticleSwarm(user, np, bboxlist); CHKERRQ(ierr);

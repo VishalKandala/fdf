@@ -22,100 +22,173 @@
 }
 
 /**
- * @brief Initialize the simulation context.
+ * @brief Initialize the simulation context, read options, and parse boundary conditions.
  *
- * Checks for the presence of "control.dat" file, reads runtime options, and sets up the user context.
+ * - Initializes PETSc and MPI rank/size.
+ * - Allocates the UserCtx structure.
+ * - Reads runtime options from "control.dat" and command line for simulation parameters
+ *   (number of particles, timesteps, initialization modes, etc.).
+ * - Calls `ParseAllBoundaryConditions` to read "bcs.dat", determine the BCType for all
+ *   6 global faces, and identify the first INLET face for particle initialization (if Mode 0).
+ *   This information is stored in the UserCtx.
+ * - Initializes PETSc's logging.
  *
- * @param[out] user    Pointer to the allocated UserCtx structure.
- * @param[out] rank    MPI rank of the process.
- * @param[out] size    Number of MPI processes.
- * @param[out] np      Number of particles.
- * @param[out] StartStep Simulation Starting Timestep
- * @param[out] StepsToRun No.of Timesteps to run simulation.
- * @param[out] StartTIme Time of start of simulation.
- * @param[out] ti      The timestep to start from if restarting.
- * @param[out] nblk    Number of grid blocks.
- * @param[out] outputFreq The Frequency at which data should be output from the simulation.
- * @param[out] readFields The flag to decide if eulerian fields are read or generated.
- * @param[out] allowedFuncs list of functions that are allowed to show output
- * @param[out] nAllowed No.of functions allowed to show output
- * @param[out] allowedFile indicates the file  that contains the list of allowed functions.
- * @param[out] useCfg Flag for whether a config file is prescribed or to use default.
+ * @param[out] user_ptr    Pointer to the UserCtx structure pointer (will be allocated here).
+ * @param[out] rank_out    MPI rank of the process.
+ * @param[out] size_out    Number of MPI processes.
+ * @param[out] np_out      Number of particles.
+ * @param[out] StartStep_out Simulation Starting Timestep.
+ * @param[out] StepsToRun_out Number of Timesteps to run simulation.
+ * @param[out] StartTime_out Time of start of simulation.
+ * @param[out] nblk_out    Number of grid blocks (typically 1 for this setup).
+ * @param[out] outputFreq_out Frequency at which data should be output.
+ * @param[out] readFields_out Flag to decide if Eulerian fields are read or generated.
+ * @param[out] allowedFuncs_out List of functions allowed to show log output.
+ * @param[out] nAllowed_out Number of functions allowed to show log output.
+ * @param[in,out] allowedFile_inout Path to the config file for allowed log functions.
+ * @param[out] useCfg_out Flag indicating if a config file for logging was used.
  *
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  */
-PetscErrorCode InitializeSimulation(UserCtx **user, PetscMPIInt *rank, PetscMPIInt *size, PetscInt *np, PetscInt *StartStep, PetscInt *StepsToRun,PetscReal *StartTime, PetscInt *nblk, PetscInt *outputFreq, PetscBool *readFields,char ***allowedFuncs, PetscInt *nAllowed, char *allowedFile, PetscBool *useCfg) {
+PetscErrorCode InitializeSimulation(UserCtx **user_ptr, /* Changed name for clarity */
+                                    PetscMPIInt *rank_out, PetscMPIInt *size_out,
+                                    PetscInt *np_out, PetscInt *StartStep_out,
+                                    PetscInt *StepsToRun_out, PetscReal *StartTime_out,
+                                    PetscInt *nblk_out, PetscInt *outputFreq_out,
+                                    PetscBool *readFields_out,
+                                    char ***allowedFuncs_out, PetscInt *nAllowed_out,
+                                    char *allowedFile_inout, PetscBool *useCfg_out)
+{
     PetscErrorCode ierr;
+    UserCtx*       local_user; // Temporary local pointer to the user context
+    PetscBool      bcsFileOptionFound;
+    char           bcs_filename_buffer[PETSC_MAX_PATH_LEN]; // Local buffer for the filename    
 
-    ierr = PetscOptionsGetString(NULL,NULL,
-				 "-allowed_funcs_file",
-				 (char *)allowedFile,
-				 PETSC_MAX_PATH_LEN,
-				 useCfg);CHKERRQ(ierr);
-
-    /*  Read the allowed functions list from disk */
-    ierr = LoadAllowedFunctionsFromFile(allowedFile,allowedFuncs,nAllowed);CHKERRQ(ierr);
-
-        
-    /* 2c  Register Allowed functions with logger. */
-    set_allowed_functions((const char **)*allowedFuncs,(size_t)*nAllowed);
-    
-    // Attempt to insert options from "control.dat"
-    ierr = PetscOptionsInsertFile(PETSC_COMM_WORLD, NULL, "control.dat", PETSC_TRUE);
-    if (ierr == PETSC_ERR_FILE_OPEN) {
-        SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_OPEN,
-                "InitializeSimulation - Could not open 'control.dat'. Please ensure it exists in the current directory.");
-    } else {
-        CHKERRQ(ierr);
-    }
-
-    // Allocate user context
-    ierr = PetscCalloc1(1, user); CHKERRQ(ierr);
+    PetscFunctionBeginUser;
 
     // Get MPI rank and size
-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, rank); CHKERRQ(ierr);
-    ierr = MPI_Comm_size(PETSC_COMM_WORLD, size); CHKERRQ(ierr);
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, rank_out); CHKERRQ(ierr);
+    ierr = MPI_Comm_size(PETSC_COMM_WORLD, size_out); CHKERRQ(ierr);
 
-    // Initialize user context flags
-    (*user)->averaging = PETSC_FALSE;
-    (*user)->les = PETSC_FALSE;
-    (*user)->rans = PETSC_FALSE;
-
-    LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeSimulation - Initialized on rank %d out of %d processes.\n", *rank, *size);
-
-    // Read runtime options
-    ierr = PetscOptionsGetInt(NULL, NULL, "-numParticles", np, NULL); CHKERRQ(ierr);
-    (*user)->NumberofParticles = *np; 
-    ierr = PetscOptionsGetInt(NULL, NULL, "-rstart", StartStep, NULL); CHKERRQ(ierr);
-    if((*StartStep)>0) {
-        ierr = PetscOptionsGetReal(NULL, NULL, "-ti", StartTime, NULL); CHKERRQ(ierr);
+    // --- 0. PETSc Options and MPI Setup ---
+    // Attempt to insert options from "control.dat"
+    // This should ideally be done after PetscInitialize, but before most other PETSc calls
+    // if options in control.dat are meant to influence PETSc's own setup.
+    // However, for user-specific options, it's fine here.
+    ierr = PetscOptionsInsertFile(PETSC_COMM_WORLD, NULL, "control.dat", PETSC_TRUE);
+    if (ierr == PETSC_ERR_FILE_OPEN) {
+        // This is a warning if control.dat is optional, an error if it's mandatory.
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "InitializeSimulation - Could not open 'control.dat'. Proceeding with command-line options and defaults.\n");
+        // SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_FILE_OPEN, "InitializeSimulation - Could not open 'control.dat'. Please ensure it exists.");
+    } else {
+        CHKERRQ(ierr); // Handle other errors from PetscOptionsInsertFile
     }
-    ierr = PetscOptionsGetInt(NULL,NULL, "-totalsteps",StepsToRun,NULL); CHKERRQ(ierr);
-    ierr = PetscOptionsGetInt(NULL, NULL, "-nblk", nblk, NULL); CHKERRQ(ierr);
-    ierr = PetscOptionsGetInt(NULL, NULL, "-pinit", &((*user)->ParticleInitialization), NULL);
-    ierr = PetscOptionsGetInt(NULL, NULL, "-finit", &((*user)->FieldInitialization), NULL);
-    ierr = PetscOptionsGetInt(NULL, NULL, "-tio",outputFreq,NULL);
-    ierr = PetscOptionsGetInt(NULL, NULL, "-logfreq", &((*user)->LoggingFrequency), NULL);
-
-    ierr = PetscOptionsGetReal(NULL, NULL, "-dt", &((*user)->dt), NULL);
-    ierr = PetscOptionsGetReal(NULL, NULL, "-uin",&((*user)->ConstantVelocity), NULL);
-
-    // Check if user requested to read fields instead of updating
-    ierr = PetscOptionsGetBool(NULL, NULL, "-read_fields", readFields, NULL); CHKERRQ(ierr);
     
-    LOG_ALLOW(GLOBAL,LOG_DEBUG," -- Console Output Functions[Total : %d] : --\n",*nAllowed);
+    // --- 1. Logging Configuration First (as it might affect subsequent PETSc/MPI calls) ---
+    ierr = PetscOptionsGetString(NULL,NULL,
+				 "-func_config_file",
+				 allowedFile_inout, // Use the passed-in buffer
+				 PETSC_MAX_PATH_LEN,
+				 useCfg_out);CHKERRQ(ierr);
+
+    if (*useCfg_out) {
+      // Attempt to load from the specified file
+      ierr = LoadAllowedFunctionsFromFile(allowedFile_inout, allowedFuncs_out, nAllowed_out);
+      if (ierr) { // If loading fails (e.g., file not found, parse error)
+	LOG_ALLOW(GLOBAL, LOG_WARNING, "InitializeSimulation - Failed to load allowed functions from '%s' (Error %d). Using default allowed functions (main, AdvanceSimulation).\n", allowedFile_inout, ierr);
+	*useCfg_out = PETSC_FALSE; // Mark as not using the config file successfully
+	ierr = 0; // Clear the error from LoadAllowedFunctionsFromFile if we are handling it by defaulting
+      }
+    }
+
+    if (!(*useCfg_out)) { // If config file was not specified, or if loading it failed
+      // Default to allowing only "main" and "AdvanceSimulation"
+      // Free any previously allocated memory for allowedFuncs_out if LoadAllowedFunctionsFromFile failed partway
+      if (*allowedFuncs_out) {
+	for (PetscInt i = 0; i < *nAllowed_out; ++i) {
+	  ierr = PetscFree((*allowedFuncs_out)[i]); CHKERRQ(ierr);
+	}
+	ierr = PetscFree(*allowedFuncs_out); CHKERRQ(ierr);
+	*allowedFuncs_out = NULL;
+      }
+
+      *nAllowed_out = 2; // We are defining 2 default functions
+      ierr = PetscMalloc1(*nAllowed_out, allowedFuncs_out); CHKERRQ(ierr);
+      ierr = PetscStrallocpy("main", &((*allowedFuncs_out)[0])); CHKERRQ(ierr);
+      ierr = PetscStrallocpy("AdvanceSimulation", &((*allowedFuncs_out)[1])); CHKERRQ(ierr);
+      LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeSimulation - Using default allowed log functions: main, AdvanceSimulation.\n");
+    }
     
-    for (int i = 0; i < *nAllowed; ++i)
-      LOG_ALLOW(GLOBAL,LOG_DEBUG,"   [%2d] «%s»\n", i, (*allowedFuncs)[i]);
-     
-    // Enable PETSc default logging
+    // Register the determined set of allowed functions with the logger
+    set_allowed_functions((const char **)*allowedFuncs_out, (size_t)*nAllowed_out);
+    
+    print_log_level(); // Print current log level early
+
+    // Allocate user context
+    ierr = PetscCalloc1(1, &local_user); CHKERRQ(ierr);
+    *user_ptr = local_user; // Assign to output parameter
+
+    // Initialize user context flags (good practice to initialize all members)
+    local_user->averaging = PETSC_FALSE;
+    local_user->les = PETSC_FALSE;
+    local_user->rans = PETSC_FALSE;
+    local_user->inletFaceDefined = PETSC_FALSE; // Initialize new BC members
+    local_user->identifiedInletBCFace = BC_FACE_NEG_X; // Default, will be overwritten
+    for (int i = 0; i < 6; ++i) {
+        local_user->face_bc_types[i] = WALL; // Default all faces to WALL
+    }
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeSimulation - Initialized on rank %d out of %d processes.\n", *rank_out, *size_out);
+
+   // Set default BCs filename
+    strcpy(bcs_filename_buffer, "bcs.dat");
+    // Attempt to override with command-line/control.dat option
+    ierr = PetscOptionsGetString(NULL, NULL, "-bcs_file", bcs_filename_buffer, PETSC_MAX_PATH_LEN, &bcsFileOptionFound); CHKERRQ(ierr);
+    if (bcsFileOptionFound) {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeSimulation - Using BCs file specified by option: %s\n", bcs_filename_buffer);
+    } else {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeSimulation - No -bcs_file option found, using default: %s\n", bcs_filename_buffer);
+    }
+    
+    // --- 2. Read Runtime Options for Simulation Parameters ---
+    ierr = PetscOptionsGetInt(NULL, NULL, "-numParticles", np_out, NULL); CHKERRQ(ierr);
+    local_user->NumberofParticles = *np_out;
+    ierr = PetscOptionsGetInt(NULL, NULL, "-rstart", StartStep_out, NULL); CHKERRQ(ierr);
+    if((*StartStep_out) > 0) { // Only get StartTime if restarting
+        ierr = PetscOptionsGetReal(NULL, NULL, "-ti", StartTime_out, NULL); CHKERRQ(ierr);
+    } else {
+        *StartTime_out = 0.0; // Ensure StartTime is 0 if not restarting
+    }
+    ierr = PetscOptionsGetInt(NULL,NULL, "-totalsteps", StepsToRun_out, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetInt(NULL, NULL, "-nblk", nblk_out, NULL); CHKERRQ(ierr); // Typically nblk=1
+    ierr = PetscOptionsGetInt(NULL, NULL, "-pinit", &(local_user->ParticleInitialization), NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetInt(NULL, NULL, "-finit", &(local_user->FieldInitialization), NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetInt(NULL, NULL, "-tio", outputFreq_out, NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetInt(NULL, NULL, "-logfreq", &(local_user->LoggingFrequency), NULL); CHKERRQ(ierr); // Ensure LoggingFrequency is in UserCtx
+
+    ierr = PetscOptionsGetReal(NULL, NULL, "-dt", &(local_user->dt), NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-uin", &(local_user->ConstantVelocity), NULL); CHKERRQ(ierr);
+
+    ierr = PetscOptionsGetBool(NULL, NULL, "-read_fields", readFields_out, NULL); CHKERRQ(ierr);
+
+    LOG_ALLOW(GLOBAL,LOG_DEBUG," -- Console Output Functions [Total : %d] : --\n",*nAllowed_out);
+    for (PetscInt i = 0; i < *nAllowed_out; ++i) {
+      LOG_ALLOW(GLOBAL,LOG_DEBUG,"   [%2d] «%s»\n", i, (*allowedFuncs_out)[i]);
+    }
+
+    // --- 3. Parse Boundary Conditions File ---
+    // This is called by all ranks. Rank 0 reads, then broadcasts to all.
+    // It populates user->face_bc_types[], user->inletFaceDefined, and user->identifiedInletBCFace.
+    LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeSimulation - Parsing boundary conditions from %s.\n", bcs_filename_buffer);
+    ierr = ParseAllBoundaryConditions(local_user,bcs_filename_buffer); CHKERRQ(ierr);
+    // After this call, user->identifiedInletBCFace (and other BC info) is set on all ranks.
+
+    // --- 4. PETSc Logging Setup ---
     ierr = PetscLogDefaultBegin(); CHKERRQ(ierr);
+    ierr = registerEvents(); CHKERRQ(ierr); // Assuming registerEvents is defined elsewhere
 
-    registerEvents();   
-
-    print_log_level();
-    
-    return 0;
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "InitializeSimulation - Completed successfully.\n");
+    PetscFunctionReturn(0);
 }
 
 /** 
@@ -783,7 +856,7 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
 		 
                  ierr = WriteSwarmField(user, "position", step, "dat"); CHKERRQ(ierr);
                  ierr = WriteSwarmField(user, "velocity", step, "dat"); CHKERRQ(ierr);
-		 ierr = WriteSwarmField(user, "pos_phy",  step, "dat"); CHKERRQ(ierr);
+		 // ierr = WriteSwarmField(user, "pos_phy",  step, "dat"); CHKERRQ(ierr);
                  if (!readFields) { ierr = WriteSimulationFields(user); CHKERRQ(ierr); } // Optional initial grid write
              }
         }
@@ -839,6 +912,7 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
             LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d completed] Writing particle data (step %d).\n", currentTime, step, step+1); // Save state for start of next step
             ierr = WriteSwarmField(user, "position", step + 1, "dat"); CHKERRQ(ierr); // Write P(t+dt)
             ierr = WriteSwarmField(user, "velocity", step + 1, "dat"); CHKERRQ(ierr); // Write V_interp @ P(t+dt)
+	    // ierr = WriteSwarmField(user, "pos_phy",  step + 1, "dat"); CHKERRQ(ierr);
             ierr = WriteSimulationFields(user); CHKERRQ(ierr); // Optional grid field write
         }
 

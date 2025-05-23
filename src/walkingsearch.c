@@ -58,98 +58,173 @@ PetscErrorCode GetCellCharacteristicSize(const Cell *cell, PetscReal *cellSize)
 }
 
 /**
- * @brief Computes the signed distance from a point to the plane defined by four other points.
+ * @brief Computes the signed distance from a point to the plane approximating a quadrilateral face.
  *
- * This function calculates the signed distance from a given point `p` to the plane defined by points
- * `p1`, `p2`, `p3`, and `p4`. The distance is projected along the normal vector of the plane.
- * A positive distance indicates that the point lies in the direction of the normal vector,
- * while a negative distance indicates the opposite. If the absolute distance is less than the
- * specified threshold, it is considered to be zero to account for floating-point inaccuracies.
+ * This function calculates the signed distance from a given point `p_target` to the plane
+ * approximating a quadrilateral face defined by points `v1`, `v2`, `v3`, and `v4`.
+ * The plane's initial normal is determined using two edge vectors emanating from `v1`
+ * (i.e., `v2-v1` and `v4-v1`).
  *
- * The plane is determined by three non-colinear points among `p1`, `p2`, `p3`, and `p4`. The fourth
- * point is used to ensure that all four points lie on the same plane.
+ * **Normal Orientation:**
+ * The initial normal's orientation is checked against the cell's interior.
+ * A vector from the face centroid to the cell centroid (`vec_face_to_cell_centroid`) is computed.
+ * If the dot product of the initial normal and `vec_face_to_cell_centroid` is positive,
+ * it means the initial normal is pointing towards the cell's interior (it's an inward normal
+ * relative to the cell). In this case, the normal is flipped to ensure it points outward.
  *
- * @param[in]  p1        First point defining the plane.
- * @param[in]  p2        Second point defining the plane.
- * @param[in]  p3        Third point defining the plane.
- * @param[in]  p4        Fourth point defining the plane (should lie on the same plane as p1, p2, p3).
- * @param[in]  p         The point from which the distance to the plane is calculated.
- * @param[out] d         Pointer to store the computed signed distance.
- * @param[in]  threshold The threshold below which the distance is considered zero.
+ * **Signed Distance Convention:**
+ * The signed distance is the projection of the vector from `p_target` to the face's centroid
+ * onto the (now guaranteed) outward-pointing plane's normal vector.
+ *   - `d_signed < 0`: `p_target` is "outside" and "beyond" the face, in the direction of the outward normal.
+ *                     This is the primary case indicating the particle has crossed this face.
+ *   - `d_signed > 0`: `p_target` is "outside" but "behind" the face (on the same side as the cell interior
+ *                     relative to this face plane).
+ *   - `d_signed = 0`: `p_target` is on the face plane (within threshold).
+ *
+ * @param[in]  v1            First vertex defining the face (used as origin for initial normal calculation).
+ * @param[in]  v2            Second vertex defining the face (used for first edge vector: v2-v1).
+ * @param[in]  v3            Third vertex defining the face (used for face centroid calculation).
+ * @param[in]  v4            Fourth vertex defining the face (used for second edge vector: v4-v1).
+ * @param[in]  cell_centroid The centroid of the 8-vertex cell to which this face belongs.
+ * @param[in]  p_target      The point from which the distance to the plane is calculated.
+ * @param[out] d_signed      Pointer to store the computed signed distance.
+ * @param[in]  threshold     The threshold below which the absolute distance is considered zero.
  *
  * @note
- * - Ensure that the four points (`p1`, `p2`, `p3`, `p4`) are not colinear and indeed define a valid plane.
- * - The `threshold` parameter allows flexibility in handling floating-point precision based on application needs.
+ * - The order of vertices `v1, v2, v3, v4` is used for calculating the face centroid.
+ *   The order of `v1, v2, v4` is used for the initial normal calculation.
+ * - The `cell_centroid` is crucial for robustly determining the outward direction of the normal.
  *
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ * @return PetscErrorCode Returns 0 on success, PETSC_ERR_ARG_NULL if `d_signed` is NULL,
+ *                        or PETSC_ERR_USER if a degenerate plane (near-zero normal) is detected.
  */
-PetscErrorCode ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts p3, const Cmpnts p4, const Cmpnts p, PetscReal *d, const PetscReal threshold)
+PetscErrorCode ComputeSignedDistanceToPlane(const Cmpnts v1, const Cmpnts v2, const Cmpnts v3, const Cmpnts v4,
+                                            const Cmpnts cell_centroid,const Cmpnts p_target,
+					    PetscReal *d_signed, const PetscReal threshold)
 {
-  
-   PetscMPIInt rank;
-   MPI_Comm_rank(MPI_COMM_WORLD,&rank);
-    // Validate output pointer
-    if (d == NULL) {
-      LOG_ALLOW(LOCAL,LOG_ERROR, "ComputeSignedDistanceToPlane - Output pointer 'd' is NULL on rank %d \n",rank);
-        return PETSC_ERR_ARG_NULL;
+    PetscErrorCode ierr = 0;
+    PetscMPIInt rank;
+
+    PetscFunctionBeginUser;
+
+    if (d_signed == NULL) {
+        ierr = MPI_Comm_rank(MPI_COMM_WORLD, &rank); CHKERRQ(ierr);
+        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeSignedDistanceToPlane - Output pointer 'd_signed' is NULL on rank %d.\n", rank);
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Output pointer 'd_signed' must not be NULL.");
     }
 
-    // Debug: Print points defining the plane and the point p
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "ComputeSignedDistanceToPlane - Computing distance for point (%.3f, %.3f, %.3f) to plane defined by:\n", p.x, p.y, p.z);
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "  p1: (%.3f, %.3f, %.3f)\n", p1.x, p1.y, p1.z);
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "  p2: (%.3f, %.3f, %.3f)\n", p2.x, p2.y, p2.z);
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "  p3: (%.3f, %.3f, %.3f)\n", p3.x, p3.y, p3.z);
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "  p4: (%.3f, %.3f, %.3f)\n", p4.x, p4.y, p4.z);
-    
-    // Calculate vectors in the plane
-    PetscReal vector1_x = p3.x - p1.x;
-    PetscReal vector1_y = p3.y - p1.y;
-    PetscReal vector1_z = p3.z - p1.z;
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "ComputeSignedDistanceToPlane - Target point: (%.6e, %.6e, %.6e)\n", p_target.x, p_target.y, p_target.z);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "  Cell Centroid: (%.6e, %.6e, %.6e)\n", cell_centroid.x, cell_centroid.y, cell_centroid.z);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "  Face Vertices:\n");
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "    v1: (%.6e, %.6e, %.6e)\n", v1.x, v1.y, v1.z);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "    v2: (%.6e, %.6e, %.6e)\n", v2.x, v2.y, v2.z);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "    v3: (%.6e, %.6e, %.6e)\n", v3.x, v3.y, v3.z);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "    v4: (%.6e, %.6e, %.6e)\n", v4.x, v4.y, v4.z);
 
-    PetscReal vector2_x = p4.x - p2.x;
-    PetscReal vector2_y = p4.y - p2.y;
-    PetscReal vector2_z = p4.z - p2.z;
+    // --- Calculate Edge Vectors for Initial Normal Computation ---
+    PetscReal edge1_x = v2.x - v1.x;
+    PetscReal edge1_y = v2.y - v1.y;
+    PetscReal edge1_z = v2.z - v1.z;
 
-    // Compute the normal vector via cross product
-    PetscReal normal_x = vector1_y * vector2_z - vector1_z * vector2_y;
-    PetscReal normal_y = -(vector1_x * vector2_z - vector1_z * vector2_x);
-    PetscReal normal_z = vector1_x * vector2_y - vector1_y * vector2_x;
+    PetscReal edge2_x = v4.x - v1.x;
+    PetscReal edge2_y = v4.y - v1.y;
+    PetscReal edge2_z = v4.z - v1.z;
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "  Edge1 (v2-v1): (%.6e, %.6e, %.6e)\n", edge1_x, edge1_y, edge1_z);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "  Edge2 (v4-v1): (%.6e, %.6e, %.6e)\n", edge2_x, edge2_y, edge2_z);
 
-    // Compute the magnitude of the normal vector
-    PetscReal normal_magnitude = sqrt(normal_x * normal_x + normal_y * normal_y + normal_z * normal_z);
+    // --- Compute Initial Normal Vector (Cross Product: edge1 x edge2) ---
+    PetscReal normal_x_initial = edge1_y * edge2_z - edge1_z * edge2_y;
+    PetscReal normal_y_initial = edge1_z * edge2_x - edge1_x * edge2_z;
+    PetscReal normal_z_initial = edge1_x * edge2_y - edge1_y * edge2_x;
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "  Initial Raw Normal (edge1 x edge2): (%.6e, %.6e, %.6e)\n", normal_x_initial, normal_y_initial, normal_z_initial);
 
-    // Check for degenerate plane
-    if (normal_magnitude == 0.0) {
-      LOG_ALLOW(LOCAL,LOG_ERROR, "ComputeSignedDistanceToPlane - Degenerate plane detected (zero normal vector) on rank %d \n",rank);
+    PetscReal normal_magnitude = sqrt(normal_x_initial * normal_x_initial +
+                                   normal_y_initial * normal_y_initial +
+                                   normal_z_initial * normal_z_initial);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "  Initial Normal Magnitude: %.6e\n", normal_magnitude);
 
-        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_USER,
-                "Degenerate plane detected (normal vector is zero).");
-        return PETSC_ERR_USER;
+    if (normal_magnitude < 1.0e-12) {
+        ierr = MPI_Comm_rank(MPI_COMM_WORLD, &rank); CHKERRQ(ierr);
+        LOG_ALLOW(LOCAL, LOG_ERROR,
+                  "ComputeSignedDistanceToPlane - Degenerate plane detected on rank %d. Normal magnitude (%.3e) is too small.\n",
+                  rank, normal_magnitude);
+        LOG_ALLOW(LOCAL, LOG_ERROR, "  Offending vertices for normal: v1(%.3e,%.3e,%.3e), v2(%.3e,%.3e,%.3e), v4(%.3e,%.3e,%.3e)\n",
+                  v1.x,v1.y,v1.z, v2.x,v2.y,v2.z, v4.x,v4.y,v4.z);
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_USER, "Degenerate plane detected (normal vector is near zero).");
     }
 
-    // Normalize the normal vector
+    // --- Calculate the Centroid of the Four Face Vertices (v1, v2, v3, v4) ---
+    PetscReal face_centroid_x = 0.25 * (v1.x + v2.x + v3.x + v4.x);
+    PetscReal face_centroid_y = 0.25 * (v1.y + v2.y + v3.y + v4.y);
+    PetscReal face_centroid_z = 0.25 * (v1.z + v2.z + v3.z + v4.z);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "  Face Centroid: (%.6e, %.6e, %.6e)\n", face_centroid_x, face_centroid_y, face_centroid_z);
+
+    // --- Orient the Normal to Point Outward from the Cell ---
+    // Vector from face centroid to cell centroid
+    PetscReal vec_fc_to_cc_x = cell_centroid.x - face_centroid_x;
+    PetscReal vec_fc_to_cc_y = cell_centroid.y - face_centroid_y;
+    PetscReal vec_fc_to_cc_z = cell_centroid.z - face_centroid_z;
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "  Vec (FaceCentroid -> CellCentroid): (%.6e, %.6e, %.6e)\n", vec_fc_to_cc_x, vec_fc_to_cc_y, vec_fc_to_cc_z);
+
+    // Dot product of initial normal with vector from face centroid to cell centroid
+    PetscReal dot_prod_orientation = normal_x_initial * vec_fc_to_cc_x +
+                                     normal_y_initial * vec_fc_to_cc_y +
+                                     normal_z_initial * vec_fc_to_cc_z;
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "  Dot Product for Orientation (N_initial . Vec_FC_to_CC): %.6e\n", dot_prod_orientation);
+
+    PetscReal normal_x = normal_x_initial;
+    PetscReal normal_y = normal_y_initial;
+    PetscReal normal_z = normal_z_initial;
+
+    // If dot_prod_orientation > 0, initial normal points towards cell interior, so flip it.
+    if (dot_prod_orientation > 1.0e-9) { // Use a small epsilon to avoid issues if dot product is extremely close to zero
+        normal_x = -normal_x_initial;
+        normal_y = -normal_y_initial;
+        normal_z = -normal_z_initial;
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "  Initial normal was inward (dot_prod > 0). Flipped normal.\n");
+    } else if (dot_prod_orientation == 0.0 && normal_magnitude > 1e-12) {
+        // This case is ambiguous or face plane contains cell centroid.
+        // This might happen for highly symmetric cells or if face_centroid IS cell_centroid (e.g. 2D cell).
+        // For now, we keep the original normal direction based on v1,v2,v4 ordering.
+        // A more robust solution for this edge case might be needed if it occurs often.
+        ierr = MPI_Comm_rank(MPI_COMM_WORLD, &rank); CHKERRQ(ierr);
+         LOG_ALLOW(LOCAL, LOG_WARNING, "ComputeSignedDistanceToPlane - Rank %d: Dot product for normal orientation is zero. Normal direction might be ambiguous. Keeping initial normal direction from (v2-v1)x(v4-v1).\n", rank);
+    }
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "  Oriented Raw Normal: (%.6e, %.6e, %.6e)\n", normal_x, normal_y, normal_z);
+
+
+    // --- Normalize the (Now Outward-Pointing) Normal Vector ---
+    // Note: normal_magnitude was calculated from initial normal.
+    // If we flipped, magnitude is the same.
     normal_x /= normal_magnitude;
     normal_y /= normal_magnitude;
     normal_z /= normal_magnitude;
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "  Normalized Outward Normal: (%.6f, %.6f, %.6f)\n", normal_x, normal_y, normal_z);
 
-    // Calculate the centroid of the four defining points
-    PetscReal centroid_x = 0.25 * (p1.x + p2.x + p3.x + p4.x);
-    PetscReal centroid_y = 0.25 * (p1.y + p2.y + p3.y + p4.y);
-    PetscReal centroid_z = 0.25 * (p1.z + p2.z + p3.z + p4.z);
 
-    // Compute the signed distance from point p to the plane
-    *d = (centroid_x - p.x) * normal_x + (centroid_y - p.y) * normal_y + (centroid_z - p.z) * normal_z;
+    // --- Compute Vector from Target Point to Face Centroid ---
+    PetscReal vec_p_to_fc_x = face_centroid_x - p_target.x;
+    PetscReal vec_p_to_fc_y = face_centroid_y - p_target.y;
+    PetscReal vec_p_to_fc_z = face_centroid_z - p_target.z;
 
-    // Apply threshold to handle floating-point precision
-    if (fabs(*d) < threshold) {
-        *d = 0.0;
+    // --- Compute Signed Distance ---
+    *d_signed = vec_p_to_fc_x * normal_x +
+                vec_p_to_fc_y * normal_y +
+                vec_p_to_fc_z * normal_z;
+
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "  Raw Signed Distance (using outward normal): %.15e\n", *d_signed);
+
+    // --- Apply Threshold ---
+    if (fabs(*d_signed) < threshold) {
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "  Distance %.15e is less than threshold %.1e. Setting to 0.0.\n", *d_signed, threshold);
+        *d_signed = 0.0;
     }
 
-    // Debug: Print the computed distance
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "ComputeSignedDistanceToPlane - Signed distance: %.6f\n", *d);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "ComputeSignedDistanceToPlane - Final Signed Distance: %.15e\n", *d_signed);
 
-    return 0;
+    PetscFunctionReturn(0);
 }
+
 
 /**
  * @brief Computes the signed distances from a point to each face of a cubic cell.
@@ -207,6 +282,21 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "CalculateDistancesToCellFaces - 'd' is NULL.");
     }
 
+    // Compute the centroid of the entire cell
+    Cmpnts cell_centroid = {0.0, 0.0, 0.0};
+    for (int i = 0; i < 8; ++i) {
+      cell_centroid.x += cell->vertices[i].x;
+      cell_centroid.y += cell->vertices[i].y;
+      cell_centroid.z += cell->vertices[i].z;
+    }
+    cell_centroid.x /= 8.0;
+    cell_centroid.y /= 8.0;
+    cell_centroid.z /= 8.0;
+
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "CalculateDistancesToCellFaces - Cell Centroid: (%.6e, %.6e, %.6e)\n",
+	      cell_centroid.x, cell_centroid.y, cell_centroid.z);    
+
+    
     // Compute the signed distance from point 'p' to the BACK face of the cell.
     // The BACK face is defined by vertices 0, 3, 2, and 1, with its normal vector pointing in the -z direction.
     ierr = ComputeSignedDistanceToPlane(
@@ -214,6 +304,7 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
         cell->vertices[3], // Vertex 3
         cell->vertices[2], // Vertex 2
         cell->vertices[1], // Vertex 1
+	cell_centroid,     // Cell centroid 
         p,                  // Target point
         &d[BACK],           // Storage location for the BACK face distance
         threshold           // Threshold for zero distance
@@ -226,6 +317,7 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
         cell->vertices[7], // Vertex 7
         cell->vertices[6], // Vertex 6
         cell->vertices[5], // Vertex 5
+	cell_centroid,     // Cell centroid 
         p,                  // Target point
         &d[FRONT],          // Storage location for the FRONT face distance
         threshold           // Threshold for zero distance
@@ -238,6 +330,7 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
         cell->vertices[1], // Vertex 1
         cell->vertices[6], // Vertex 6
         cell->vertices[7], // Vertex 7
+	cell_centroid,     // Cell centroid 
         p,                  // Target point
         &d[BOTTOM],         // Storage location for the BOTTOM face distance
         threshold           // Threshold for zero distance
@@ -250,7 +343,8 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
         cell->vertices[4], // Vertex 4
         cell->vertices[5], // Vertex 5
         cell->vertices[2], // Vertex 2
-        p,                  // Target point
+	cell_centroid,     // Cell centroid 
+	p,                  // Target point
         &d[TOP],            // Storage location for the TOP face distance
         threshold           // Threshold for zero distance
     );  CHKERRQ(ierr);
@@ -262,7 +356,8 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
         cell->vertices[7], // Vertex 7
         cell->vertices[4], // Vertex 4
         cell->vertices[3], // Vertex 3
-        p,                  // Target point
+	cell_centroid,     // Cell centroid 
+	p,                  // Target point
         &d[LEFT],           // Storage location for the LEFT face distance
         threshold           // Threshold for zero distance
     );  CHKERRQ(ierr);
@@ -274,11 +369,21 @@ PetscErrorCode CalculateDistancesToCellFaces(const Cmpnts p, const Cell *cell, P
         cell->vertices[2], // Vertex 2
         cell->vertices[5], // Vertex 5
         cell->vertices[6], // Vertex 6
+	cell_centroid,     // Cell centroid 
         p,                  // Target point
         &d[RIGHT],          // Storage location for the RIGHT face distance
         threshold           // Threshold for zero distance
     );  CHKERRQ(ierr);
 
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "CalculateDistancesToCellFaces - Populated d: "
+	      "d[LEFT=%d]=%.3e, d[RIGHT=%d]=%.3e, d[BOTTOM=%d]=%.3e, "
+	      "d[TOP=%d]=%.3e, d[FRONT=%d]=%.3e, d[BACK=%d]=%.3e\n",
+	      LEFT, d[LEFT], RIGHT, d[RIGHT], BOTTOM, d[BOTTOM],
+	      TOP, d[TOP], FRONT, d[FRONT], BACK, d[BACK]);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "CalculateDistancesToCellFaces - Raw d: "
+	      "[%.3e, %.3e, %.3e, %.3e, %.3e, %.3e]\n",
+	      d[0], d[1], d[2], d[3], d[4], d[5]);
+    
     return 0; // Indicate successful execution of the function.
 }
 
@@ -712,7 +817,7 @@ PetscErrorCode EvaluateParticlePosition(const Cell *cell, PetscReal *d, const Cm
 
     // Debugging output: Print the computed distances to each face for verification purposes.
     LOG_ALLOW(LOCAL,LOG_DEBUG, "EvaluateParticlePosition - Face Distances:\n");
-    ierr = LOG_FACE_DISTANCES(d); 
+    if(get_log_level() == LOG_DEBUG && is_function_allowed(__func__)) LOG_FACE_DISTANCES(d); 
     CHKERRQ(ierr); // Check for errors in printing distances.
 
     // Determine the particle's position relative to the cell based on the computed distances.
@@ -754,6 +859,15 @@ PetscErrorCode UpdateCellIndicesBasedOnDistances( PetscReal d[NUM_FACES], PetscI
     cxs = info->xs; cxm = cxs + info->xm - 2;
     cys = info->ys; cym = cys + info->ym - 2;
     czs = info->zs; czm = czs + info->zm - 2; 
+
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Received d: "
+	      "d[LEFT=%d]=%.3e, d[RIGHT=%d]=%.3e, d[BOTTOM=%d]=%.3e, "
+	      "d[TOP=%d]=%.3e, d[FRONT=%d]=%.3e, d[BACK=%d]=%.3e\n",
+	      LEFT, d[LEFT], RIGHT, d[RIGHT], BOTTOM, d[BOTTOM],
+	      TOP, d[TOP], FRONT, d[FRONT], BACK, d[BACK]);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Raw d: "
+	      "[%.3e, %.3e, %.3e, %.3e, %.3e, %.3e]\n",
+	      d[0], d[1], d[2], d[3], d[4], d[5]);
     
     // Validate input pointers
     if (d == NULL) {
@@ -767,7 +881,7 @@ PetscErrorCode UpdateCellIndicesBasedOnDistances( PetscReal d[NUM_FACES], PetscI
 
     // Debug: Print current face distances
     LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Current Face Distances:\n");
-    LOG_FACE_DISTANCES(d);
+    if(get_log_level() == LOG_DEBUG && is_function_allowed(__func__)) LOG_FACE_DISTANCES(d);
 
     // Update k-direction based on FRONT and BACK distances
     if (d[FRONT] < 0.0) {

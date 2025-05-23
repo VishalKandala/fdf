@@ -34,22 +34,49 @@
  PetscErrorCode GetCellCharacteristicSize(const Cell *cell, PetscReal *cellSize);
 
 /**
- * @brief Computes the signed distance from a point to the plane defined by four other points.
+ * @brief Computes the signed distance from a point to the plane approximating a quadrilateral face.
  *
- * This function calculates the signed distance from a given point `p` to the plane defined by points
- * `p1`, `p2`, `p3`, and `p4`. The distance is projected along the normal vector of the plane.
+ * This function calculates the signed distance from a given point `p_target` to the plane
+ * approximating a quadrilateral face defined by points `v1`, `v2`, `v3`, and `v4`.
+ * The plane's initial normal is determined using two edge vectors emanating from `v1`
+ * (i.e., `v2-v1` and `v4-v1`).
  *
- * @param[in]  p1        First point defining the plane.
- * @param[in]  p2        Second point defining the plane.
- * @param[in]  p3        Third point defining the plane.
- * @param[in]  p4        Fourth point defining the plane (should lie on the same plane as p1, p2, p3).
- * @param[in]  p         The point from which the distance to the plane is calculated.
- * @param[out] d         Pointer to store the computed signed distance.
- * @param[in]  threshold The threshold below which the distance is considered zero.
+ * **Normal Orientation:**
+ * The initial normal's orientation is checked against the cell's interior.
+ * A vector from the face centroid to the cell centroid (`vec_face_to_cell_centroid`) is computed.
+ * If the dot product of the initial normal and `vec_face_to_cell_centroid` is positive,
+ * it means the initial normal is pointing towards the cell's interior (it's an inward normal
+ * relative to the cell). In this case, the normal is flipped to ensure it points outward.
  *
- * @return void
+ * **Signed Distance Convention:**
+ * The signed distance is the projection of the vector from `p_target` to the face's centroid
+ * onto the (now guaranteed) outward-pointing plane's normal vector.
+ *   - `d_signed < 0`: `p_target` is "outside" and "beyond" the face, in the direction of the outward normal.
+ *                     This is the primary case indicating the particle has crossed this face.
+ *   - `d_signed > 0`: `p_target` is "outside" but "behind" the face (on the same side as the cell interior
+ *                     relative to this face plane).
+ *   - `d_signed = 0`: `p_target` is on the face plane (within threshold).
+ *
+ * @param[in]  v1            First vertex defining the face (used as origin for initial normal calculation).
+ * @param[in]  v2            Second vertex defining the face (used for first edge vector: v2-v1).
+ * @param[in]  v3            Third vertex defining the face (used for face centroid calculation).
+ * @param[in]  v4            Fourth vertex defining the face (used for second edge vector: v4-v1).
+ * @param[in]  cell_centroid The centroid of the 8-vertex cell to which this face belongs.
+ * @param[in]  p_target      The point from which the distance to the plane is calculated.
+ * @param[out] d_signed      Pointer to store the computed signed distance.
+ * @param[in]  threshold     The threshold below which the absolute distance is considered zero.
+ *
+ * @note
+ * - The order of vertices `v1, v2, v3, v4` is used for calculating the face centroid.
+ *   The order of `v1, v2, v4` is used for the initial normal calculation.
+ * - The `cell_centroid` is crucial for robustly determining the outward direction of the normal.
+ *
+ * @return PetscErrorCode Returns 0 on success, PETSC_ERR_ARG_NULL if `d_signed` is NULL,
+ *                        or PETSC_ERR_USER if a degenerate plane (near-zero normal) is detected.
  */
-PetscErrorCode ComputeSignedDistanceToPlane(const Cmpnts p1, const Cmpnts p2, const Cmpnts p3, const Cmpnts p4, const Cmpnts p, PetscReal *d, const PetscReal threshold);
+PetscErrorCode ComputeSignedDistanceToPlane(const Cmpnts v1, const Cmpnts v2, const Cmpnts v3, const Cmpnts v4,
+                                            const Cmpnts cell_centroid,const Cmpnts p_target,
+					    PetscReal *d_signed, const PetscReal threshold);
 
 /**
  * @brief Computes the signed distances from a point to each face of a cubic cell.

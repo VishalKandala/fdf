@@ -356,24 +356,48 @@ PetscErrorCode ReadFieldDataToRank0(PetscInt timeIndex,
                                            double **scalarArray,
 				    PetscInt *Nscalars);
 
-
 /**
  * @brief Displays a structured banner summarizing the simulation configuration.
  *
- * This function prints key simulation parameters, including grid dimensions,
- * domain bounds, start time, timestep, total steps, processor count, particle count,
- * and initialization modes. Domain bounds are read from command-line options
- * (-xMin, -xMax, etc.). The banner is designed for clear, professional console output.
+ * This function prints key simulation parameters to standard output.
+ * It is intended to be called ONLY by MPI rank 0.
+ * It retrieves global domain bounds from `user->global_domain_bbox` and boundary
+ * conditions for all faces from `user->face_bc_types`.
  *
- * @param[in] user         Pointer to UserCtx structure containing simulation details.
+ * @param[in] user         Pointer to `UserCtx` structure.
  * @param[in] StartTime    Initial simulation time.
  * @param[in] StartStep    Starting timestep index.
  * @param[in] StepsToRun   Total number of timesteps to run.
- * @param[in] size         Number of MPI processes.
- * @param[in] np           Number of particles.
+ * @param[in] num_mpi_procs Total number of MPI processes.
+ * @param[in] total_num_particles Total number of particles.
+ * @param[in] bboxlist     (If rank 0 needed to compute global_domain_bbox here, otherwise NULL)
  *
- * @return PetscErrorCode  Returns 0 on success or an appropriate error code.
+ * @return PetscErrorCode  Returns `0` on success.
  */
-PetscErrorCode DisplayBanner(UserCtx *user, PetscReal StartTime, PetscInt StartStep, PetscInt StepsToRun, PetscMPIInt size, PetscInt np);
+PetscErrorCode DisplayBanner(UserCtx *user,
+                             PetscReal StartTime,
+                             PetscInt StartStep,
+                             PetscInt StepsToRun,
+                             PetscMPIInt num_mpi_procs,
+                             PetscInt total_num_particles,
+                             BoundingBox *bboxlist_on_rank0);
+
+
+/**
+ * @brief Parses the specified boundary conditions file to identify BC types for all 6 global faces
+ *        and specifically notes the first "INLET" face found.
+ *
+ * Reads the file specified by `bcs_input_filename`. The file is expected to specify
+ * boundary conditions for the six logical faces of the global computational domain
+ * (-x, +x, -y, +y, -z, +z).
+ * - Populates `user->face_bc_types[BCFace]` with the `BCType` for each face.
+ * - Sets `user->inletFaceDefined` to `PETSC_TRUE` if at least one "INLET" is found.
+ * - Sets `user->identifiedInletBCFace` to the `BCFace` of the *first* "INLET" found.
+ *
+ * @param[in,out] user                 Pointer to the UserCtx structure where parsed BC info will be stored.
+ * @param[in]     bcs_input_filename   The name/path of the boundary conditions file to parse.
+ * @return PetscErrorCode 0 on success, error code on failure.
+ */
+PetscErrorCode ParseAllBoundaryConditions(UserCtx *user, const char *bcs_input_filename);
 
 #endif // IO_H

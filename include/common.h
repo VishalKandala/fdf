@@ -84,6 +84,26 @@ typedef struct {
     Cmpnts vertices[8]; /**< Coordinates of the eight vertices of the cell. */
 } Cell;
 
+/* Domain face identifiers */
+typedef enum {
+    BC_FACE_NEG_X,
+    BC_FACE_POS_X,
+    BC_FACE_NEG_Y,
+    BC_FACE_POS_Y,
+    BC_FACE_NEG_Z,
+    BC_FACE_POS_Z
+} BCFace;
+
+/* BC type identifiers */
+typedef enum {
+    DIRICHLET,
+    NEUMANN,
+    WALL,
+    INLET,
+    OUTLET
+    /* Extend as needed (e.g., Robin conditions) */
+} BCType;
+
 /**
  * @brief User-defined context containing simulation data and configurations.
  *
@@ -104,6 +124,11 @@ typedef struct {
     PetscReal rx;           // Stretching ratio in x-direction
     PetscReal ry;           // Stretching ratio in y-direction
     PetscReal rz;           // Stretching ratio in z-direction
+
+   // Boundary Condition Related fields
+    BCType    face_bc_types[6];     // can be indexed directly using BCFace enum-ex: face_bc_types[BC_FACE_NEG_X]. 
+    PetscBool inletFaceDefined;     // Flag: PETSC_TRUE if an INLET face was found in bcs.dat
+    BCFace    identifiedInletBCFace; // Stores the BCFace enum corresponding to the INLET
 
     // Simulation fields
     Vec Ucont,lUcont;              ///< Contravariant velocity field.
@@ -150,10 +175,14 @@ typedef struct {
     PetscBool averaging;    ///< Flag to indicate whether statistical averaging is enabled.
     PetscBool les;          ///< Flag to indicate if LES is active.
     PetscBool rans;         ///< Flag to indicate if RANS is active.
+
+    // Parallelization Parameters 
     RankNeighbors neighbors;  // Neighbor ranks
+    BoundingBox global_domain_bbox;
 
     // Miscellaneous fields
     PetscInt _this;         ///< Current block index.
+    
   
 } UserCtx;
 
@@ -266,24 +295,6 @@ typedef struct _n_VTKMetaData {
     int         *offsets;
 } VTKMetaData;
 */
-
-
-/* Domain face identifiers */
-typedef enum {
-    BC_FACE_POS_X,
-    BC_FACE_NEG_X,
-    BC_FACE_POS_Y,
-    BC_FACE_NEG_Y,
-    BC_FACE_POS_Z,
-    BC_FACE_NEG_Z
-} BCFace;
-
-/* BC type identifiers */
-typedef enum {
-    BC_TYPE_DIRICHLET,
-    BC_TYPE_NEUMANN
-    /* Extend as needed (e.g., Robin conditions) */
-} BCType;
 
 // Add other shared types (e.g., IBMNodes, IBMInfo) if needed
 

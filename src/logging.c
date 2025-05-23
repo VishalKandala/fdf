@@ -225,13 +225,13 @@ PetscErrorCode LOG_FACE_DISTANCES(PetscReal* d)
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, " LOG_FACE_DISTANCES - Input array 'd' is NULL.");
     }
 
-      LOG_ALLOW(LOCAL,LOG_DEBUG, " LOG_FACE_DISTANCES - Face Distances:\n");
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "  LEFT(%d):   %.15f\n", LEFT, d[LEFT]);
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "  RIGHT(%d):  %.15f\n", RIGHT, d[RIGHT]);
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "  BOTTOM(%d): %.15f\n", BOTTOM, d[BOTTOM]);
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "  TOP(%d):    %.15f\n", TOP, d[TOP]);
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "  FRONT(%d):  %.15f\n", FRONT, d[FRONT]);
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "  BACK(%d):   %.15f\n", BACK, d[BACK]);
+    PetscPrintf(PETSC_COMM_SELF, " LOG_FACE_DISTANCES - Face Distances:\n");
+    PetscPrintf(PETSC_COMM_SELF, "  LEFT(%d):   %.15f\n", LEFT, d[LEFT]);
+    PetscPrintf(PETSC_COMM_SELF, "  RIGHT(%d):  %.15f\n", RIGHT, d[RIGHT]);
+    PetscPrintf(PETSC_COMM_SELF, "  BOTTOM(%d): %.15f\n", BOTTOM, d[BOTTOM]);
+    PetscPrintf(PETSC_COMM_SELF, "  TOP(%d):    %.15f\n", TOP, d[TOP]);
+    PetscPrintf(PETSC_COMM_SELF, "  FRONT(%d):  %.15f\n", FRONT, d[FRONT]);
+    PetscPrintf(PETSC_COMM_SELF, "  BACK(%d):   %.15f\n", BACK, d[BACK]);
 
     return 0; // Indicate successful execution
 }
@@ -649,4 +649,38 @@ PetscErrorCode FreeAllowedFunctions(char **funcs, PetscInt n)
     ierr = PetscFree(funcs); CHKERRQ(ierr);
   }
   PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Helper function to convert BCFace enum to a string representation.
+ * @param[in] face The BCFace enum value.
+ * @return Pointer to a constant string representing the face.
+ */
+const char* BCFaceToString(BCFace face) {
+    switch (face) {
+        case BC_FACE_NEG_X: return "-Xi (I-Min)";
+        case BC_FACE_POS_X: return "+Xi (I-Max)";
+        case BC_FACE_NEG_Y: return "-Eta (J-Min)";
+        case BC_FACE_POS_Y: return "+Eta (J-Max)";
+        case BC_FACE_NEG_Z: return "-Zeta (K-Min)";
+        case BC_FACE_POS_Z: return "+Zeta (K-Max)";
+        default:            return "Unknown Face";
+    }
+}
+
+/**
+ * @brief Helper function to convert BCType enum to a string representation.
+ * @param[in] type The BCType enum value.
+ * @return Pointer to a constant string representing the BC type.
+ */
+const char* BCTypeToString(BCType type) {
+    switch (type) {
+        case DIRICHLET: return "DIRICHLET";
+        case NEUMANN:   return "NEUMANN";
+        case WALL:      return "WALL";
+        case INLET:     return "INLET";
+        case OUTLET:    return "OUTLET";
+        // case CUSTOM:    return "CUSTOM";
+        default:        return "Unknown BC Type";
+    }
 }
