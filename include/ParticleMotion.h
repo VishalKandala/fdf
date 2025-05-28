@@ -164,4 +164,53 @@ PetscErrorCode ResizeSwarmGlobally(DM swarm, PetscInt N_target);
  */
 PetscErrorCode PreCheckAndResizeSwarm(UserCtx *user, PetscInt ti, const char *ext);
 
+/**
+ * @brief Performs one full cycle of particle migration: identify, set ranks, and migrate.
+ *
+ * This function encapsulates the three main steps of migrating particles between MPI ranks:
+ * 1. Identify particles on the local rank that need to move based on their current
+ *    positions and the domain decomposition (`bboxlist`).
+ * 2. Determine the destination rank for each migrating particle.
+ * 3. Perform the actual migration using PETSc's `DMSwarmMigrate`.
+ * It also calculates and logs the global number of particles migrated.
+ *
+ * @param user Pointer to the UserCtx structure.
+ * @param bboxlist Array of BoundingBox structures defining the spatial domain of each MPI rank.
+ * @param migrationList_p Pointer to a pointer for the MigrationInfo array. This array will be
+ *                        allocated/reallocated by `IdentifyMigratingParticles` if necessary.
+ *                        The caller is responsible for freeing this list eventually.
+ * @param migrationCount_p Pointer to store the number of particles identified for migration
+ *                         on the local rank. This is reset to 0 after migration for the current cycle.
+ * @param migrationListCapacity_p Pointer to store the current capacity of the `migrationList_p` array.
+ * @param currentTime Current simulation time (used for logging).
+ * @param step Current simulation step number (used for logging).
+ * @param migrationCycleName A descriptive name for this migration cycle (e.g., "Preliminary Sort", "Main Loop")
+ *                           for logging purposes.
+ * @param[out] globalMigrationCount_out Pointer to store the total number of particles migrated
+ *                                      across all MPI ranks during this cycle.
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode PerformSingleParticleMigrationCycle(UserCtx *user, const BoundingBox *bboxlist,
+                                                   MigrationInfo **migrationList_p, PetscInt *migrationCount_p,
+                                                   PetscInt *migrationListCapacity_p,
+                                                   PetscReal currentTime, PetscInt step, const char *migrationCycleName,
+                                                   PetscInt *globalMigrationCount_out);
+
+
+/**
+ * @brief Re-initializes the positions of particles currently on this rank if this rank owns
+ *        part of the designated inlet surface.
+ *
+ * This function is intended for `user->ParticleInitialization == 0` (Surface Initialization mode)
+ * and is typically called after an initial migration step (e.g., in `PerformInitialSetup`).
+ * It ensures that all particles that should originate from the inlet surface and are now
+ * on the correct MPI rank are properly distributed across that rank's portion of the inlet.
+ *
+ * @param user Pointer to the UserCtx structure, containing simulation settings and grid information.
+ * @param currentTime Current simulation time (used for logging).
+ * @param step Current simulation step number (used for logging).
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode ReinitializeParticlesOnInletSurface(UserCtx *user, PetscReal currentTime, PetscInt step);
+
  #endif // PARTICLE_MOTION_H

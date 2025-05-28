@@ -41,6 +41,7 @@ int main(int argc, char **argv) {
     PetscInt block_number = 1;
     PetscInt StartStep = 0;
     PetscInt StepsToRun;
+    PetscInt ActualStepsToRun;
     PetscInt np = 0;
     PetscInt OutputFreq;
     PetscReal StartTime = 0.0;
@@ -54,12 +55,13 @@ int main(int argc, char **argv) {
     PetscBool useCfg = PETSC_FALSE;
     char **allowedFuncs  = NULL;
     PetscInt nAllowed   = 0;
+    PetscBool OnlySetup = PETSC_FALSE;
 
     // -------------------- 1. PETSc Initialization --------------------
     ierr = PetscInitialize(&argc, &argv, (char *)0, help); CHKERRQ(ierr);
 
     // Initialize simulation: user context, MPI rank/size, np, etc.
-    ierr = InitializeSimulation(&user, &rank, &size, &np, &StartStep, &StepsToRun, &StartTime, &block_number, &OutputFreq,&readFields,&allowedFuncs,&nAllowed,allowedFile,&useCfg); CHKERRQ(ierr);
+    ierr = InitializeSimulation(&user, &rank, &size, &np, &StartStep, &StepsToRun, &StartTime, &block_number, &OutputFreq,&readFields,&allowedFuncs,&nAllowed,allowedFile,&useCfg,&OnlySetup); CHKERRQ(ierr);
     
     LOG_ALLOW(GLOBAL,LOG_INFO," Simulation Initialized \n");
 
@@ -92,8 +94,14 @@ int main(int argc, char **argv) {
     // Initialize particle swarm with bboxlist knowledge on all ranks
     ierr = InitializeParticleSwarm(user, np, bboxlist); CHKERRQ(ierr);
 
+    // Setup Only Condition
+    ActualStepsToRun=StepsToRun;
+    if (OnlySetup) {
+      LOG_ALLOW(GLOBAL, LOG_INFO, "SETUP ONLY MODE: Forcing StepsToRun to 0 for AdvanceSimulation call.\n");
+      ActualStepsToRun = 0; // This will trigger the setup-only path in AdvanceSimulation
+    }
     // Advance the Lagrangian Particle Simulation
-    ierr = AdvanceSimulation(user,StartStep,StartTime,StepsToRun,OutputFreq,readFields,bboxlist);
+    ierr = AdvanceSimulation(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,readFields,bboxlist);
  
     // Finalize simulation
     ierr = FinalizeSimulation(user, block_number, bboxlist,allowedFuncs,nAllowed,&logviewer); CHKERRQ(ierr);

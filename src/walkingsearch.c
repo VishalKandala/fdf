@@ -633,6 +633,7 @@ PetscErrorCode InitializeTraversalParameters(UserCtx *user, Particle *particle, 
  *
  * @return PetscErrorCode  Returns 0 on success, non-zero on failure.
  */
+/*
 PetscErrorCode CheckCellWithinLocalGrid(UserCtx *user, PetscInt idx, PetscInt idy, PetscInt idz, PetscBool *is_within)
 {
     PetscErrorCode ierr;
@@ -689,6 +690,87 @@ PetscErrorCode CheckCellWithinLocalGrid(UserCtx *user, PetscInt idx, PetscInt id
 
     return 0;
 }
+*/
+
+/**
+ * @brief Checks if the current GLOBAL CELL indices are within the LOCAL GHOSTED grid boundaries
+ *        accessible by this MPI process.
+ *
+ * This function determines if the provided global cell indices (idx, idy, idz) fall within the
+ * range of cells covered by the current process's owned and ghost NODES.
+ * A cell C(i,j,k) (origin N(i,j,k)) is considered within this ghosted region if its origin node N(i,j,k)
+ * is within the rank's ghosted nodal region, AND node N(i+1,j+1,k+1) is also within it (to ensure
+ * the entire cell extent is covered by available node data). More simply, we check if the cell's
+ * origin node is within the range of nodes that can form the start of a ghosted cell.
+ *
+ * @param[in]  user       Pointer to the user-defined context (needs user->fda for node info).
+ * @param[in]  idx        The global i-index of the cell's origin node.
+ * @param[in]  idy        The global j-index of the cell's origin node.
+ * @param[in]  idz        The global k-index of the cell's origin node.
+ * @param[out] is_within  Pointer to a PetscBool that will be set to PETSC_TRUE if within ghosted bounds, else PETSC_FALSE.
+ *
+ * @return PetscErrorCode  Returns 0 on success, non-zero on failure.
+ */
+PetscErrorCode CheckCellWithinLocalGrid(UserCtx *user, PetscInt idx, PetscInt idy, PetscInt idz, PetscBool *is_within)
+{
+    PetscErrorCode ierr;
+    DMDALocalInfo info_nodes; // Node information from the DMDA that defines ghost regions (user->fda)
+
+    PetscFunctionBeginUser; // Assuming this is part of your PETSc style
+
+    // Validate inputs
+    if (user == NULL || is_within == NULL) {
+        LOG_ALLOW(LOCAL, LOG_ERROR, "Input pointer is NULL in CheckCellWithinLocalGrid.\n");
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Input pointer is NULL in CheckCellWithinLocalGrid.");
+    }
+    if (user->fda == NULL) {
+        LOG_ALLOW(LOCAL, LOG_ERROR, "user->fda is NULL in CheckCellWithinLocalGrid. Cannot get ghost info.\n");
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONGSTATE, "user->fda is NULL. Cannot get ghost info.");
+    }
+
+    // Get node info from user->fda (this DMDA has the ghost layer information for nodes)
+    ierr = DMDAGetLocalInfo(user->fda, &info_nodes); CHKERRQ(ierr);
+
+    // Determine the range of GLOBAL CELL INDICES that are covered by this rank's ghosted NODAL region.
+    // A cell C(i,j,k) has origin node N(i,j,k).
+    // The ghosted nodal region starts at global node index info_nodes.gxs and has info_nodes.gxm nodes.
+
+    // Global starting index of the first cell whose origin node is within the ghosted nodal region.
+    PetscInt gxs_cell_global_start = info_nodes.gxs;
+    PetscInt gys_cell_global_start = info_nodes.gys;
+    PetscInt gzs_cell_global_start = info_nodes.gzs;
+
+    // Number of cells that can be formed starting from nodes within the ghosted nodal region.
+    // If there are N ghosted nodes (info_nodes.gxm), they can be origins for N-1 cells.
+    PetscInt gxm_cell_local_count = (info_nodes.gxm > 0) ? info_nodes.gxm - 1 : 0;
+    PetscInt gym_cell_local_count = (info_nodes.gym > 0) ? info_nodes.gym - 1 : 0;
+    PetscInt gzm_cell_local_count = (info_nodes.gzm > 0) ? info_nodes.gzm - 1 : 0;
+
+    // Global exclusive end index for cells whose origins are in the ghosted nodal region.
+    PetscInt gxe_cell_global_end_exclusive = gxs_cell_global_start + gxm_cell_local_count;
+    PetscInt gye_cell_global_end_exclusive = gys_cell_global_start + gym_cell_local_count;
+    PetscInt gze_cell_global_end_exclusive = gzs_cell_global_start + gzm_cell_local_count;
+
+    // Check if the given global cell index (idx, idy, idz) falls within this range.
+    // This means the origin node of cell (idx,idy,idz) is within the rank's accessible ghosted node region,
+    // and that node can indeed serve as a cell origin (i.e., it's not the very last node in the ghosted region).
+    if (idx >= gxs_cell_global_start && idx < gxe_cell_global_end_exclusive &&
+        idy >= gys_cell_global_start && idy < gye_cell_global_end_exclusive &&
+        idz >= gzs_cell_global_start && idz < gze_cell_global_end_exclusive) {
+        *is_within = PETSC_TRUE;
+    } else {
+        *is_within = PETSC_FALSE;
+    }
+
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "Cell (origin node glob idx) (%d, %d, %d) is %s the ghosted local grid (covered cell origins x:[%d..%d), y:[%d..%d), z:[%d..%d)).\n",
+              idx, idy, idz, (*is_within) ? "within" : "outside",
+              gxs_cell_global_start, gxe_cell_global_end_exclusive,
+              gys_cell_global_start, gye_cell_global_end_exclusive,
+              gzs_cell_global_start, gze_cell_global_end_exclusive);
+
+    PetscFunctionReturn(0);
+}
+
 
 /**
  * @brief Retrieves the coordinates of the eight vertices of the current cell.

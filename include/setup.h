@@ -21,6 +21,7 @@
 #include "interpolation.h"  // Interpolation routines
 #include "AnalyticalSolution.h" // Analytical Solution for testing
 #include "ParticleMotion.h" // Functions related to motion of particles
+#include "Boundaries.h"     //  Functions related to Boundary conditions
 
 
 
@@ -67,10 +68,11 @@ PetscErrorCode registerEvents(void);
  * @param[out] nAllowed No.of functions allowed to show output
  * @param[out] allowedFile indicates the file  that contains the list of allowed functions.
  * @param[out] useCfg Flag for whether a config file is prescribed or to use default.
+ * @param[out] OnlySetup Flag indicating if only setup should be run (for debugging) without advancing the simulation in time.
  *
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  */
-PetscErrorCode InitializeSimulation(UserCtx **user, PetscMPIInt *rank, PetscMPIInt *size, PetscInt *np, PetscInt *StartStep, PetscInt *StepsToRun,PetscReal *StartTime, PetscInt *nblk, PetscInt *outputFreq, PetscBool *readFields, char ***allowedFuncs, PetscInt *nAllowed, char *allowedFile, PetscBool *useCfg);
+PetscErrorCode InitializeSimulation(UserCtx **user, PetscMPIInt *rank, PetscMPIInt *size, PetscInt *np, PetscInt *StartStep, PetscInt *StepsToRun,PetscReal *StartTime, PetscInt *nblk, PetscInt *outputFreq, PetscBool *readFields, char ***allowedFuncs, PetscInt *nAllowed, char *allowedFile, PetscBool *useCfg, PetscBool *OnlySetup);
 
 /** 
  * @brief Setup grid and vectors for the simulation.
@@ -167,24 +169,24 @@ PetscErrorCode Deallocate3DArrayScalar(PetscReal ***array, PetscInt nz, PetscInt
 PetscErrorCode Deallocate3DArrayVector(Cmpnts ***array, PetscInt nz, PetscInt ny);
 
 /**
- * @brief Determines the range of CELL indices owned by the current processor.
+ * @brief Determines the global starting index and number of CELLS owned by the
+ *        current processor in a specified dimension. Ownership is defined by the
+ *        rank owning the cell's origin node (min i,j,k corner).
  *
- * Based on the local node ownership information provided by a DMDA's DMDALocalInfo
- * (typically from the node-based fda DM), this function calculates the starting
- * global index (xs_cell) and the number of cells (xm_cell) owned by the
- * current process in one specified dimension (x, y, or z).
- *
- * @param[in]  info_nodes Pointer to the DMDALocalInfo struct obtained from the NODE-based DMDA (e.g., user->fda).
- * @param[in]  dim        The dimension to compute the range for (0 for x/i, 1 for y/j, 2 for z/k).
- * @param[out] xs_cell    Pointer to store the starting global CELL index owned by this process in the specified dimension.
- * @param[out] xm_cell    Pointer to store the number of CELLs owned by this process in the specified dimension.
+ * @param[in]  info_nodes     Pointer to the DMDALocalInfo struct obtained from the NODE-based DMDA
+ *                            (e.g., user->da or user->fda, assuming they have consistent nodal partitioning
+ *                            for defining cell origins).
+ * @param[in]  dim            The dimension to compute the range for (0 for x/i, 1 for y/j, 2 for z/k).
+ * @param[out] xs_cell_global Pointer to store the starting GLOBAL CELL index owned by this process.
+ *                            A cell C(i) is defined by nodes N(i) and N(i+1). Its global index is i.
+ * @param[out] xm_cell_local  Pointer to store the NUMBER of CELLs owned by this process in this dimension.
  *
  * @return PetscErrorCode 0 on success.
- *
- * @note A processor owning nodes xs_node to xe_node-1 owns cells xs_node to xe_node-2.
- *       Special handling is included for processors owning only the last node.
  */
-PetscErrorCode GetOwnedCellRange(const DMDALocalInfo *info_nodes, PetscInt dim, PetscInt *xs_cell, PetscInt *xm_cell);
+PetscErrorCode GetOwnedCellRange(const DMDALocalInfo *info_nodes,
+                                 PetscInt dim,
+                                 PetscInt *xs_cell_global,
+                                 PetscInt *xm_cell_local);
 
 /**
  * @brief Updates the local vector (including ghost points) from its corresponding global vector.
@@ -230,6 +232,36 @@ PetscErrorCode UpdateLocalGhosts(UserCtx* user, const char *fieldName);
  * @return PetscErrorCode 0 on success, non-zero on failure.
  */
 PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartStep, PetscReal time, PetscBool readFields);
+
+
+/**
+ * @brief Performs the complete initial setup for the particle simulation at time t=0.
+ *
+ * This includes:
+ * 1. Initial locating of particles (based on their potentially arbitrary initial assignment).
+ * 2. A preliminary migration cycle to ensure particles are on the MPI rank that owns
+ *    their initial physical region.
+ * 3. If `user->ParticleInitialization == 0` (Surface Init), re-initializes particles on the
+ *    designated inlet surface. This ensures particles migrated to an inlet-owning rank
+ *    are correctly distributed on that surface.
+ * 4. A final locating of all particles to get their correct cell indices and interpolation weights.
+ * 5. Interpolation of initial Eulerian fields to the particles.
+ * 6. Scattering of particle data to Eulerian fields (if applicable).
+ * 7. Outputting initial data if requested.
+ *
+ * @param user Pointer to the UserCtx structure.
+ * @param currentTime The current simulation time (should be StartTime, typically 0.0).
+ * @param step The current simulation step (should be StartStep, typically 0).
+ * @param readFields Flag indicating if Eulerian fields were read from file (influences output).
+ * @param bboxlist Array of BoundingBox structures for domain decomposition.
+ * @param OutputFreq Frequency for writing output files.
+ * @param StepsToRun Total number of simulation steps planned (used for output logic on setup-only runs).
+ * @param StartStep The starting step of the simulation (used for output logic).
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode PerformInitialSetup(UserCtx *user, PetscReal currentTime, PetscInt step,
+                                   PetscBool readFields, const BoundingBox *bboxlist,
+                                   PetscInt OutputFreq, PetscInt StepsToRun, PetscInt StartStep);
 
 /**
  * @brief Executes the main time-marching loop for the particle simulation.

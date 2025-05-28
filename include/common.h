@@ -167,7 +167,7 @@ typedef struct {
     PetscReal dt;           ///< Time step.
     PetscReal ren;          ///< Reynolds number.
     PetscReal ti;            ///< Current time.
-    PetscReal step;            /// Current Timestep Index.
+    PetscInt step;            /// Current Timestep Index.
     PetscInt  FieldInitialization;
     PetscInt  LoggingFrequency;  // Logging frequency for particle data logging (LOG_PARTICLE_FIELDS)
   

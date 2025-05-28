@@ -175,6 +175,37 @@ PetscErrorCode ReadGridFile(const char *filename, PetscInt *nblk,
     return 0;
 }
 
+// Helper function to construct the filename and test existence
+// This avoids repeating the snprintf and PetscTestFile logic for each field.
+static PetscErrorCode CheckDataFile(PetscInt ti, const char *fieldName, const char *ext, PetscBool *fileExists)
+{
+    PetscErrorCode ierr;
+    char           filename[PETSC_MAX_PATH_LEN];
+    PetscMPIInt    rank; // Use PetscMPIInt for MPI rank
+
+    PetscFunctionBeginUser;
+    *fileExists = PETSC_FALSE; // Default to not existing
+
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+
+    // Construct filename: results/FIELDNAME<#####>_RANK.EXT
+    // Ensure the format string correctly uses PetscInt_FMT for ti if it's PetscInt
+    // and %d for rank if it's int/PetscMPIInt.
+    // Based on your logs: "results/ufield00000_0.dat"
+    // fieldName, ti (5 digits), rank (integer), ext
+    ierr = PetscSNPrintf(filename, sizeof(filename), "results/%s%05" PetscInt_FMT "_%d.%s",
+                         fieldName, ti, (int)rank, ext); CHKERRQ(ierr);
+    
+    ierr = PetscTestFile(filename, 'r', fileExists); CHKERRQ(ierr);
+
+    if (!(*fileExists)) {
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "CheckDataFile - Optional data file '%s' for field '%s' at ti=%d not found.\n", filename, fieldName, ti);
+    } else {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "CheckDataFile - Data file '%s' for field '%s' at ti=%d found.\n", filename, fieldName, ti);
+    }
+    PetscFunctionReturn(0);
+}
+
 /**
  * @brief Reads data for a specific field from a file into the provided vector.
  *
@@ -1532,6 +1563,7 @@ PetscErrorCode ReadAllSwarmFields(UserCtx *user, PetscInt ti)
 {
   PetscErrorCode ierr;
   PetscInt nGlobal;
+  PetscBool fileExists;
 
   PetscFunctionBegin;
   ierr = DMSwarmGetSize(user->swarm, &nGlobal); CHKERRQ(ierr); // Get final size
@@ -1559,7 +1591,8 @@ PetscErrorCode ReadAllSwarmFields(UserCtx *user, PetscInt ti)
   }
 
   // 2) Read velocity
-  ierr = ReadSwarmField(user, "velocity", ti, "dat");
+  ierr = CheckDataFile(ti, "velocity", "dat", &fileExists);
+  if(fileExists) ierr = ReadSwarmField(user, "velocity", ti, "dat");
    if (ierr == PETSC_ERR_FILE_OPEN) { // Handle potentially missing file as warning
         LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadAllSwarmFields - Velocity file for step %d not found. Velocity data may be invalid/uninitialized.\n", ti);
    } else if (ierr) {
@@ -1570,7 +1603,8 @@ PetscErrorCode ReadAllSwarmFields(UserCtx *user, PetscInt ti)
    }
 
   // 3) Read pos_phy
-  ierr = ReadSwarmField(user, "pos_phy", ti, "dat");
+  ierr = CheckDataFile(ti, "pos_phy", "dat", &fileExists); 
+  if(fileExists) ierr = ReadSwarmField(user, "pos_phy", ti, "dat");
    if (ierr == PETSC_ERR_FILE_OPEN) { // Handle potentially missing file as warning
         LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadAllSwarmFields - Physical position file for step %d not found. physical position data may be invalid/uninitialized.\n", ti);
    } else if (ierr) {
@@ -1581,7 +1615,8 @@ PetscErrorCode ReadAllSwarmFields(UserCtx *user, PetscInt ti)
    }
    
   // 3) Read CellID (Optional)
-  // ierr = ReadSwarmField(user, "DMSwarm_CellID", ti, "dat");
+  // ierr = CheckDataFile(ti, "velocity", ext, &fileExists); 
+  // if(fileExists)ierr = ReadSwarmField(user, "DMSwarm_CellID", ti, "dat");
   // if (ierr == PETSC_ERR_FILE_OPEN) { LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadAllSwarmFields - CellID file for step %d not found.\n", ti); }
   // else CHKERRQ(ierr); // Treat other errors as fatal unless CellID read can also fail gracefully
 

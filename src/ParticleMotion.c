@@ -895,3 +895,202 @@ PetscErrorCode PreCheckAndResizeSwarm(UserCtx *user,
 
     PetscFunctionReturn(0); // Return 0 only if everything succeeded
 }
+
+
+/**
+ * @brief Performs one full cycle of particle migration: identify, set ranks, and migrate.
+ *
+ * This function encapsulates the three main steps of migrating particles between MPI ranks:
+ * 1. Identify particles on the local rank that need to move based on their current
+ *    positions and the domain decomposition (`bboxlist`).
+ * 2. Determine the destination rank for each migrating particle.
+ * 3. Perform the actual migration using PETSc's `DMSwarmMigrate`.
+ * It also calculates and logs the global number of particles migrated.
+ *
+ * @param user Pointer to the UserCtx structure.
+ * @param bboxlist Array of BoundingBox structures defining the spatial domain of each MPI rank.
+ * @param migrationList_p Pointer to a pointer for the MigrationInfo array. This array will be
+ *                        allocated/reallocated by `IdentifyMigratingParticles` if necessary.
+ *                        The caller is responsible for freeing this list eventually.
+ * @param migrationCount_p Pointer to store the number of particles identified for migration
+ *                         on the local rank. This is reset to 0 after migration for the current cycle.
+ * @param migrationListCapacity_p Pointer to store the current capacity of the `migrationList_p` array.
+ * @param currentTime Current simulation time (used for logging).
+ * @param step Current simulation step number (used for logging).
+ * @param migrationCycleName A descriptive name for this migration cycle (e.g., "Preliminary Sort", "Main Loop")
+ *                           for logging purposes.
+ * @param[out] globalMigrationCount_out Pointer to store the total number of particles migrated
+ *                                      across all MPI ranks during this cycle.
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode PerformSingleParticleMigrationCycle(UserCtx *user, const BoundingBox *bboxlist,
+                                                   MigrationInfo **migrationList_p, PetscInt *migrationCount_p,
+                                                   PetscInt *migrationListCapacity_p,
+                                                   PetscReal currentTime, PetscInt step, const char *migrationCycleName,
+                                                   PetscInt *globalMigrationCount_out)
+{
+    PetscErrorCode ierr;
+    PetscMPIInt    rank; // MPI rank of the current process
+
+    PetscFunctionBeginUser;
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+
+    // Step 1: Identify particles that need to migrate from the current rank
+    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] %s Migration: Identifying migrating particles.\n", currentTime, step, migrationCycleName);
+    ierr = IdentifyMigratingParticles(user, bboxlist, migrationList_p, migrationCount_p, migrationListCapacity_p); CHKERRQ(ierr);
+
+    // Step 2: Get the global count of migrating particles
+    PetscInt localMigrationCount = *migrationCount_p; // Use a local variable for MPI_Allreduce
+    ierr = MPI_Allreduce(&localMigrationCount, globalMigrationCount_out, 1, MPIU_INT, MPI_SUM, PETSC_COMM_WORLD); CHKERRQ(ierr);
+
+    // Step 3: Perform migration if any particles are moving globally
+    if (*globalMigrationCount_out > 0) {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] %s Migration: Performing migration (%d particles globally, %d locally from rank %d).\n",
+                  currentTime, step, migrationCycleName, *globalMigrationCount_out, localMigrationCount, rank);
+        // Set the destination ranks for the locally identified migrating particles
+        ierr = SetMigrationRanks(user, *migrationList_p, localMigrationCount); CHKERRQ(ierr);
+        // Execute the migration
+        ierr = PerformMigration(user); CHKERRQ(ierr);
+    } else {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] %s Migration: No particles identified globally for migration.\n", currentTime, step, migrationCycleName);
+    }
+
+    // Reset local migration count for the next potential migration cycle by the caller.
+    // The migrationList and its capacity persist and are managed by the caller.
+    *migrationCount_p = 0;
+
+    PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Re-initializes the positions of particles currently on this rank if this rank owns
+ *        part of the designated inlet surface.
+ *
+ * This function is intended for `user->ParticleInitialization == 0` (Surface Initialization mode)
+ * and is typically called after an initial migration step (e.g., in `PerformInitialSetup`).
+ * It ensures that all particles that should originate from the inlet surface and are now
+ * on the correct MPI rank are properly distributed across that rank's portion of the inlet.
+ *
+ * @param user Pointer to the UserCtx structure, containing simulation settings and grid information.
+ * @param currentTime Current simulation time (used for logging).
+ * @param step Current simulation step number (used for logging).
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode ReinitializeParticlesOnInletSurface(UserCtx *user, PetscReal currentTime, PetscInt step)
+{
+    PetscErrorCode ierr;
+    PetscMPIInt    rank;                        // MPI rank of the current process
+    DM             swarm = user->swarm;         // The particle swarm DM
+    PetscReal      *positions_field = NULL;     // Pointer to swarm field for physical positions
+    PetscReal      *pos_phy_field = NULL;       // Pointer to swarm field for physical positions (backup)
+    PetscInt64     *particleIDs = NULL;         // Pointer to swarm field for Particle IDs (for logging)
+    const Cmpnts   ***coor_nodes_local_array;   // Read-only access to local node coordinates
+    Vec            Coor_local;                  // Local vector for node coordinates
+    DMDALocalInfo  info;                        // Local grid information (node-based) from user->da
+    PetscInt       xs_gnode_rank, ys_gnode_rank, zs_gnode_rank; // Local starting node indices (incl. ghosts) of rank's DA
+    PetscInt       IM_nodes_global, JM_nodes_global, KM_nodes_global; // Global node counts
+
+    PetscRandom    rand_logic_i, rand_logic_j, rand_logic_k; // RNGs for re-placement
+    PetscInt       nlocal_current;                // Number of particles currently on this rank
+    PetscInt       particles_actually_reinitialized_count = 0; // Counter for logging
+    PetscBool      can_this_rank_service_inlet = PETSC_FALSE;  // Flag
+
+    PetscFunctionBeginUser;
+
+    // This function is only relevant for surface initialization mode and if an inlet face is defined.
+    if (user->ParticleInitialization != 0 || !user->inletFaceDefined) {
+        PetscFunctionReturn(0);
+    }
+
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    ierr = DMSwarmGetLocalSize(swarm, &nlocal_current); CHKERRQ(ierr);
+
+    // If no particles on this rank, nothing to do.
+    if (nlocal_current == 0) {
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d] Rank %d has no local particles to re-initialize on inlet.\n", currentTime, step, rank);
+        PetscFunctionReturn(0);
+    }
+
+    // Get DMDA information for the node-centered coordinate grid (user->da)
+    ierr = DMDAGetLocalInfo(user->da, &info); CHKERRQ(ierr);
+    ierr = DMDAGetInfo(user->da, NULL, &IM_nodes_global, &JM_nodes_global, &KM_nodes_global, NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL); CHKERRQ(ierr);
+    ierr = DMDAGetGhostCorners(user->da, &xs_gnode_rank, &ys_gnode_rank, &zs_gnode_rank, NULL, NULL, NULL); CHKERRQ(ierr);
+
+    // Check if this rank is responsible for (part of) the designated inlet surface
+    ierr = CanRankServiceInletFace(user, &info, IM_nodes_global, JM_nodes_global, KM_nodes_global, &can_this_rank_service_inlet); CHKERRQ(ierr);
+
+    if (!can_this_rank_service_inlet) {
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d] Rank %d cannot service inlet face %d. Skipping re-initialization of %d particles.\n", currentTime, step, rank, user->identifiedInletBCFace, nlocal_current);
+        PetscFunctionReturn(0);
+    }
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Rank %d is on inlet face %d. Attempting to re-place %d local particles.\n", currentTime, step, rank, user->identifiedInletBCFace, nlocal_current);
+
+    // Get coordinate array and swarm fields for modification
+    ierr = DMGetCoordinatesLocal(user->da, &Coor_local); CHKERRQ(ierr);
+    ierr = DMDAVecGetArrayRead(user->fda, Coor_local, (void*)&coor_nodes_local_array); CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "position",       NULL, NULL, (void**)&positions_field); CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "pos_phy",        NULL, NULL, (void**)&pos_phy_field);   CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "DMSwarm_pid",    NULL, NULL, (void**)&particleIDs);    CHKERRQ(ierr); // For logging
+
+    // Initialize fresh RNGs for this re-placement to ensure good distribution
+    ierr = InitializeLogicalSpaceRNGs(&rand_logic_i, &rand_logic_j, &rand_logic_k); CHKERRQ(ierr);
+    // Optional: Seed RNGs for deterministic behavior if required, e.g., based on rank and step.
+    // PetscRandomSetSeed(rand_logic_i, (unsigned long)rank*1000 + step + 100); PetscRandomSeed(rand_logic_i); // Example
+
+    // Loop over all particles currently local to this rank
+    for (PetscInt p = 0; p < nlocal_current; p++) {
+        PetscInt  ci_metric_lnode, cj_metric_lnode, ck_metric_lnode; // Local node indices (of rank's DA patch) for cell origin
+        PetscReal xi_metric_logic, eta_metric_logic, zta_metric_logic; // Intra-cell logical coordinates
+        Cmpnts    phys_coords; // To store newly calculated physical coordinates
+
+        // Get random cell on this rank's portion of the inlet and random logical coords within it
+        ierr = GetRandomCellAndLogicOnInletFace(user, &info, xs_gnode_rank, ys_gnode_rank, zs_gnode_rank,
+                                                IM_nodes_global, JM_nodes_global, KM_nodes_global,
+                                                &rand_logic_i, &rand_logic_j, &rand_logic_k,
+                                                &ci_metric_lnode, &cj_metric_lnode, &ck_metric_lnode,
+                                                &xi_metric_logic, &eta_metric_logic, &zta_metric_logic); CHKERRQ(ierr);
+        
+        // Convert these logical coordinates to physical coordinates
+        ierr = MetricLogicalToPhysical(user, coor_nodes_local_array,
+                                       ci_metric_lnode, cj_metric_lnode, ck_metric_lnode,
+                                       xi_metric_logic, eta_metric_logic, zta_metric_logic,
+                                       &phys_coords); CHKERRQ(ierr);
+
+        // Update the particle's position in the swarm fields
+        positions_field[3*p+0] = phys_coords.x; 
+        positions_field[3*p+1] = phys_coords.y; 
+        positions_field[3*p+2] = phys_coords.z;
+        pos_phy_field[3*p+0]   = phys_coords.x; 
+        pos_phy_field[3*p+1]   = phys_coords.y; 
+        pos_phy_field[3*p+2]   = phys_coords.z;
+        particles_actually_reinitialized_count++;
+
+        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, p, (nlocal_current > 20 ? nlocal_current/10 : 1), // Sampled logging
+            "ReInit - Rank %d: PID %lld (idx %ld) RE-PLACED. CellOriginNode(locDAIdx):(%d,%d,%d). LogicCoords: (%.2e,%.2f,%.2f). PhysCoords: (%.6f,%.6f,%.6f).\n",
+            rank, (long long)particleIDs[p], (long)p, 
+            ci_metric_lnode, cj_metric_lnode, ck_metric_lnode,
+            xi_metric_logic, eta_metric_logic, zta_metric_logic, 
+            phys_coords.x, phys_coords.y, phys_coords.z);
+    }
+
+    // Logging summary of re-initialization
+    if (particles_actually_reinitialized_count > 0) {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Rank %d (on inlet face %d) successfully re-initialized %d of %d local particles.\n", currentTime, step, rank, user->identifiedInletBCFace, particles_actually_reinitialized_count, nlocal_current);
+    } else if (nlocal_current > 0) { // This case should ideally not be hit if can_this_rank_service_inlet was true and particles were present.
+         LOG_ALLOW(GLOBAL, LOG_WARNING, "[T=%.4f, Step=%d] Rank %d claimed to service inlet face %d, but re-initialized 0 of %d local particles. This may indicate an issue if particles were expected to be re-placed.\n", currentTime, step, rank, user->identifiedInletBCFace, nlocal_current);
+    }
+
+    // Cleanup: Destroy RNGs and restore swarm fields/coordinate array
+    ierr = PetscRandomDestroy(&rand_logic_i); CHKERRQ(ierr);
+    ierr = PetscRandomDestroy(&rand_logic_j); CHKERRQ(ierr);
+    ierr = PetscRandomDestroy(&rand_logic_k); CHKERRQ(ierr);
+
+    ierr = DMSwarmRestoreField(swarm, "position",       NULL, NULL, (void**)&positions_field); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "pos_phy",        NULL, NULL, (void**)&pos_phy_field);   CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid",    NULL, NULL, (void**)&particleIDs);    CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArrayRead(user->fda, Coor_local, (void*)&coor_nodes_local_array); CHKERRQ(ierr);
+
+    PetscFunctionReturn(0);
+}
+

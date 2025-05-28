@@ -16,181 +16,119 @@
 #define ERROR_MSG_BUFFER_SIZE 256 // Or use PETSC_MAX_PATH_LEN if appropriate
 #endif
 
+
 /**
  * @brief Interpolates a vector field from corner nodes to cell centers.
  *
  * This function estimates the value of a vector field at the center of each
- * computational cell by averaging the values from the 8 corner nodes defining that cell.
+ * computational cell (whose origin node is owned by this rank) by averaging
+ * the values from the 8 corner nodes defining that cell.
  *
- * Assumes input `field_arr` is from a ghosted local vector associated with `user->fda` (DOF=3)
- * and output `centfield_arr` is from a ghosted local vector associated with `user->da` (DOF=1 conceptually,
- * but the output array here needs DOF=3 temporarily or handle components).
- * Better: Output `centfield_arr` is from a ghosted local vector based on `user->fda` as well,
- * using the node-index convention for storage.
- *
- * Both input and output arrays are accessed using GLOBAL indices within their respective ghosted ranges.
- *
- * @param[in]  field_arr       Input: 3D array (ghosted) of vector data at nodes,
- *                             accessed via GLOBAL node indices (k=0..KM, j=0..JM, i=0..IM).
- * @param[out] centfield_arr   Output: 3D array (ghosted) where interpolated cell center values are stored.
- *                             Crucially, following the original code's convention, this uses the
- *                             NODE indexing (k=0..KM-1, j=0..JM-1, i=0..IM-1) to store the value
- *                             representing cell C(i,j,k) at index [k][j][i].
- * @param[in]  user            User context containing DMDA information (da and fda).
+ * @param[in]  field_arr       Input: 3D array view (ghosted) of vector data at nodes,
+ *                             obtained from a Vec associated with user->fda. Accessed via GLOBAL node indices.
+ *                             Ghost values must be up-to-date.
+ * @param[out] centfield_arr   Output: 3D local array (0-indexed) where interpolated cell center values
+ *                             are stored. Sized [zm_cell_local][ym_cell_local][xm_cell_local]
+ *                             by the caller. centfield_arr[k_loc][j_loc][i_loc] stores the value for
+ *                             the cell corresponding to the (i_loc, j_loc, k_loc)-th owned cell origin.
+ * @param[in]  user            User context containing DMDA information (fda, IM, JM, KM).
  *
  * @return PetscErrorCode 0 on success.
  */
 PetscErrorCode InterpolateFieldFromCornerToCenter_Vector(
-    Cmpnts ***field_arr,     /* Input: Ghosted local array based on fda (node indices) */
-    Cmpnts ***centfield_arr, /* Output: Ghosted local array based on fda (node indices) */
+    Cmpnts ***field_arr,     /* Input: Ghosted local array view from user->fda (global node indices) */
+    Cmpnts ***centfield_arr, /* Output: Local 0-indexed array */
     UserCtx *user)
 {
     PetscErrorCode ierr;
     PetscMPIInt    rank;
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
     LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
-      "Rank %d starting interpolation.\n", rank);
+                   "Rank %d starting InterpolateFieldFromCornerToCenter_Vector.\n", rank);
+
+    // Get local info based on the NODE-based DMDA (user->fda)
+    // This DM defines the ownership of the nodes from which we interpolate,
+    // and thus defines the cells whose centers we will compute.
+    DMDALocalInfo info_nodes_fda;
+    ierr = DMDAGetLocalInfo(user->fda, &info_nodes_fda); CHKERRQ(ierr);
+
+    // Determine owned CELL ranges based on owning their origin NODES (from user->fda)
+    PetscInt xs_cell_global_i, xm_cell_local_i; // Global start cell index, local count of owned cells
+    PetscInt ys_cell_global_j, ym_cell_local_j;
+    PetscInt zs_cell_global_k, zm_cell_local_k;
+
     
-    // Get local info based on the NODE-based DMDA (fda)
-    DMDALocalInfo info_nodes;
-    ierr = DMDAGetLocalInfo(user->fda, &info_nodes); CHKERRQ(ierr);
+    ierr = GetOwnedCellRange(&info_nodes_fda, 0, &xs_cell_global_i, &xm_cell_local_i); CHKERRQ(ierr);
+    ierr = GetOwnedCellRange(&info_nodes_fda, 1, &ys_cell_global_j, &ym_cell_local_j); CHKERRQ(ierr);
+    ierr = GetOwnedCellRange(&info_nodes_fda, 2, &zs_cell_global_k, &zm_cell_local_k); CHKERRQ(ierr);
 
-    /* --- DEBUG ---------------
-    if (rank == 1) {
-    PetscInt ghost_k = info_nodes.zs - 1; // Should be 50 (owned by Rank 0)
-    PetscInt ghost_j = info_nodes.ys;     // Example: 0
-    PetscInt ghost_i = info_nodes.xs;     // Example: 0
-    PetscInt gzs = info_nodes.gzs;
-    PetscInt gzm = info_nodes.gzm;
+    // Exclusive end global cell indices
+    PetscInt xe_cell_global_i_excl = xs_cell_global_i + xm_cell_local_i;
+    PetscInt ye_cell_global_j_excl = ys_cell_global_j + ym_cell_local_j;
+    PetscInt ze_cell_global_k_excl = zs_cell_global_k + zm_cell_local_k;
 
-    // Check if the ghost index is theoretically accessible
-    if (ghost_k >= gzs && ghost_k < gzs + gzm) {
-        LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank 1: Attempting to read ghost node [%d][%d][%d]\n", ghost_k, ghost_j, ghost_i);
-        Cmpnts test_val = field_arr[ghost_k][ghost_j][ghost_i]; // Try reading
-        LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank 1: Successfully read ghost node: x=%.3f\n", test_val.x);
-    } else {
-        LOG_ALLOW(LOCAL, LOG_WARNING, "Rank 1: Calculated ghost index k=%d is outside accessible range [%d, %d)\n", ghost_k, gzs, gzs+gzm);
-      }
-    } 
-    ------------ DEBUG -----------
-    */
-    
-    // --- Determine owned CELL ranges using the helper function ---
-    PetscInt xs_cell, xm_cell, xe_cell;
-    PetscInt ys_cell, ym_cell, ye_cell;
-    PetscInt zs_cell, zm_cell, ze_cell;
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d (IFCTCV): Processing Owned Cells (global indices) k=%d..%d (count %d), j=%d..%d (count %d), i=%d..%d (count %d)\n",
+              rank,
+              zs_cell_global_k, ze_cell_global_k_excl -1, zm_cell_local_k,
+              ys_cell_global_j, ye_cell_global_j_excl -1, ym_cell_local_j,
+              xs_cell_global_i, xe_cell_global_i_excl -1, xm_cell_local_i);
 
-    ierr = GetOwnedCellRange(&info_nodes, 0, &xs_cell, &xm_cell); CHKERRQ(ierr);
-    ierr = GetOwnedCellRange(&info_nodes, 1, &ys_cell, &ym_cell); CHKERRQ(ierr);
-    ierr = GetOwnedCellRange(&info_nodes, 2, &zs_cell, &zm_cell); CHKERRQ(ierr);
+    // Loop over the GLOBAL indices of the CELLS whose origin nodes are owned by this processor
+    // (according to user->fda partitioning)
+    for (PetscInt k_glob_cell = zs_cell_global_k; k_glob_cell < ze_cell_global_k_excl; k_glob_cell++) {
+        PetscInt k_local = k_glob_cell - zs_cell_global_k; // 0-based local index for centfield_arr
 
-    xe_cell = xs_cell + xm_cell; // Calculate exclusive end indices
-    ye_cell = ys_cell + ym_cell;
-    ze_cell = zs_cell + zm_cell;
+        for (PetscInt j_glob_cell = ys_cell_global_j; j_glob_cell < ye_cell_global_j_excl; j_glob_cell++) {
+            PetscInt j_local = j_glob_cell - ys_cell_global_j; // 0-based local index
 
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Processing Owned Cells k=%d..%d (%d), j=%d..%d (%d), i=%d..%d (%d)\n",
-              rank, zs_cell, ze_cell, zm_cell, ys_cell, ye_cell, ym_cell, xs_cell, xe_cell, xm_cell);
-
-    // Loop over the GLOBAL indices of the CELLS owned by this processor
-    for (PetscInt k = zs_cell; k < ze_cell; k++) {
-        for (PetscInt j = ys_cell; j < ye_cell; j++) {
-            for (PetscInt i = xs_cell; i < xe_cell; i++) {
+            for (PetscInt i_glob_cell = xs_cell_global_i; i_glob_cell < xe_cell_global_i_excl; i_glob_cell++) {
+                PetscInt i_local = i_glob_cell - xs_cell_global_i; // 0-based local index
 
                 Cmpnts sum = {0.0, 0.0, 0.0};
-                PetscInt count = 0;
+                // Count is always 8 for a hexahedral cell
+                // PetscInt count = 0; // Not strictly needed if we assume 8 corners
 
-                // Loop over the 8 NODE indices that define cell C(i,j,k)
+                // Loop over the 8 corner NODES that define cell C(i_glob_cell, j_glob_cell, k_glob_cell)
                 for (PetscInt dk = 0; dk < 2; dk++) {
                     for (PetscInt dj = 0; dj < 2; dj++) {
                         for (PetscInt di = 0; di < 2; di++) {
-                            PetscInt ni = i + di; // Global NODE index i or i+1
-                            PetscInt nj = j + dj; // Global NODE index j or j+1
-                            PetscInt nk = k + dk; // Global NODE index k or k+1
+                            PetscInt ni_glob = i_glob_cell + di; // Global NODE index i or i+1
+                            PetscInt nj_glob = j_glob_cell + dj; // Global NODE index j or j+1
+                            PetscInt nk_glob = k_glob_cell + dk; // Global NODE index k or k+1
 
-			    /*
-                            ------ DEBUG -------------
-			    //#if 1 // DEBUGGING BLOCK
-			    if (rank == 1 ) { // Only log for rank 1 where crash occurs ( multi-proc vs single testing) 
-			      PetscInt gxs = info_nodes.gxs; PetscInt gxm = info_nodes.gxm;
-			      PetscInt gys = info_nodes.gys; PetscInt gym = info_nodes.gym;
-			      PetscInt gzs = info_nodes.gzs; PetscInt gzm = info_nodes.gzm;
-			      LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG,i+j+k,10,
-					"Rank 1: Accessing field_arr[%d][%d][%d]. Cell(i,j,k)=(%d,%d,%d). Ghost Range: k=%d..%d, j=%d..%d, i=%d..%d\n",
-					nk, nj, ni, k, j, i, gzs, gzs+gzm-1, gys, gys+gym-1, gxs, gxs+gxm-1);
-			      // Add assertion
-			      if (nk < gzs || nk >= gzs+gzm || nj < gys || nj >= gys+gym || ni < gxs || ni >= gxs+gxm) {
-				SETERRQ(PETSC_COMM_SELF, 1, "Rank 1 FATAL: Attempt to access index [%d][%d][%d] outside valid ghost range (k=%d..%d, j=%d..%d, i=%d..%d)",
-					nk,nj,ni, gzs,gzs+gzm-1, gys,gys+gym-1, gxs,gxs+gxm-1);
-			      }
-
-			      if(nk < info_nodes.zs){
-				LOG_ALLOW(LOCAL, LOG_DEBUG,"Rank 1: Is accessing ghost node k=%d. Overriding temporarily.\n", nk);
-				field_arr[nk][nj][ni].x = 123.45; // TEMPORARY TEST - DON'T KEEP
-				field_arr[nk][nj][ni].y = 123.45;
-				field_arr[nk][nj][ni].z = 123.45;
-				// If it runs past this point now, the original ghost data was bad.
-				// If it still crashes HERE, the pointer/index itself is bad.
-			      }
-			    }
-			    //#endif
-                            -------- DEBUG -------------------
-                            */
-                            
-			    
                             // Access the input 'field_arr' (node values) using GLOBAL node indices.
-                            sum.x += field_arr[nk][nj][ni].x;
-                            sum.y += field_arr[nk][nj][ni].y;
-                            sum.z += field_arr[nk][nj][ni].z;
-                            count++;
+                            // Ghosts in field_arr must be valid.
+                            // DMDAVecGetArrayRead handles mapping global indices to local memory.
+                            sum.x += field_arr[nk_glob][nj_glob][ni_glob].x;
+                            sum.y += field_arr[nk_glob][nj_glob][ni_glob].y;
+                            sum.z += field_arr[nk_glob][nj_glob][ni_glob].z;
+                            // count++;
                         }
                     }
                 }
 
                 // Calculate average value representing the cell center
                 Cmpnts center_value;
-                if (count == 8) { // Should be 8 if ghosting is correct
-                     center_value.x = sum.x / 8.0;
-                     center_value.y = sum.y / 8.0;
-                     center_value.z = sum.z / 8.0;
-                } else {
-                     LOG_ALLOW(LOCAL, LOG_ERROR, "Rank %d: Cell C(i=%d,j=%d,k=%d) had count=%d corners! Check input ghosting.\n", rank, i, j, k, count);
-                     center_value.x = 0.0; center_value.y = 0.0; center_value.z = 0.0;
+                center_value.x = sum.x / 8.0;
+                center_value.y = sum.y / 8.0;
+                center_value.z = sum.z / 8.0;
+
+                // Store result into the local, 0-indexed output array 'centfield_arr'
+                // Defensive check (should not be strictly necessary if caller allocated centfield_arr
+                // with dimensions xm_cell_local_i, ym_cell_local_j, zm_cell_local_k)
+                if (i_local < 0 || i_local >= xm_cell_local_i ||
+                    j_local < 0 || j_local >= ym_cell_local_j ||
+                    k_local < 0 || k_local >= zm_cell_local_k) {
+                    SETERRQ(PETSC_COMM_SELF, PETSC_ERR_PLIB, "Local index out of bounds for centfield_arr write!");
                 }
+                centfield_arr[k_local][j_local][i_local] = center_value;
 
-		// --->>> POTENTIAL CRASH LOCATION (Write to output) <<<---
-		// Store result using local 0-based index for output 'centfield_arr'
-		PetscInt k_local = k - zs_cell;
-		PetscInt j_local = j - ys_cell;
-		PetscInt i_local = i - xs_cell;
-
-		// Check local bounds just before writing
-		if (k_local < 0 || k_local >= zm_cell ||
-		    j_local < 0 || j_local >= ym_cell ||
-		    i_local < 0 || i_local >= xm_cell)
-		  {
-		    SETERRQ(PETSC_COMM_SELF, 1, "Rank %d FATAL: Attempt to write centfield at invalid local index [%d][%d][%d]. Cell(i,j,k)=(%d,%d,%d). Owned cell counts (zm,ym,xm)=(%d,%d,%d)", rank, k_local, j_local, i_local, k, j, i, zm_cell, ym_cell, xm_cell);
-		  }
-		// Write to the temporary local array
-		centfield_arr[k_local][j_local][i_local] = center_value;
-		// --->>> END POTENTIAL CRASH LOCATION <<<---
-		/*
-                // Store the calculated cell center value into the output array 'centfield_arr'
-                // using the NODE index convention: Value for C(i,j,k) stored at node index [k][j][i].
-                // Only store if the target node index (i,j,k) corresponds to an interior node.
-                 if (i >= 1 && i < info_nodes.mx - 1 &&
-                     j >= 1 && j < info_nodes.my - 1 &&
-                     k >= 1 && k < info_nodes.mz - 1)
-                 {
-                      centfield_arr[k][j][i] = center_value;
-                 }
-		*/
-                 // Else: Do not write to boundary node indices [k][j][0], [k][j][IM], etc.
-            } // End loop i (cells)
-        } // End loop j (cells)
-    } // End loop k (cells)
+            } // End loop i_glob_cell
+        } // End loop j_glob_cell
+    } // End loop k_glob_cell
 
     LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
-              "Rank %d completed interpolation.\n", rank);
+                   "Rank %d completed InterpolateFieldFromCornerToCenter_Vector.\n", rank);
     return 0;
 }
 
@@ -202,112 +140,103 @@ PetscErrorCode InterpolateFieldFromCornerToCenter_Vector(
  * @brief Interpolates a scalar field from corner nodes to cell centers.
  *
  * This function estimates the value of a scalar field at the center of each
- * computational cell by averaging the values from the 8 corner nodes defining that cell.
- * It handles physical boundaries by averaging only the available adjacent cells.
+ * computational cell (whose origin node is owned by this rank) by averaging
+ * the values from the 8 corner nodes defining that cell.
  *
- * Assumes input `field_arr` is from a ghosted local vector associated with `user->da` (DOF=1, s=2)
- * and output `centfield_arr` is from a local vector associated with `user->da` (DOF=1, s=2).
- * Input array uses GLOBAL node indices, output array uses LOCAL cell indices.
- *
- * @param[in]  field_arr       Input: 3D array (ghosted) of scalar data at nodes,
- *                             accessed via GLOBAL node indices (k=0..KM, j=0..JM, i=0..IM).
- * @param[out] centfield_arr   Output: 3D array (local) where interpolated cell center values are stored,
- *                             accessed via LOCAL 0-based cell indices (k=0..zm-1, j=0..ym-1, i=0..xm-1).
- * @param[in]  user            User context containing DMDA information (da).
+ * @param[in]  field_arr       Input: 3D array view (ghosted) of scalar data at nodes,
+ *                             obtained from a Vec associated with user->da. Accessed via GLOBAL node indices.
+ *                             Ghost values must be up-to-date.
+ * @param[out] centfield_arr   Output: 3D local array (0-indexed) where interpolated cell center values
+ *                             are stored. Sized [zm_cell_local][ym_cell_local][xm_cell_local]
+ *                             by the caller. centfield_arr[k_loc][j_loc][i_loc] stores the value for
+ *                             the cell corresponding to the (i_loc, j_loc, k_loc)-th owned cell origin.
+ * @param[in]  user            User context containing DMDA information (da, IM, JM, KM).
  *
  * @return PetscErrorCode 0 on success.
  */
 PetscErrorCode InterpolateFieldFromCornerToCenter_Scalar(
-    PetscReal ***field_arr,     /* Input: Ghosted local array based on da (node indices) */
-    PetscReal ***centfield_arr, /* Output: Local array for cell centers (local indices) */
+    PetscReal ***field_arr,     /* Input: Ghosted local array view from user->da (global node indices) */
+    PetscReal ***centfield_arr, /* Output: Local 0-indexed array for cell centers */
     UserCtx *user)
 {
     PetscErrorCode ierr;
     PetscMPIInt    rank;
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
     LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
-      "Rank %d starting interpolation.\n", rank);
+                   "Rank %d starting InterpolateFieldFromCornerToCenter_Scalar.\n", rank);
 
-    // Get local info based on the DA (da holds node info but used for cell concepts here)
-    DMDALocalInfo info;
-    ierr = DMDAGetLocalInfo(user->da, &info); CHKERRQ(ierr); // Use info from da
+    // Get local info based on user->da (which is node-based but defines cell origins)
+    DMDALocalInfo info_da_nodes;
+    ierr = DMDAGetLocalInfo(user->da, &info_da_nodes); CHKERRQ(ierr);
 
-    // --- Determine owned CELL ranges using the helper function ---
-    // We need the node info from 'da' to calculate the owned cell range
-    PetscInt xs_cell, xm_cell, xe_cell;
-    PetscInt ys_cell, ym_cell, ye_cell;
-    PetscInt zs_cell, zm_cell, ze_cell;
+    // Determine owned CELL ranges based on owning their origin NODES (from user->da)
+    PetscInt xs_cell_global_i, xm_cell_local_i; // Global start cell index, local count of owned cells
+    PetscInt ys_cell_global_j, ym_cell_local_j;
+    PetscInt zs_cell_global_k, zm_cell_local_k;
 
-    ierr = GetOwnedCellRange(&info, 0, &xs_cell, &xm_cell); CHKERRQ(ierr);
-    ierr = GetOwnedCellRange(&info, 1, &ys_cell, &ym_cell); CHKERRQ(ierr);
-    ierr = GetOwnedCellRange(&info, 2, &zs_cell, &zm_cell); CHKERRQ(ierr);
+    ierr = GetOwnedCellRange(&info_da_nodes, 0, &xs_cell_global_i, &xm_cell_local_i); CHKERRQ(ierr);
+    ierr = GetOwnedCellRange(&info_da_nodes, 1, &ys_cell_global_j, &ym_cell_local_j); CHKERRQ(ierr);
+    ierr = GetOwnedCellRange(&info_da_nodes, 2, &zs_cell_global_k, &zm_cell_local_k); CHKERRQ(ierr);
 
-    xe_cell = xs_cell + xm_cell; // Calculate exclusive end indices
-    ye_cell = ys_cell + ym_cell;
-    ze_cell = zs_cell + zm_cell;
+    // Exclusive end global cell indices
+    PetscInt xe_cell_global_i_excl = xs_cell_global_i + xm_cell_local_i;
+    PetscInt ye_cell_global_j_excl = ys_cell_global_j + ym_cell_local_j;
+    PetscInt ze_cell_global_k_excl = zs_cell_global_k + zm_cell_local_k;
 
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Rank %d: Interpolating for owned CELLS k=%d..%d (%d), j=%d..%d (%d), i=%d..%d (%d)\n",
-              rank, zs_cell, ze_cell, zm_cell, ys_cell, ye_cell, ym_cell, xs_cell, xe_cell, xm_cell);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d (IFCTCS): Processing Owned Cells (global indices) k=%d..%d (count %d), j=%d..%d (count %d), i=%d..%d (count %d)\n",
+              rank,
+              zs_cell_global_k, ze_cell_global_k_excl -1, zm_cell_local_k,
+              ys_cell_global_j, ye_cell_global_j_excl -1, ym_cell_local_j,
+              xs_cell_global_i, xe_cell_global_i_excl -1, xm_cell_local_i);
 
-    // Loop over the GLOBAL indices of the CELLS owned by this processor
-    for (PetscInt k = zs_cell; k < ze_cell; k++) { // Global CELL index k (0..KM-1)
-        for (PetscInt j = ys_cell; j < ye_cell; j++) { // Global CELL index j (0..JM-1)
-            for (PetscInt i = xs_cell; i < xe_cell; i++) { // Global CELL index i (0..IM-1)
+    // Loop over the GLOBAL indices of the CELLS whose origin nodes are owned by this processor
+    // (according to user->da partitioning)
+    for (PetscInt k_glob_cell = zs_cell_global_k; k_glob_cell < ze_cell_global_k_excl; k_glob_cell++) {
+        PetscInt k_local = k_glob_cell - zs_cell_global_k; // 0-based local index for centfield_arr
+
+        for (PetscInt j_glob_cell = ys_cell_global_j; j_glob_cell < ye_cell_global_j_excl; j_glob_cell++) {
+            PetscInt j_local = j_glob_cell - ys_cell_global_j; // 0-based local index
+
+            for (PetscInt i_glob_cell = xs_cell_global_i; i_glob_cell < xe_cell_global_i_excl; i_glob_cell++) {
+                PetscInt i_local = i_glob_cell - xs_cell_global_i; // 0-based local index
 
                 PetscReal sum = 0.0;
-                PetscInt count = 0; // Count valid corners found
+                // Count is always 8 for a hexahedral cell if all nodes are accessible
+                // PetscInt count = 0;
 
-                // Loop over the 8 NODE indices that define cell C(i,j,k)
-                // Node indices are i & i+1, j & j+1, k & k+1
+                // Loop over the 8 NODE indices that define cell C(i_glob_cell, j_glob_cell, k_glob_cell)
                 for (PetscInt dk = 0; dk < 2; dk++) {
                     for (PetscInt dj = 0; dj < 2; dj++) {
                         for (PetscInt di = 0; di < 2; di++) {
-                            PetscInt ni = i + di; // Global NODE index for corner
-                            PetscInt nj = j + dj; // Global NODE index for corner
-                            PetscInt nk = k + dk; // Global NODE index for corner
+                            PetscInt ni_glob = i_glob_cell + di; // Global NODE index for corner
+                            PetscInt nj_glob = j_glob_cell + dj; // Global NODE index for corner
+                            PetscInt nk_glob = k_glob_cell + dk; // Global NODE index for corner
 
                             // Access the input 'field_arr' (node values) using GLOBAL node indices.
-                            // Relies on field_arr being from a ghosted local vector.
-                            sum += field_arr[nk][nj][ni];
-                            count++;
+                            sum += field_arr[nk_glob][nj_glob][ni_glob];
+                            // count++;
                         }
                     }
                 }
 
-                // Calculate average value representing the cell center
-                PetscReal center_value;
-                if (count == 8) { // Ensure all corners contributed (expected for valid ghosting)
-                     center_value = sum / 8.0;
-                } else {
-                     // This indicates a problem, likely insufficient ghosts in input field_arr
-                     LOG_ALLOW(GLOBAL, LOG_ERROR, "Rank %d: Cell C(i=%d,j=%d,k=%d) had only %d corners! Check input ghosting.\n", rank, i, j, k, count);
-                     center_value = 0.0; // Assign zero as fallback
-                }
+                PetscReal center_value = sum / 8.0;
 
                 // Store the calculated cell center value into the output array 'centfield_arr'
                 // using the LOCAL 0-based cell index.
-                PetscInt local_k = k - zs_cell;
-                PetscInt local_j = j - ys_cell;
-                PetscInt local_i = i - xs_cell;
+                // Defensive check (should not be strictly necessary if caller allocated centfield_arr correctly)
+                if (i_local < 0 || i_local >= xm_cell_local_i ||
+                    j_local < 0 || j_local >= ym_cell_local_j ||
+                    k_local < 0 || k_local >= zm_cell_local_k) {
+                    SETERRQ(PETSC_COMM_SELF, PETSC_ERR_PLIB, "Local index out of bounds for centfield_arr write in Scalar version!");
+                }
+                centfield_arr[k_local][j_local][i_local] = center_value;
 
-                // Ensure local indices are within the bounds of the centfield_arr allocated for zm*ym*xm cells
-                 if (local_k >= 0 && local_k < zm_cell &&
-                     local_j >= 0 && local_j < ym_cell &&
-                     local_i >= 0 && local_i < xm_cell)
-                 {
-                    centfield_arr[local_k][local_j][local_i] = center_value;
-                 } else {
-                    // This case should ideally not be reached if loop bounds are correct
-                    LOG_ALLOW(GLOBAL, LOG_ERROR,"Rank %d: Calculated local indices [%d][%d][%d] are out of bounds for owned dimensions [%d][%d][%d]!\n",
-                              rank,local_k, local_j, local_i, zm_cell, ym_cell, xm_cell );
-                 }
-
-            } // End loop i (cells)
-        } // End loop j (cells)
-    } // End loop k (cells)
+            } // End loop i_glob_cell
+        } // End loop j_glob_cell
+    } // End loop k_glob_cell
 
     LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
-              "Rank %d completed interpolation.\n", rank);
+                   "Rank %d completed InterpolateFieldFromCornerToCenter_Scalar.\n", rank);
     return 0;
 }
 

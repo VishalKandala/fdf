@@ -47,6 +47,7 @@
  * @param[out] nAllowed_out Number of functions allowed to show log output.
  * @param[in,out] allowedFile_inout Path to the config file for allowed log functions.
  * @param[out] useCfg_out Flag indicating if a config file for logging was used.
+ * @param[out] OnlySetup Flag indicating if only setup should be run (for debugging) without advancing the simulation in time.
  *
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  */
@@ -57,7 +58,7 @@ PetscErrorCode InitializeSimulation(UserCtx **user_ptr, /* Changed name for clar
                                     PetscInt *nblk_out, PetscInt *outputFreq_out,
                                     PetscBool *readFields_out,
                                     char ***allowedFuncs_out, PetscInt *nAllowed_out,
-                                    char *allowedFile_inout, PetscBool *useCfg_out)
+                                    char *allowedFile_inout, PetscBool *useCfg_out,PetscBool* OnlySetup)
 {
     PetscErrorCode ierr;
     UserCtx*       local_user; // Temporary local pointer to the user context
@@ -170,6 +171,8 @@ PetscErrorCode InitializeSimulation(UserCtx **user_ptr, /* Changed name for clar
     ierr = PetscOptionsGetReal(NULL, NULL, "-uin", &(local_user->ConstantVelocity), NULL); CHKERRQ(ierr);
 
     ierr = PetscOptionsGetBool(NULL, NULL, "-read_fields", readFields_out, NULL); CHKERRQ(ierr);
+
+    ierr = PetscOptionsGetBool(NULL, NULL, "-Setup_Only", OnlySetup, NULL); CHKERRQ(ierr);
 
     LOG_ALLOW(GLOBAL,LOG_DEBUG," -- Console Output Functions [Total : %d] : --\n",*nAllowed_out);
     for (PetscInt i = 0; i < *nAllowed_out; ++i) {
@@ -563,55 +566,132 @@ PetscErrorCode Allocate3DArrayVector(Cmpnts ****array, PetscInt nz, PetscInt ny,
 }
 
 /**
- * @brief Determines the range of CELL indices owned by the current processor.
+ * @brief Gets the global starting index of cells owned by this rank and the number of such cells.
  *
- * Based on the local node ownership information provided by a DMDA's DMDALocalInfo
- * (typically from the node-based fda DM), this function calculates the starting
- * global index (xs_cell) and the number of cells (xm_cell) owned by the
- * current process in one specified dimension (x, y, or z).
+ * A cell's global index is considered the same as its origin node's global index.
+ * This function assumes a node-centered DMDA where `info_nodes` provides all necessary
+ * information:
+ *  - `info_nodes->xs, ys, zs`: Global starting index of the first node owned by this rank (excluding ghosts).
+ *  - `info_nodes->xm, ym, zm`: Number of nodes owned by this rank in each dimension (excluding ghosts).
+ *  - `info_nodes->mx, my, mz`: Total number of global nodes in each dimension for the entire domain.
  *
- * @param[in]  info_nodes Pointer to the DMDALocalInfo struct obtained from the NODE-based DMDA (e.g., user->fda).
- * @param[in]  dim        The dimension to compute the range for (0 for x/i, 1 for y/j, 2 for z/k).
- * @param[out] xs_cell    Pointer to store the starting global CELL index owned by this process in the specified dimension.
- * @param[out] xm_cell    Pointer to store the number of CELLs owned by this process in the specified dimension.
+ * A cell `C_k` (0-indexed) is defined by its origin node `N_k` and extends to node `N_{k+1}`.
+ * Thus, the last node in the global domain cannot be an origin for a cell. The last possible
+ * cell origin node index is `GlobalNodesInDim - 2`.
  *
- * @return PetscErrorCode 0 on success.
+ * @param[in] info_nodes Pointer to the DMDALocalInfo struct for the current rank.
+ *                       This struct contains local ownership information (xs, xm, etc.)
+ *                       and global domain dimensions (mx, my, mz for nodes).
+ * @param[in] dim        The dimension for which to get the cell range (0 for i/x, 1 for j/y, 2 for k/z).
+ * @param[out] xs_cell_global_out Pointer to store the global index of the first cell whose origin node
+ *                                is owned by this rank. If the rank owns no valid cell origins in this
+ *                                dimension, this will be the rank's starting node index, but
+ *                                `xm_cell_local_out` will be 0.
+ * @param[out] xm_cell_local_out  Pointer to store the number of cells for which this rank owns the
+ *                                origin node AND that origin node is a valid cell origin within the
+ *                                global domain.
  *
- * @note A processor owning nodes xs_node to xe_node-1 owns cells xs_node to xe_node-2.
- *       Special handling is included for processors owning only the last node.
+ * @return PetscErrorCode 0 on success, or an error code on failure.
+ *
+ * @note Example: If GlobalNodesInDim = 11 (nodes N0 to N10), there are 10 cells (C0 to C9).
+ *       The last cell, C9, has its origin at node N9. So, N9 (index 9) is the last valid
+ *       cell origin (GlobalNodesInDim - 2 = 11 - 2 = 9).
+ *       If a rank owns nodes N8, N9, N10 (xs=8, xm=3):
+ *         - First potential origin on rank = N8.
+ *         - Last potential origin on rank (node that is not the last owned node) = N9.
+ *         - Actual last origin this rank can form = min(N9, GlobalMaxOrigin=N9) = N9.
+ *         - Number of cells = (N9 - N8 + 1) = 2 cells (C8, C9).
+ *       If a rank owns only node N10 (xs=10, xm=1):
+ *         - First potential origin on rank = N10.
+ *         - Actual last origin rank can form = min(N9, GlobalMaxOrigin=N9) (since N10-1=N9).
+ *         - first_potential_origin_on_rank (N10) > actual_last_origin_this_rank_can_form (N9) => 0 cells.
  */
-PetscErrorCode GetOwnedCellRange(const DMDALocalInfo *info_nodes, PetscInt dim, PetscInt *xs_cell, PetscInt *xm_cell)
+PetscErrorCode GetOwnedCellRange(const DMDALocalInfo *info_nodes,
+                                 PetscInt dim,
+                                 PetscInt *xs_cell_global_out,
+                                 PetscInt *xm_cell_local_out)
 {
-    PetscInt xs_node, xm_node, mx_node, xe_node;
+    PetscErrorCode ierr = 0; // Standard PETSc error code, not explicitly set here but good practice.
+    PetscInt xs_node_global_rank;   // Global index of the first node owned by this rank in the specified dimension.
+    PetscInt num_nodes_owned_rank;  // Number of nodes owned by this rank in this dimension (local count, excluding ghosts).
+    PetscInt GlobalNodesInDim_from_info; // Total number of global nodes in this dimension, from DMDALocalInfo.
 
-    if (dim == 0) { xs_node = info_nodes->xs; xm_node = info_nodes->xm; mx_node = info_nodes->mx; }
-    else if (dim == 1) { xs_node = info_nodes->ys; xm_node = info_nodes->ym; mx_node = info_nodes->my; }
-    else if (dim == 2) { xs_node = info_nodes->zs; xm_node = info_nodes->zm; mx_node = info_nodes->mz; }
-    else { SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_OUTOFRANGE, "Invalid dimension"); }
+    PetscFunctionBeginUser;
 
-    xe_node = xs_node + xm_node; // Exclusive end node index
-
-    // Default starting cell index
-    *xs_cell = xs_node;
-
-    // Calculate number of cells owned
-    if (xm_node == 0) { // Owns no nodes
-        *xm_cell = 0;
-    } else if (xe_node == mx_node) { // Owns the last node in the domain
-        if (xm_node == 1) { // Owns ONLY the last node
-             *xm_cell = 1;
-             // Assign ownership of the very last cell
-             *xs_cell = mx_node - 2; // Cell index is N-1 where N is number of nodes (Mx)
-        } else { // Owns the last node AND preceding nodes
-             // The last node doesn't start a cell
-             *xm_cell = xm_node - 1;
-        }
-    } else { // Does NOT own the last node
-        // Every node owned starts a cell
-        *xm_cell = xm_node;
+    // --- 1. Input Validation ---
+    if (!info_nodes || !xs_cell_global_out || !xm_cell_local_out) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Null pointer passed to GetOwnedCellRange.");
     }
 
-    return 0;
+    // --- 2. Extract Node Ownership and Global Dimension Information from DMDALocalInfo ---
+    if (dim == 0) { // I-direction
+        xs_node_global_rank = info_nodes->xs;       // Starting owned node index (global)
+        num_nodes_owned_rank  = info_nodes->xm;     // Number of nodes owned by this rank (local count)
+        GlobalNodesInDim_from_info = info_nodes->mx; // Total global nodes in this dimension
+    } else if (dim == 1) { // J-direction
+        xs_node_global_rank = info_nodes->ys;
+        num_nodes_owned_rank  = info_nodes->ym;
+        GlobalNodesInDim_from_info = info_nodes->my;
+    } else if (dim == 2) { // K-direction
+        xs_node_global_rank = info_nodes->zs;
+        num_nodes_owned_rank  = info_nodes->zm;
+        GlobalNodesInDim_from_info = info_nodes->mz;
+    } else {
+      SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_OUTOFRANGE, "Invalid dimension %d in GetOwnedCellRange. Must be 0, 1, or 2.", dim);
+    }
+
+    // --- 3. Handle Edge Cases for Global Domain Size ---
+    // If the global domain has 0 or 1 node plane, no cells can be formed.
+    if (GlobalNodesInDim_from_info <= 1) {
+        *xs_cell_global_out = xs_node_global_rank; // Still report the rank's starting node
+        *xm_cell_local_out = 0;                    // But 0 cells
+        PetscFunctionReturn(0);
+    }
+    // Negative global dimension is an error (should be caught by DMDA setup, but defensive)
+    if (GlobalNodesInDim_from_info < 0 ) {
+         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_OUTOFRANGE, "GlobalNodesInDim %d from DMDALocalInfo must be non-negative for dimension %d.", GlobalNodesInDim_from_info, dim);
+    }
+
+    // --- 4. Determine Cell Ownership Based on Node Ownership ---
+    // The first cell this rank *could* define has its origin at the first node this rank owns.
+    *xs_cell_global_out = xs_node_global_rank;
+
+    // If the rank owns no nodes in this dimension, it can't form any cell origins.
+    if (num_nodes_owned_rank == 0) {
+        *xm_cell_local_out = 0;
+    } else {
+        // Calculate the global index of the last possible node that can serve as a cell origin.
+        // If GlobalNodesInDim = N (nodes 0 to N-1), cells are C_0 to C_{N-2}.
+        // The origin of cell C_{N-2} is node N_{N-2}.
+        // So, the last valid cell origin node index is (GlobalNodesInDim - 2).
+        PetscInt last_possible_origin_global_idx = GlobalNodesInDim_from_info - 2;
+
+        // Determine the range of nodes owned by this rank that could *potentially* be cell origins.
+        // The first node owned by the rank is a potential origin.
+        PetscInt first_potential_origin_on_rank = xs_node_global_rank;
+
+        // A node can be an origin if there's at least one node after it to form the cell.
+        // So, the last node owned by the rank that could *potentially* be an origin is
+        // the second-to-last node it owns: (xs_node_global_rank + num_nodes_owned_rank - 1) - 1
+        // which simplifies to: xs_node_global_rank + num_nodes_owned_rank - 2.
+        PetscInt last_potential_origin_on_rank = xs_node_global_rank + num_nodes_owned_rank - 2;
+
+        // The actual last origin this rank can provide is capped by the global domain limit.
+        PetscInt actual_last_origin_this_rank_can_form = PetscMin(last_potential_origin_on_rank, last_possible_origin_global_idx);
+
+        // If the first potential origin this rank owns is already beyond the actual last origin it can form,
+        // then this rank forms no valid cell origins. This happens if:
+        //  - num_nodes_owned_rank is 1 (so last_potential_origin_on_rank = first_potential_origin_on_rank - 1).
+        //  - The rank only owns nodes at the very end of the global domain (e.g., only the last global node).
+        if (first_potential_origin_on_rank > actual_last_origin_this_rank_can_form) {
+            *xm_cell_local_out = 0;
+        } else {
+            // The number of cells is the count of valid origins this rank owns.
+            // (Count = Last Index - First Index + 1)
+            *xm_cell_local_out = actual_last_origin_this_rank_can_form - first_potential_origin_on_rank + 1;
+        }
+    }
+    PetscFunctionReturn(ierr);
 }
 
 /**
@@ -783,153 +863,263 @@ PetscErrorCode UpdateLocalGhosts(UserCtx* user, const char *fieldName)
 }
 
 /**
+ * @brief Performs the complete initial setup for the particle simulation at time t=0.
+ *
+ * This includes:
+ * 1. Initial locating of particles (based on their potentially arbitrary initial assignment).
+ * 2. A preliminary migration cycle to ensure particles are on the MPI rank that owns
+ *    their initial physical region.
+ * 3. If `user->ParticleInitialization == 0` (Surface Init), re-initializes particles on the
+ *    designated inlet surface. This ensures particles migrated to an inlet-owning rank
+ *    are correctly distributed on that surface.
+ * 4. A final locating of all particles to get their correct cell indices and interpolation weights.
+ * 5. Interpolation of initial Eulerian fields to the particles.
+ * 6. Scattering of particle data to Eulerian fields (if applicable).
+ * 7. Outputting initial data if requested.
+ *
+ * @param user Pointer to the UserCtx structure.
+ * @param currentTime The current simulation time (should be StartTime, typically 0.0).
+ * @param step The current simulation step (should be StartStep, typically 0).
+ * @param readFields Flag indicating if Eulerian fields were read from file (influences output).
+ * @param bboxlist Array of BoundingBox structures for domain decomposition.
+ * @param OutputFreq Frequency for writing output files.
+ * @param StepsToRun Total number of simulation steps planned (used for output logic on setup-only runs).
+ * @param StartStep The starting step of the simulation (used for output logic).
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode PerformInitialSetup(UserCtx *user, PetscReal currentTime, PetscInt step,
+                                   PetscBool readFields, const BoundingBox *bboxlist,
+                                   PetscInt OutputFreq, PetscInt StepsToRun, PetscInt StartStep)
+{
+    PetscErrorCode ierr;
+    MigrationInfo  *migrationList_for_initial_sort = NULL; // Managed locally for this initial sort
+    PetscInt       migrationCount_initial_sort = 0;
+    PetscInt       migrationListCapacity_initial_sort = 0;
+    PetscInt       globalMigrationCount_initial_sort;
+    PetscMPIInt    rank; // For logging
+
+    PetscFunctionBeginUser;
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Performing initial particle setup procedures.\n", currentTime, step);
+
+    // --- 1. Initial Locate (based on positions from InitializeParticleBasicProperties) ---
+    // This gets a first guess of where particles are, which might be (0,0,0) for many if not placed by their initial rank.
+    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Initial Locate: Determining particle cells before preliminary migration.\n", currentTime, step);
+    ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
+
+    LOG_ALLOW(GLOBAL,LOG_INFO," Particle layout (pre-preliminary migration): \n");
+    ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency); CHKERRQ(ierr);
+
+    // --- 2. Preliminary Spatial Sorting Migration ---
+    // This moves particles (e.g., those at (0,0,0)) to the rank that actually owns their physical region.
+    ierr = PerformSingleParticleMigrationCycle(user, bboxlist,
+                                               &migrationList_for_initial_sort, &migrationCount_initial_sort, &migrationListCapacity_initial_sort,
+                                               currentTime, step, "Preliminary Sort", &globalMigrationCount_initial_sort); CHKERRQ(ierr);
+    // migrationList_for_initial_sort is allocated/reallocated within PerformSingleParticleMigrationCycle if needed.
+
+    ierr = PetscBarrier(NULL);
+    
+    // --- 3. Re-initialize Particles on Inlet Surface (if applicable) ---
+    // This is crucial for ParticleInitialization == 0 (Surface Init). After particles have been
+    // migrated to the rank(s) owning the inlet surface, this step ensures they are properly
+    // distributed *on* that surface, rather than remaining at their migrated position (e.g., (0,0,0)).
+    if (user->ParticleInitialization == 0 && user->inletFaceDefined) {
+        ierr = ReinitializeParticlesOnInletSurface(user, currentTime, step); CHKERRQ(ierr);
+    }
+
+    // --- 4. Final Locate and Interpolate ---
+    // Now that particles are on their correct ranks and (if surface init) correctly positioned on the inlet,
+    // perform the definitive location and interpolation for t=0.
+    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Final Initial Locate & Interpolate (post-migration & re-placement).\n", currentTime, step);
+    ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
+    ierr = InterpolateAllFieldsToSwarm(user); CHKERRQ(ierr);
+
+    // --- 5. Scatter Particle Data to Eulerian Grid (if part of initialization) ---
+    ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
+
+    // --- 6. Initial Output ---
+    // Output if OutputFreq > 0 OR if it's a setup-only run (StepsToRun==0 and StartStep==0).
+    if (OutputFreq > 0 || (StepsToRun == 0 && StartStep == 0)) {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Logging initial data and (if applicable) interpolation error.\n", currentTime, step);
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "Printing Initial particle fields at t=%.4f (step %d completed)\n", currentTime, step);
+        ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency); CHKERRQ(ierr);
+
+        if(user->FieldInitialization==1) { // If analytic fields are available for comparison
+            ierr = LOG_INTERPOLATION_ERROR(user); CHKERRQ(ierr);
+        }
+
+        LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Writing initial particle data (for step %d).\n", currentTime, step, step);
+        ierr = WriteSwarmField(user, "position", step, "dat"); CHKERRQ(ierr);
+        ierr = WriteSwarmField(user, "velocity", step, "dat"); CHKERRQ(ierr);
+        // ierr = WriteSwarmField(user, "pos_phy",  step, "dat"); CHKERRQ(ierr); // If needed
+        if (!readFields) { // Only write grid fields if they were generated, not read
+            ierr = WriteSimulationFields(user); CHKERRQ(ierr);
+        }
+    }
+
+    // --- 7. Cleanup Memory ---
+    // Free the migration list used specifically for this initial sort.
+    ierr = PetscFree(migrationList_for_initial_sort); CHKERRQ(ierr);
+
+    PetscFunctionReturn(0);
+}
+
+/**
  * @brief Executes the main time-marching loop for the particle simulation.
  *
- * This function performs the following steps repeatedly:
+ * This function performs the following steps repeatedly for `StepsToRun`:
  * 1. Updates/Sets the background fluid velocity field (Ucat) for the current step.
- * 2. Updates particle positions using velocity from the *previous* step's interpolation.
- *    (Note: For the very first step (step=StartStep), the velocity used might be zero
- *     or an initial guess if not handled carefully).
- * 3. Locates particles in the grid based on their *new* positions.
- * 4. Interpolates the fluid velocity (from the *current* Ucat) to the new particle locations.
- * 5. Logs errors and outputs data at specified intervals.
+ * 2. If it's the very first step (StartStep=0), calls `PerformInitialSetup` for
+ *    preliminary migration, location, interpolation, and output.
+ * 3. Updates particle positions using velocity from the *previous* step's interpolation.
+ * 4. Performs boundary checks and removes out-of-bounds particles.
+ * 5. Migrates particles between MPI processors using `PerformSingleParticleMigrationCycle`.
+ * 6. Advances simulation time and step counter.
+ * 7. Locates particles in the grid based on their *new* positions.
+ * 8. Interpolates the fluid velocity (from the *current* Ucat) to the new particle locations
+ *    to get velocities for the *next* advection step.
+ * 9. Scatters particle data back to Eulerian fields.
+ *10. Logs errors and outputs data at specified `OutputFreq` intervals.
  *
  * @param user         Pointer to the UserCtx structure.
  * @param StartStep    The initial step number (e.g., 0 for a new run, >0 for restart).
  * @param StartTime    The simulation time corresponding to StartStep.
- * @param StepsToRun   The number of steps to execute in this run.
+ * @param StepsToRun   The number of steps to execute in this run. If 0 and StartStep is 0,
+ *                     only `PerformInitialSetup` is executed.
  * @param OutputFreq   Frequency (in number of steps) at which to output data and log errors.
- * @param readFields   Flag indicating whether to read initial fields (only at StartStep).
- * @param bboxlist     A list that contains the bounding boxes of all the ranks.
+ * @param readFields   Flag indicating whether to read initial fields (used by `SetEulerianFields`
+ *                     and `PerformInitialSetup`).
+ * @param bboxlist     Array of BoundingBox structures for domain decomposition, used for migration.
  *
  * @return PetscErrorCode 0 on success, non-zero on failure.
  */
-PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal StartTime, PetscInt StepsToRun, PetscInt OutputFreq, PetscBool readFields, const BoundingBox *bboxlist)
+PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal StartTime,
+                                 PetscInt StepsToRun, PetscInt OutputFreq, PetscBool readFields,
+                                 const BoundingBox *bboxlist)
 {
     PetscErrorCode ierr;
-    PetscMPIInt    rank;
-    PetscReal      dt = user->dt;
-    PetscInt       step; // Loop counter starting from StartStep
-    PetscReal      currentTime;
-    PetscInt       removed_local, removed_global;
-    MigrationInfo  *migrationList = NULL;
-    PetscInt       migrationCount = 0;
-    PetscInt       migrationListCapacity = 0;
+    PetscMPIInt    rank;            // MPI rank of the current process
+    PetscReal      dt = user->dt;   // Timestep size
+    PetscInt       step_loop_counter; // Loop counter for simulation steps
+    PetscReal      currentTime;     // Current simulation time
+    PetscInt       removed_local, removed_global; // Counters for out-of-bounds particles
+
+    // Variables for particle migration within the main loop
+    MigrationInfo  *migrationList_main_loop = NULL;    // Managed by AdvanceSimulation for the loop
+    PetscInt       migrationCount_main_loop = 0;
+    PetscInt       migrationListCapacity_main_loop = 0;
+    PetscInt       globalMigrationCount_in_loop_cycle; // Output from migration cycle
 
     PetscFunctionBeginUser;
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
     LOG_ALLOW(GLOBAL, LOG_INFO, "Starting simulation run: %d steps from step %d (t=%.4f), dt=%.4f\n",
               StepsToRun, StartStep, StartTime, dt);
 
-    currentTime = StartTime; // Initialize time
+    currentTime = StartTime; // Initialize current simulation time
+
+    // --- Handle Initial Setup (if StartStep is 0) ---
+    if (StartStep == 0) {
+        // Set Eulerian fields for t=0 before particle setup
+        ierr = SetEulerianFields(user, StartStep, StartStep, currentTime, readFields); CHKERRQ(ierr);
+        // Perform comprehensive initial particle setup
+        ierr = PerformInitialSetup(user, currentTime, StartStep, readFields, bboxlist, OutputFreq, StepsToRun, StartStep); CHKERRQ(ierr);
+
+        // If only initial setup was requested (StepsToRun == 0), exit now.
+        if (StepsToRun == 0) {
+            LOG_ALLOW(GLOBAL, LOG_INFO, "Initial setup completed as StepsToRun is 0. Time t=%.4f. Exiting AdvanceSimulation.\n", currentTime);
+            // The migrationList_main_loop is not yet used, but free it for consistency.
+            ierr = PetscFree(migrationList_main_loop); CHKERRQ(ierr);
+            PetscFunctionReturn(0);
+        }
+    }
 
     // --- Time Marching Loop ---
-    // Loop from the starting step up to (but not including) the final step number
-    for (step = StartStep; step < StartStep + StepsToRun; step++)
+    // Loops from the StartStep up to (but not including) StartStep + StepsToRun
+    for (step_loop_counter = StartStep; step_loop_counter < StartStep + StepsToRun; step_loop_counter++)
     {
-      //---------------------------------------------
-      PetscPrintf(PETSC_COMM_WORLD, " Current Time: %.4f | Start Time: %.4f |Current Time Step: %d | Start Time Step: %d \n",currentTime,StartTime,step,StartStep);
-      LOG_ALLOW(GLOBAL, LOG_INFO, "Starting step %d, t=%.4f\n", step, currentTime);
-      // Update Current Time step in user.
-        // --- Step 1: Set/Update Eulerian Fields for the START of this step (time = currentTime) ---
-        // This handles initialization on step==StartStep OR updates for subsequent steps
-        ierr = SetEulerianFields(user, step, StartStep, currentTime, readFields); CHKERRQ(ierr);
+      LOG_ALLOW(GLOBAL, LOG_INFO, "Starting step %d, t=%.4f\n", step_loop_counter, currentTime);
 
-        // --- Step 2: Initial Locate & Interpolate IF it's the very first step ---
-        // This is needed *only* if step == StartStep to get the velocity BEFORE the first position update.
-        // If restarting (StartStep > 0), assume velocity was read or is already correct.
-        if (step == StartStep) {
-             LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Performing initial locate & interpolate.\n", currentTime, step);
-             ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
-             ierr = InterpolateAllFieldsToSwarm(user); CHKERRQ(ierr);
+      // Set/Update Eulerian Fields for the current time step
+      // If StartStep was 0, fields for t=0 were already set.
+      // If restarting (StartStep > 0), or for subsequent steps (step_loop_counter > StartStep),
+      // set/update fields for the current `currentTime`.
+      if (step_loop_counter > StartStep || (step_loop_counter == StartStep && StartStep > 0)) {
+          ierr = SetEulerianFields(user, step_loop_counter, StartStep, currentTime, readFields); CHKERRQ(ierr);
+      }
 
-	     // Scatter Particle Fields to Euler Field.
-	     ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
-	     
-             // --- Initial Output ---
-             if (OutputFreq > 0) { // Always output initial state if output is on
-                 LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Logging initial interpolation error.\n", currentTime, step);
-		 LOG_ALLOW(GLOBAL, LOG_DEBUG, "Printing Initial particle fields at start: %.4f \n", StartTime);
-		 ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency);
-		 if(user->FieldInitialization==1) ierr = LOG_INTERPOLATION_ERROR(user); CHKERRQ(ierr);
-                 LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Writing initial particle data (step %d).\n", currentTime, step, step);
-		 
-                 ierr = WriteSwarmField(user, "position", step, "dat"); CHKERRQ(ierr);
-                 ierr = WriteSwarmField(user, "velocity", step, "dat"); CHKERRQ(ierr);
-		 // ierr = WriteSwarmField(user, "pos_phy",  step, "dat"); CHKERRQ(ierr);
-                 if (!readFields) { ierr = WriteSimulationFields(user); CHKERRQ(ierr); } // Optional initial grid write
-             }
-        }
-     
-	// --- Step 3: Update Particle Positions ---
-        // Moves particle from currentTime to currentTime + dt using velocity interpolated at currentTime
-        LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f -> T=%.4f, Step=%d] Updating particle positions(Rank: %d).\n", currentTime, currentTime+dt, step,rank);
-        ierr = UpdateAllParticlePositions(user); CHKERRQ(ierr); // P(t+dt) = P(t) + V(t)*dt
-	
-        // --- Step 4: Check Boundaries and Remove Out-Of-Bounds Particles ---
-	ierr = CheckAndRemoveOutOfBoundsParticles(user,&removed_local,&removed_global);
-	if (removed_global > 0) {
-            LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Removed %d out-of-bounds particles.\n", currentTime, step, removed_global);
-	}
+      // Step 3: Update Particle Positions
+      // Moves particles from P(currentTime) to P(currentTime + dt) using velocity_particle(currentTime).
+      LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f -> T=%.4f, Step=%d] Updating particle positions (Rank: %d).\n", currentTime, currentTime+dt, step_loop_counter, rank);
+      ierr = UpdateAllParticlePositions(user); CHKERRQ(ierr);
 
-	// --- Step 5: Migrate Particles between processors (if any identified) --
-	ierr = IdentifyMigratingParticles(user, bboxlist, &migrationList, &migrationCount, &migrationListCapacity); CHKERRQ(ierr);
+      // Step 4: Check Boundaries and Remove Out-Of-Bounds Particles
+      ierr = CheckAndRemoveOutOfBoundsParticles(user, &removed_local, &removed_global); CHKERRQ(ierr);
+      if (removed_global > 0) {
+          LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Removed %d out-of-bounds particles globally.\n", currentTime, step_loop_counter, removed_global);
+      }
 
-        // --- Step 6: Migrate Particles Between Processors (if any identified) ---
-	//   if (migrationCount > 0) {
-            ierr = SetMigrationRanks(user, migrationList, migrationCount); CHKERRQ(ierr);
-            ierr = PerformMigration(user); CHKERRQ(ierr);
-	    migrationCount = 0; // Reset count
-	    // }
-	
-        // --- Step 7: Advance Time ---
-        // Now currentTime represents the time at the *end* of the step completed
-        currentTime += dt;
-	
-        // --- Step 8: Locate Particles at New Positions (t = currentTime) ---
-        LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Locating particles at new positions.(Rank: %d)\n", currentTime, step,rank);
-        ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr); // Finds cell/weights for P(t+dt)
+      // Step 5 & 6: Migrate Particles between processors
+      // Migration is based on new positions P(currentTime + dt).
+      // The time logged for migration is the target time of the new positions.
+      ierr = PerformSingleParticleMigrationCycle(user, bboxlist,
+                                                 &migrationList_main_loop, &migrationCount_main_loop, &migrationListCapacity_main_loop,
+                                                 currentTime + dt, step_loop_counter, "Main Loop", &globalMigrationCount_in_loop_cycle); CHKERRQ(ierr);
+      // migrationCount_main_loop is reset inside PerformSingleParticleMigrationCycle for the *next* call within this loop.
 
-        // --- Step 9: Interpolate Field at New Positions (for the *next* step's update) ---
-        LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Interpolating field at new particle positions.(Rank: %d)\n", currentTime, step,rank);
-        ierr = InterpolateAllFieldsToSwarm(user); CHKERRQ(ierr); // Calculates V_interp @ P(t+dt)
+      // Step 7: Advance Time
+      currentTime += dt; // currentTime now represents the time at the *end* of the step just completed.
 
-	// --- Step 10: Scatter Fields from particles to grid
-	ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
-	LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Scattering particle fields to grid at new particle positions.(Rank: %d)\n", currentTime, step,rank);
+      // Step 8: Update global step counter in user context.
+      // This should reflect the step number *completed*.
+      user->step = step_loop_counter + 1;
 
-	user->step = step + 1;
-        // --- Step 10: Output and Error Logging (based on the step *just completed*) ---
-        // Output frequency check uses 'step+1' if we want output *after* completing step 'n*OutputFreq'
-        // Or use 'step' if step 0 counts and we want output at 0, F, 2F, ...
-        // Let's output *after* completing steps that are multiples of OutputFreq (and not step 0 again if already done)
-        if (OutputFreq > 0 && (step + 1) % OutputFreq == 0) {
-            LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d completed] Logging interpolation error.\n", currentTime, step);
-            if(user->FieldInitialization==1)ierr = LOG_INTERPOLATION_ERROR(user); CHKERRQ(ierr); // Compares V_interp @ P(t+dt) with V_analytic @ P(t+dt)
-	    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Printing particle fields at t: %.4f \n", currentTime);
-	    ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency);
+      // Step 9: Locate Particles at New Positions (t = currentTime)
+      // This is for particles now on the current rank after migration, using their P(currentTime) positions.
+      LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Locating particles at new positions (Rank: %d).\n", currentTime, step_loop_counter, rank);
+      ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
 
-            LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d completed] Writing particle data (step %d).\n", currentTime, step, step+1); // Save state for start of next step
-            ierr = WriteSwarmField(user, "position", step + 1, "dat"); CHKERRQ(ierr); // Write P(t+dt)
-            ierr = WriteSwarmField(user, "velocity", step + 1, "dat"); CHKERRQ(ierr); // Write V_interp @ P(t+dt)
-	    // ierr = WriteSwarmField(user, "pos_phy",  step + 1, "dat"); CHKERRQ(ierr);
-            ierr = WriteSimulationFields(user); CHKERRQ(ierr); // Optional grid field write
-        }
+      // Step 10: Interpolate Eulerian Field to New Particle Positions
+      // Eulerian field Ucat is typically from the beginning of the current step (time effectively currentTime - dt).
+      // Interpolate this Ucat to P(currentTime) to get V_particle(currentTime) for the *next* advection.
+      LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Interpolating field (from Ucat at t=%.4f) to new particle positions (Rank: %d).\n", currentTime, step_loop_counter, currentTime-dt, rank);
+      ierr = InterpolateAllFieldsToSwarm(user); CHKERRQ(ierr);
 
-        LOG_ALLOW(GLOBAL, LOG_INFO, "Finished step %d, t=%.4f\n", step, currentTime);
-	
+      // Step 11: Scatter Particle Fields back to Eulerian Grid (if applicable)
+      ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
+      LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Scattering particle fields to grid (Rank: %d).\n", currentTime, step_loop_counter, rank);
 
-    } // End for loop
+      // Step 12: Output and Error Logging (based on the step *just completed*, using user->step)
+      if (OutputFreq > 0 && (user->step % OutputFreq == 0) ) {
+          LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d completed (Output for step %d)] Logging interpolation error.\n", currentTime, step_loop_counter, user->step);
+          if(user->FieldInitialization==1) { // If analytic fields are available for comparison
+              ierr = LOG_INTERPOLATION_ERROR(user); CHKERRQ(ierr);
+          }
+          LOG_ALLOW(GLOBAL, LOG_DEBUG, "Printing particle fields at t=%.4f (step %d completed, output for step %d)\n", currentTime, step_loop_counter, user->step);
+          ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency); CHKERRQ(ierr);
 
-    PetscReal finalTime = StartTime + StepsToRun * dt; // Calculate actual final time
-    LOG_ALLOW(GLOBAL, LOG_INFO, "Time marching completed. %d steps run from step %d. Final time t=%.4f\n", StepsToRun, StartStep, finalTime);
+          LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d completed] Writing particle data (for step %d).\n", currentTime, step_loop_counter, user->step);
+          ierr = WriteSwarmField(user, "position", user->step, "dat"); CHKERRQ(ierr); // Write P(t+dt)
+          ierr = WriteSwarmField(user, "velocity", user->step, "dat"); CHKERRQ(ierr); // Write V_interp @ P(t+dt)
+          // ierr = WriteSwarmField(user, "pos_phy",  user->step, "dat"); CHKERRQ(ierr);
+          ierr = WriteSimulationFields(user); CHKERRQ(ierr); // Optional grid field write
+      }
+      LOG_ALLOW(GLOBAL, LOG_INFO, "Finished step %d, current time t=%.4f (user->step is now %d)\n", step_loop_counter, currentTime, user->step);
+    } // End of time marching loop
 
-    // --- Final Particle Field Log ---
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Printing final particle fields (t=%.4f):\n", finalTime);
-    ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency);
+    PetscReal finalTimeRun = StartTime + StepsToRun * dt; // Target final time if all steps ran
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Time marching completed. %d steps run from StartStep %d. Current time t=%.4f (target final: %.4f).\n", StepsToRun, StartStep, currentTime, finalTimeRun);
 
-    // --- Cleanup migration list
-    ierr = PetscFree(migrationList); CHKERRQ(ierr);
+    // --- Final Particle Field Log (if not already done by OutputFreq and if steps were run) ---
+    if (StepsToRun > 0 && !(OutputFreq > 0 && (user->step % OutputFreq == 0))) {
+        // Avoid double logging if the last step was an output step.
+        // Only log if actual simulation steps were performed.
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "Printing final particle fields at end of run (t=%.4f):\n", currentTime);
+        ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency); CHKERRQ(ierr);
+    }
+
+    // --- Cleanup migration list used in the main loop ---
+    ierr = PetscFree(migrationList_main_loop); CHKERRQ(ierr);
 
     PetscFunctionReturn(0);
 }

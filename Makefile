@@ -117,7 +117,7 @@ inttest: dirs $(INTTEST_EXE)
 $(INTTEST_EXE): $(OBJDIR)/inttest.o $(OBJDIR)/interpolation.o $(OBJDIR)/walkingsearch.o \
                 $(OBJDIR)/ParticleSwarm.o $(OBJDIR)/logging.o $(OBJDIR)/setup.o \
                 $(OBJDIR)/AnalyticalSolution.o $(OBJDIR)/grid.o $(OBJDIR)/io.o $(OBJDIR)/ParticleMotion.o \
-                $(OBJDIR)/Metric.o
+                $(OBJDIR)/Metric.o $(OBJDIR)/Boundaries.o
 	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(LDFLAGS) $(LIBS)
 
 # -----------------------------------------------------

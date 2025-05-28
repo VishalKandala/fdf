@@ -91,291 +91,230 @@ PetscErrorCode SetLocalCartesianField_Vector(const char *fieldName, Cmpnts *vecF
     return 0;
 }
 
+
 /**
  * @brief Sets an analytical Cartesian field (scalar or vector) based on a field name.
  *
- * This function looks up the field within the user context by comparing the provided field name
- * against supported names ("Ucat", "Ucont", "P", "Nvert").
+ * This function calculates analytical values for specified fields.
+ * For scalar fields (P, Nvert on user->da), values are computed at cell centers and
+ * stored at the DMDA index corresponding to the cell's origin node.
+ * For vector fields (Ucat, Ucont on user->fda), values representing the center of
+ * cell C(i,j,k) (origin N(i,j,k)) are stored at the NODE index [k][j][i] of user->fda,
+ * but ONLY for globally interior nodes. Boundary values are typically set by BC routines.
  *
- * It calculates the analytical value based on the coordinate of the corresponding cell center.
- * For scalar fields (P, Nvert), the value is stored directly at the cell index.
- * For vector fields (Ucat, Ucont), adhering to the original code's convention, the value
- * representing the center of cell C(i,j,k) is stored at the NODE index [k][j][i], but ONLY
- * for interior nodes. Boundary node indices are left untouched by this function and must
- * be populated separately by boundary condition routines (like FormBCS).
- *
- * @param[in]  user      Pointer to the UserCtx structure containing DMs and field Vecs.
+ * @param[in]  user      Pointer to the UserCtx structure.
  * @param[in]  fieldName Name of the field to update ("Ucat", "Ucont", "P", or "Nvert").
  *
  * @return PetscErrorCode 0 on success, non-zero on failure.
  */
 PetscErrorCode SetAnalyticalCartesianField(UserCtx *user, const char *fieldName)
 {
-  PetscErrorCode ierr;
-  PetscMPIInt    rank;
-  ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
-  LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
-       "SetAnalyticalCartesianField: Starting for field '%s' on rank %d.\n", fieldName, rank);
+    PetscErrorCode ierr;
+    PetscMPIInt    rank;
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
+                   "SetAnalyticalCartesianField: Starting for field '%s' on rank %d.\n", fieldName, rank);
 
-  /* --- 1. Identify Target Vec and Type --- */
-  Vec fieldVec = NULL;
-  DM  targetDM = NULL; // DM associated with the target field
-  DM  accessDM = NULL; // DM used for Get/Restore Array (matches targetDM)
-  PetscInt fieldIsVector = -1;
-  PetscInt expected_bs;
-  PetscReal ConstantValue;
+    /* --- 1. Identify Target Vec and Type --- */
+    Vec fieldVec = NULL;
+    DM  targetDM = NULL; // DM associated with the target field's Vec
+    DM  accessDM = NULL; // DM used for DMDAVecGet/RestoreArray (usually same as targetDM)
+    DM  infoDM_for_cell_loop = NULL; // DM whose DMDALocalInfo will define the primary cell/node loop
+    PetscInt fieldIsVector = -1;
+    PetscInt expected_bs;
+    PetscReal ConstantValue;
 
-  if (strcmp(fieldName, "Ucat") == 0) {
-    fieldVec = user->Ucat;
-    targetDM = user->fda; // Ucat uses fda (DOF=3, node-indexed)
-    accessDM = user->fda;
-    fieldIsVector = 1;
-    expected_bs = 3;
-    ConstantValue = user->ConstantVelocity;
-  } else if (strcmp(fieldName, "Ucont") == 0) {
-    fieldVec = user->Ucont;
-    targetDM = user->fda; // Ucont uses fda (DOF=3, node-indexed)
-    accessDM = user->fda;
-    fieldIsVector = 1;
-    expected_bs = 3;
-     ConstantValue = user->ConstantContra;
-  } else if (strcmp(fieldName, "P") == 0) {
-    fieldVec = user->P;
-    targetDM = user->da;  // P uses da (DOF=1, conceptually cell-based)
-    accessDM = user->da;
-    fieldIsVector = 0;
-    expected_bs = 1;
-    ConstantValue = user->ConstantPressure;
-  } else if (strcmp(fieldName, "Nvert") == 0) {
-    fieldVec = user->Nvert;
-    targetDM = user->da;  // Nvert uses da (DOF=1, conceptually cell-based)
-    accessDM = user->da;
-    fieldIsVector = 0;
-    expected_bs = 1;
-    ConstantValue = user->ConstantNvert;
-  } else {
-    SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG,
-             "Field '%s' not found in user context", fieldName);
-  }
+    if (strcmp(fieldName, "Ucat") == 0) {
+        fieldVec = user->Ucat;
+        targetDM = user->fda;
+        accessDM = user->fda;
+        infoDM_for_cell_loop = user->fda; // Loop over nodes of fda, treat as cell origins
+        fieldIsVector = 1;
+        expected_bs = 3;
+        ConstantValue = user->ConstantVelocity;
+    } else if (strcmp(fieldName, "Ucont") == 0) {
+        fieldVec = user->Ucont;
+        targetDM = user->fda;
+        accessDM = user->fda;
+        infoDM_for_cell_loop = user->fda; // Loop over nodes of fda, treat as cell origins
+        fieldIsVector = 1;
+        expected_bs = 3;
+        ConstantValue = user->ConstantContra;
+    } else if (strcmp(fieldName, "P") == 0) {
+        fieldVec = user->P;
+        targetDM = user->da;
+        accessDM = user->da;
+        infoDM_for_cell_loop = user->da;  // Loop over "cells" defined by da's node origins
+        fieldIsVector = 0;
+        expected_bs = 1;
+        ConstantValue = user->ConstantPressure;
+    } else if (strcmp(fieldName, "Nvert") == 0) {
+        fieldVec = user->Nvert;
+        targetDM = user->da;
+        accessDM = user->da;
+        infoDM_for_cell_loop = user->da; // Loop over "cells" defined by da's node origins
+        fieldIsVector = 0;
+        expected_bs = 1;
+        ConstantValue = user->ConstantNvert;
+    } else {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG, "Field '%s' not supported", fieldName);
+    }
 
-  /* --- 2. Verify Target DM Block Size --- */
-  PetscInt bs;
-  ierr = DMGetBlockSize(targetDM, &bs); CHKERRQ(ierr);
-  if (bs != expected_bs) {
-    SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG,
-             "Expected block size %d for field '%s' based on its DM, got %d", expected_bs, fieldName, bs);
-  }
-  LOG_ALLOW(GLOBAL, LOG_DEBUG, "Target DM block size verified for %s on rank %d \n", fieldName,rank);
+    /* --- 2. Verify Target DM Block Size --- */
+    PetscInt bs;
+    ierr = DMGetBlockSize(targetDM, &bs); CHKERRQ(ierr);
+    if (bs != expected_bs) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG,
+                 "Expected block size %d for field '%s' based on its DM, got %d", expected_bs, fieldName, bs);
+    }
 
-  /* --- 3. Get Coordinates and Calculate Cell Center Coordinates --- */
-  
-  // Get local, ghosted coordinate vector (associated with da, layout fda)
-  Vec localCoor;
-  ierr = DMGetCoordinatesLocal(user->da, &localCoor); CHKERRQ(ierr);
-  // !!! IMPORTANT: Ensure localCoor ghosts are up-to-date before Interpolate... call
-  // Example: If user->coordinates is the global coordinate vector:
-  Vec globalCoor;
-  ierr = DMGetCoordinates(user->da, &globalCoor); CHKERRQ(ierr);
-  LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Before Coord G2L: fda=%p, globalCoor=%p, localCoor=%p\n", rank, (void*)user->fda, (void*)globalCoor, (void*)localCoor);
-  // For debugging, to ensure the globalCoor is created properly.
-  // ierr = VecView(globalCoor, PETSC_VIEWER_STDOUT_WORLD);
-  ierr = DMGlobalToLocalBegin(user->fda, globalCoor, INSERT_VALUES, localCoor); CHKERRQ(ierr);
-  ierr = DMGlobalToLocalEnd(user->fda, globalCoor, INSERT_VALUES, localCoor); CHKERRQ(ierr);
-  // For debugging, to ensure the localCoor is created properly.
-  // ierr = VecView(localCoor, PETSC_VIEWER_STDOUT_WORLD);
-  
-  MPI_Barrier(PETSC_COMM_WORLD);
+    /* --- 3. Get Coordinates and Prepare for Cell Center Calculation --- */
+    Vec localCoor;
+    ierr = DMGetCoordinatesLocal(user->da, &localCoor); CHKERRQ(ierr); // Coords are on da, layout fda
 
-  // Get read access to coordinate array using fda layout (node indices)
-  Cmpnts ***coor_arr;
-  ierr = DMDAVecGetArrayRead(user->fda, localCoor, &coor_arr); CHKERRQ(ierr);
-  LOG_ALLOW(LOCAL, LOG_DEBUG, "Obtained read access to local coordinate array on rank %d.\n",rank);
+    Vec globalCoor;
+    ierr = DMGetCoordinates(user->da, &globalCoor); CHKERRQ(ierr);
+    ierr = DMGlobalToLocalBegin(user->fda, globalCoor, INSERT_VALUES, localCoor); CHKERRQ(ierr);
+    ierr = DMGlobalToLocalEnd(user->fda, globalCoor, INSERT_VALUES, localCoor); CHKERRQ(ierr);
 
-  // Get local node info from fda (needed for cell range calculation and interior check)
-  DMDALocalInfo info_nodes;
-  ierr = DMDAGetLocalInfo(user->fda, &info_nodes); CHKERRQ(ierr);
+    Cmpnts ***coor_arr; // Node coordinates, layout by fda
+    ierr = DMDAVecGetArrayRead(user->fda, localCoor, &coor_arr); CHKERRQ(ierr);
 
-  // Determine owned CELL ranges using helper
-  PetscInt xs_cell, xm_cell, xe_cell;
-  PetscInt ys_cell, ym_cell, ye_cell;
-  PetscInt zs_cell, zm_cell, ze_cell;
-  ierr = GetOwnedCellRange(&info_nodes, 0, &xs_cell, &xm_cell); CHKERRQ(ierr);
-  ierr = GetOwnedCellRange(&info_nodes, 1, &ys_cell, &ym_cell); CHKERRQ(ierr);
-  ierr = GetOwnedCellRange(&info_nodes, 2, &zs_cell, &zm_cell); CHKERRQ(ierr);
-  xe_cell = xs_cell + xm_cell;
-  ye_cell = ys_cell + ym_cell;
-  ze_cell = zs_cell + zm_cell;
+    // Get DMDALocalInfo for the DM that defines our primary loop (cell origins)
+    DMDALocalInfo info_loop_dm;
+    ierr = DMDAGetLocalInfo(infoDM_for_cell_loop, &info_loop_dm); CHKERRQ(ierr);
 
-  // Allocate temporary local array for cell-center coordinates using the generic macro
-  // Size based on the number of owned cells (xm_cell, ym_cell, zm_cell)
-  Cmpnts ***centcoor = NULL;
-  // Pass the address of the pointer (centcoor) which has type Cmpnts****
-  ierr = Allocate3DArray(&centcoor, zm_cell, ym_cell, xm_cell); CHKERRQ(ierr);
-  LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "Allocated temporary array centcoor[%d][%d][%d] on rank %d.\n", zm_cell, ym_cell, xm_cell,rank);
+    // Determine owned CELL ranges based on the info_loop_dm
+    // These are cells whose origin node is owned by info_loop_dm's partitioning
+    PetscInt xs_cell_global_i, xm_cell_local_i, xe_cell_global_i_excl;
+    PetscInt ys_cell_global_j, ym_cell_local_j, ye_cell_global_j_excl;
+    PetscInt zs_cell_global_k, zm_cell_local_k, ze_cell_global_k_excl;
 
-  // Interpolate node coordinates to cell centers using the generic macro
-  // This will dispatch to InterpolateFieldFromCornerToCenter_Vector
-  ierr = InterpolateFieldFromCornerToCenter(coor_arr, centcoor, user); CHKERRQ(ierr);
-  LOG_ALLOW(LOCAL, LOG_DEBUG, "Interpolated coordinates to cell centers on rank %d.\n",rank);
-  
-
-  // DEBUG -----------------------------------------------------
-  // Get local node info from fda (still needed for interior check)
-  /*
-  DMDALocalInfo info_nodes;
-  ierr = DMDAGetLocalInfo(user->fda, &info_nodes); CHKERRQ(ierr);
-
-  // Get owned NODE ranges (we will loop over nodes directly now)
-  PetscInt xs_node = info_nodes.xs;
-  PetscInt xm_node = info_nodes.xm;
-  PetscInt xe_node = xs_node + xm_node;
-  PetscInt ys_node = info_nodes.ys;
-  PetscInt ym_node = info_nodes.ym;
-  PetscInt ye_node = ys_node + ym_node;
-  PetscInt zs_node = info_nodes.zs;
-  PetscInt zm_node = info_nodes.zm;
-  PetscInt ze_node = zs_node + zm_node;
-  */
-  /* --- 4. Populate Target Field Vec --- */
-  // --- DEBUG ---------------------------------------------------
-  
-  if (fieldIsVector) { // Handle Ucat or Ucont
-    Cmpnts ***vecField_arr;
     
-    ierr = DMDAVecGetArray(accessDM, fieldVec, &vecField_arr); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Obtained write access to vector field %s.\n", fieldName);
-    
-    // Loop over the GLOBAL indices of the OWNED CELLS
-    for (PetscInt k = zs_cell; k < ze_cell; k++) { // Global CELL index k
-      for (PetscInt j = ys_cell; j < ye_cell; j++) { // Global CELL index j
-        for (PetscInt i = xs_cell; i < xe_cell; i++) { // Global CELL index i
+    ierr = GetOwnedCellRange(&info_loop_dm, 0, &xs_cell_global_i, &xm_cell_local_i); CHKERRQ(ierr);
+    ierr = GetOwnedCellRange(&info_loop_dm, 1, &ys_cell_global_j, &ym_cell_local_j); CHKERRQ(ierr);
+    ierr = GetOwnedCellRange(&info_loop_dm, 2, &zs_cell_global_k, &zm_cell_local_k); CHKERRQ(ierr);
 
-            PetscInt k_local = k - zs_cell;
-            PetscInt j_local = j - ys_cell;
-            PetscInt i_local = i - xs_cell;
+    xe_cell_global_i_excl = xs_cell_global_i + xm_cell_local_i;
+    ye_cell_global_j_excl = ys_cell_global_j + ym_cell_local_j;
+    ze_cell_global_k_excl = zs_cell_global_k + zm_cell_local_k;
 
-            // Check local bounds (defensive)
-            if (k_local < 0 || k_local >= zm_cell || j_local < 0 || j_local >= ym_cell || i_local < 0 || i_local >= xm_cell) {
-                  SETERRQ(PETSC_COMM_SELF, PETSC_ERR_PLIB, "Calculated local index out of bounds for centcoor!");
+    // Allocate temporary local array for cell-center coordinates
+    Cmpnts ***centcoor = NULL; // Will be indexed [k_local][j_local][i_local]
+    if (xm_cell_local_i > 0 && ym_cell_local_j > 0 && zm_cell_local_k > 0) { // Only allocate if there are cells
+        ierr = Allocate3DArray(&centcoor, zm_cell_local_k, ym_cell_local_j, xm_cell_local_i); CHKERRQ(ierr);
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Allocated centcoor[%d][%d][%d] for field %s.\n", rank, zm_cell_local_k, ym_cell_local_j, xm_cell_local_i, fieldName);
+
+        // Interpolate node coordinates to cell centers
+        // This function needs to be aware that coor_arr is global-indexed,
+        // and centcoor is local-indexed. It needs info_loop_dm to map.
+        // Or, more simply, InterpolateFieldFromCornerToCenter itself loops over owned cells
+        // using GetOwnedCellRange internally or takes xs_cell_global, xm_cell_local as input.
+        // Assuming the provided InterpolateFieldFromCornerToCenter handles this correctly
+        // based on its own GetOwnedCellRange call (using user->fda for info_nodes).
+        // Let's pass the necessary info if Interpolate is to be generic.
+        // For now, we assume InterpolateFieldFromCornerToCenter_Vector (called by generic)
+        // has been fixed to use the corrected GetOwnedCellRange with user->fda info.
+        ierr = InterpolateFieldFromCornerToCenter(coor_arr, centcoor, user); CHKERRQ(ierr);
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Interpolated coordinates to cell centers for field %s.\n", rank, fieldName);
+    }
+
+
+    /* --- 4. Populate Target Field Vec --- */
+    if (fieldIsVector) { // Handle Ucat or Ucont
+        Cmpnts ***vecField_arr;
+        ierr = DMDAVecGetArray(accessDM, fieldVec, &vecField_arr); CHKERRQ(ierr);
+
+        // Loop over the GLOBAL indices of the cell ORIGIN NODES owned by this rank
+        // (as determined by info_loop_dm and GetOwnedCellRange)
+        for (PetscInt k_glob_cell_origin = zs_cell_global_k; k_glob_cell_origin < ze_cell_global_k_excl; k_glob_cell_origin++) {
+            for (PetscInt j_glob_cell_origin = ys_cell_global_j; j_glob_cell_origin < ye_cell_global_j_excl; j_glob_cell_origin++) {
+                for (PetscInt i_glob_cell_origin = xs_cell_global_i; i_glob_cell_origin < xe_cell_global_i_excl; i_glob_cell_origin++) {
+
+                    PetscInt k_local = k_glob_cell_origin - zs_cell_global_k;
+                    PetscInt j_local = j_glob_cell_origin - ys_cell_global_j;
+                    PetscInt i_local = i_glob_cell_origin - xs_cell_global_i;
+
+                    // Defensive check for centcoor access (should be guaranteed by loop bounds if allocation was correct)
+                    if (!centcoor || k_local < 0 || k_local >= zm_cell_local_k ||
+                        j_local < 0 || j_local >= ym_cell_local_j ||
+                        i_local < 0 || i_local >= xm_cell_local_i) {
+                        // This should not happen if xm_cell_local > 0 checks were done before allocation/loop
+                        LOG_ALLOW(LOCAL, LOG_WARNING, "Rank %d: Skipping cell origin (%d,%d,%d) due to invalid local index for centcoor for field %s.",
+                                  rank, i_glob_cell_origin, j_glob_cell_origin, k_glob_cell_origin, fieldName);
+                        continue;
+                    }
+                    Cmpnts* cell_center_coord_ptr = &centcoor[k_local][j_local][i_local];
+
+                    // The value for cell C(i_glob_cell_origin, ...) is stored at NODE index [i_glob_cell_origin][...]
+                    PetscInt node_k_target = k_glob_cell_origin;
+                    PetscInt node_j_target = j_glob_cell_origin;
+                    PetscInt node_i_target = i_glob_cell_origin;
+
+                    // Correct interior check: GLOBAL node index vs GLOBAL domain cell counts
+                    // A node N(i,j,k) is interior if 0 < i < IM, 0 < j < JM, 0 < k < KM
+                    // (where IM, JM, KM are global CELL counts, so nodes are 0..IM, 0..JM, 0..KM)
+                    // Node i is interior if global_node_i > 0 AND global_node_i < (user->IM)
+                    // (i.e., not N0 and not N_IM)
+                    PetscBool is_globally_interior_node =
+                        (node_i_target > 0 && node_i_target < user->IM &&  // Not node 0 or node IM (max cell index is IM-1)
+                         node_j_target > 0 && node_j_target < user->JM &&
+                         node_k_target > 0 && node_k_target < user->KM);
+
+                    if (is_globally_interior_node) {
+                        // vecField_arr expects global node indices
+                        ierr = SetLocalCartesianField(fieldName, &vecField_arr[node_k_target][node_j_target][node_i_target],
+                                                      cell_center_coord_ptr, user->FieldInitialization, ConstantValue); CHKERRQ(ierr);
+                    }
+                }
             }
-            Cmpnts* cell_center_coord_ptr = &centcoor[k_local][j_local][i_local];
-
-            // Determine the GLOBAL NODE index where this cell's value should be stored
-            PetscInt node_k = k;
-            PetscInt node_j = j;
-            PetscInt node_i = i;
-
-             // Only write if it's an INTERIOR node index
-             if (node_i >= 1 && node_i < info_nodes.mx - 1 &&
-                 node_j >= 1 && node_j < info_nodes.my - 1 &&
-                 node_k >= 1 && node_k < info_nodes.mz - 1)
-             {
-                // Use the generic macro - dispatches to SetLocalCartesianField_Vector
-	       ierr = SetLocalCartesianField(fieldName, &vecField_arr[node_k][node_j][node_i], cell_center_coord_ptr,user->FieldInitialization,ConstantValue); CHKERRQ(ierr);
-             }
-             // Else: Boundary node indices left untouched for FormBCS
         }
-      }
-    }
-    
-    /*  ---- DEBUG ------------------
-    // --- MODIFIED LOOP: Loop over OWNED NODES ---
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "[DEBUG] Populating interior nodes of %s with constant values.\n", fieldName);
-    for (PetscInt k = zs_node; k < ze_node; k++) { // Global NODE index k
-      for (PetscInt j = ys_node; j < ye_node; j++) { // Global NODE index j
-        for (PetscInt i = xs_node; i < xe_node; i++) { // Global NODE index i
+        ierr = DMDAVecRestoreArray(accessDM, fieldVec, &vecField_arr); CHKERRQ(ierr);
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Populated interior node indices of %s.\n", rank, fieldName);
 
-             // Only write if it's an INTERIOR node index
-             if (i >= 1 && i < info_nodes.mx - 1 &&
-                 j >= 1 && j < info_nodes.my - 1 &&
-                 k >= 1 && k < info_nodes.mz - 1)
-             {
-                 // Set a constant value, bypassing analytical calculation and centcoor
-                 vecField_arr[k][j][i].x = 1.0; // Example constant
-                 vecField_arr[k][j][i].y = 0.5;
-                 vecField_arr[k][j][i].z = 0.1;
-             }
-             // Else: Boundary node indices left untouched
-        }
-      }
-    }
-    // --- END MODIFIED LOOP ---
-    -------------- DEBUG ------------------
-    */
-    
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "Populated interior node indices of %s with analytical values on rank %d.\n", fieldName,rank);
-    ierr = DMDAVecRestoreArray(accessDM, fieldVec, &vecField_arr); CHKERRQ(ierr); // MOVE to BOTTOM if error!
+    } else { // Handle P or Nvert (Scalar Fields)
+        PetscReal ***scalarField_arr;
+        ierr = DMDAVecGetArray(accessDM, fieldVec, &scalarField_arr); CHKERRQ(ierr);
 
-  } else { // Handle P or Nvert (Scalar Fields)
-    PetscReal ***scalarField_arr;
-    // Use the correct DM (da) for scalar fields
-    ierr = DMDAVecGetArray(accessDM, fieldVec, &scalarField_arr); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Obtained write access to scalar field %s.\n", fieldName);
+        // Loop over the GLOBAL indices of the cell ORIGIN NODES owned by this rank
+        for (PetscInt k_glob_cell_origin = zs_cell_global_k; k_glob_cell_origin < ze_cell_global_k_excl; k_glob_cell_origin++) {
+            for (PetscInt j_glob_cell_origin = ys_cell_global_j; j_glob_cell_origin < ye_cell_global_j_excl; j_glob_cell_origin++) {
+                for (PetscInt i_glob_cell_origin = xs_cell_global_i; i_glob_cell_origin < xe_cell_global_i_excl; i_glob_cell_origin++) {
 
-    // Loop over the GLOBAL indices of the OWNED CELLS
-    for (PetscInt k = zs_cell; k < ze_cell; k++) { // Global CELL index k
-      for (PetscInt j = ys_cell; j < ye_cell; j++) { // Global CELL index j
-        for (PetscInt i = xs_cell; i < xe_cell; i++) { // Global CELL index i
+                    PetscInt k_local = k_glob_cell_origin - zs_cell_global_k;
+                    PetscInt j_local = j_glob_cell_origin - ys_cell_global_j;
+                    PetscInt i_local = i_glob_cell_origin - xs_cell_global_i;
 
-            PetscInt k_local = k - zs_cell;
-            PetscInt j_local = j - ys_cell;
-            PetscInt i_local = i - xs_cell;
+                    if (!centcoor || k_local < 0 || k_local >= zm_cell_local_k ||
+                        j_local < 0 || j_local >= ym_cell_local_j ||
+                        i_local < 0 || i_local >= xm_cell_local_i) {
+                        LOG_ALLOW(LOCAL, LOG_WARNING, "Rank %d: Skipping cell origin (%d,%d,%d) due to invalid local index for centcoor for field %s.",
+                                  rank, i_glob_cell_origin, j_glob_cell_origin, k_glob_cell_origin, fieldName);
+                        continue;
+                    }
+                    Cmpnts* cell_center_coord_ptr = &centcoor[k_local][j_local][i_local];
 
-             // Check local bounds (defensive)
-            if (k_local < 0 || k_local >= zm_cell || j_local < 0 || j_local >= ym_cell || i_local < 0 || i_local >= xm_cell) {
-                  SETERRQ(PETSC_COMM_SELF, PETSC_ERR_PLIB, "Calculated local index out of bounds for centcoor!");
+                    // scalarField_arr (from user->da) expects global indices corresponding to cell origin nodes
+                    ierr = SetLocalCartesianField(fieldName, &scalarField_arr[k_glob_cell_origin][j_glob_cell_origin][i_glob_cell_origin],
+                                                  cell_center_coord_ptr, user->FieldInitialization, ConstantValue); CHKERRQ(ierr);
+                }
             }
-            Cmpnts* cell_center_coord_ptr = &centcoor[k_local][j_local][i_local];
-
-            // Use the generic macro - dispatches to SetLocalCartesianField_Scalar
-            // Store using the GLOBAL CELL index [k][j][i]
-            ierr = SetLocalCartesianField(fieldName, &scalarField_arr[k][j][i], cell_center_coord_ptr,user->FieldInitialization,ConstantValue); CHKERRQ(ierr);
         }
-      }
+        ierr = DMDAVecRestoreArray(accessDM, fieldVec, &scalarField_arr); CHKERRQ(ierr);
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Populated scalar field %s.\n", rank, fieldName);
     }
-    
 
-    /*  --------- DEBUG ---------------------
-        // --- MODIFIED LOOP: Loop over OWNED CELLS (using node ranges for now, simpler) ---
-    // For scalars, we actually want cell indices. Get them properly.
-    PetscInt xs_cell, xm_cell, xe_cell;
-    PetscInt ys_cell, ym_cell, ye_cell;
-    PetscInt zs_cell, zm_cell, ze_cell;
-    ierr = GetOwnedCellRange(&info_nodes, 0, &xs_cell, &xm_cell); CHKERRQ(ierr);
-    ierr = GetOwnedCellRange(&info_nodes, 1, &ys_cell, &ym_cell); CHKERRQ(ierr);
-    ierr = GetOwnedCellRange(&info_nodes, 2, &zs_cell, &zm_cell); CHKERRQ(ierr);
-    xe_cell = xs_cell + xm_cell;
-    ye_cell = ys_cell + ym_cell;
-    ze_cell = zs_cell + zm_cell;
-
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "[DEBUG] Populating owned cells of %s with constant values.\n", fieldName);
-    for (PetscInt k = zs_cell; k < ze_cell; k++) { // Global CELL index k
-      for (PetscInt j = ys_cell; j < ye_cell; j++) { // Global CELL index j
-        for (PetscInt i = xs_cell; i < xe_cell; i++) { // Global CELL index i
-            // Set a constant value, bypassing analytical calculation and centcoor
-            scalarField_arr[k][j][i] = 10.0; // Example constant
-        }
-      }
+    /* --- 5. Cleanup --- */
+    if (centcoor) { // Deallocate only if it was allocated
+        ierr = Deallocate3DArray(centcoor, zm_cell_local_k, ym_cell_local_j); CHKERRQ(ierr);
     }
-    // --- END MODIFIED LOOP ---
-    ---------- DEBUG ----------------------
-    */
-    
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Populated interior node indices of %s with analytical values.\n", fieldName);
-    ierr = DMDAVecRestoreArray(accessDM, fieldVec, &scalarField_arr); CHKERRQ(ierr); // MOVE to BOTTOM if error!
-  }
+    ierr = DMDAVecRestoreArrayRead(user->fda, localCoor, &coor_arr); CHKERRQ(ierr);
 
-  /* --- 5. Cleanup --- */
-  // Use the generic macro for deallocation - pass the pointer centcoor (type Cmpnts***)
-  ierr = Deallocate3DArray(centcoor, zm_cell, ym_cell); CHKERRQ(ierr); // Use correct dimensions from GetOwnedCellRange
-  ierr = DMDAVecRestoreArrayRead(user->fda, localCoor, &coor_arr); CHKERRQ(ierr); 
-
-  LOG_ALLOW(GLOBAL, LOG_DEBUG, "Analytical Solution Setup Complete for Interior.\n");
-  
-  // LOG_ALLOW(GLOBAL, LOG_DEBUG, "[DEBUG] Skipped cleanup for bypassed coordinate steps.\n")
-   MPI_Barrier(PETSC_COMM_WORLD); // Ensure rank 1 finishes test before proceeding
-   return 0;
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "SetAnalyticalCartesianField: Completed for field '%s' on rank %d.\n", fieldName, rank);
+    MPI_Barrier(PETSC_COMM_WORLD);
+    return 0;
 }
+  
 
 // Forward declaration if needed, or place ApplyAnalyticalBC_Vector before ApplyAnalyticalBC
 static PetscErrorCode ApplyAnalyticalBC_Vector(UserCtx *user, const char *fieldName, DM vectorDM, Vec coordVec, Vec fieldVec);
