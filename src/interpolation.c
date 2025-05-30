@@ -1022,7 +1022,7 @@ PetscErrorCode InterpolateEulerFieldToSwarm(
   void          *localPtr   = NULL;     /* Pointer to cell‐center data from fda */
   void          *cornerPtr  = NULL;     /* Will hold the typed corner array */
   void          *swarmOut   = NULL;     /* Pointer to the swarm output field */
-  PetscInt64    *cellIDs    = NULL;     /* Particle cell indices from swarm */
+  PetscInt    *cellIDs    = NULL;     /* Particle cell indices from swarm */
   PetscReal     *weights    = NULL;     /* Interpolation coefficients from swarm */
   PetscInt       nLocal;
   PetscMPIInt        rank;
@@ -1233,8 +1233,10 @@ PetscErrorCode InterpolateEulerFieldToSwarm(
 PetscErrorCode InterpolateAllFieldsToSwarm(UserCtx *user)
 {
   PetscErrorCode ierr;
-
+  PetscMPIInt rank;
   PetscFunctionBegin;
+
+  ierr = MPI_Comm_rank(PETSC_COMM_WORLD,&rank); CHKERRQ(ierr);
 
   /* 
      1) Interpolate the 'velocity' field (user->Ucat) into DMSwarm's "swarmVelocity".
@@ -1247,8 +1249,8 @@ PetscErrorCode InterpolateAllFieldsToSwarm(UserCtx *user)
           (assume dof=3 if user->Ucat has blockSize=3).
   */
 
-  LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
-    "InterpolateteAllFieldsToSwarm: Interpolation of ucat to velocity begins.\n");
+  LOG_ALLOW(LOCAL, LOG_DEBUG,
+		 "InterpolateteAllFieldsToSwarm: Interpolation of ucat to velocity begins on rank %d.\n",rank);
   // Make sure to pass the *LOCAL* Vector to the function below! 
   ierr = InterpolateEulerFieldToSwarm(user, user->lUcat, 
                                       "Ucat", 
@@ -1275,8 +1277,8 @@ PetscErrorCode InterpolateAllFieldsToSwarm(UserCtx *user)
      3) Optionally, synchronize or log that all fields are done 
   */
   ierr = MPI_Barrier(PETSC_COMM_WORLD); CHKERRQ(ierr);
-  LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
-    "InterpolateteAllFieldsToSwarm: Completed Interpolateting all fields to the swarm.\n");
+  LOG_ALLOW(LOCAL, LOG_INFO,
+	    "[rank %d]Completed Interpolateting all fields to the swarm.\n",rank);
 
   PetscFunctionReturn(0);
 }
@@ -1413,7 +1415,7 @@ PetscErrorCode AccumulateParticleField(DM swarm, const char *particleFieldName,
     PetscInt          dof;                   // DOF determined from gridSumDM
     PetscInt          nlocal, p;             // Local particle count and loop index
     const PetscReal   *particle_arr = NULL;  // Pointer to particle field data array (assuming Real)
-    const PetscInt64  *cell_id_arr = NULL;   // Pointer to particle cell ID array ("DMSwarm_CellID", Int)
+    const PetscInt  *cell_id_arr = NULL;   // Pointer to particle cell ID array ("DMSwarm_CellID", Int)
     PetscScalar       *sum_arr_ptr = NULL;   // Pointer to grid sum vector data array (Scalar)
     PetscInt          gxs, gys, gzs;         // Start indices of local ghosted patch (often 0)
     PetscInt          gxm, gym, gzm;         // Dimensions of local ghosted patch (including ghosts)

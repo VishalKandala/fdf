@@ -255,9 +255,9 @@ static void Int64ToStr(PetscInt64 value, char *buf, size_t bufsize)
 /*
  * Helper function: Converts three integers into a formatted string "(i, j, k)".
  */
-static void CellToStr(const PetscInt64 *cell, char *buf, size_t bufsize)
+static void CellToStr(const PetscInt *cell, char *buf, size_t bufsize)
 {
-    snprintf(buf, bufsize, "(%ld, %ld, %ld)", cell[0], cell[1], cell[2]);
+    snprintf(buf, bufsize, "(%d, %d, %d)", cell[0], cell[1], cell[2]);
 }
 
 /*
@@ -291,7 +291,7 @@ static void TripleRealToStr(const PetscReal *arr, char *buf, size_t bufsize)
 static PetscErrorCode ComputeMaxColumnWidths(PetscInt nParticles,
                                                const PetscMPIInt *ranks,
                                                const PetscInt64  *pids,
-                                               const PetscInt64  *cellIDs,
+                                               const PetscInt  *cellIDs,
                                                const PetscReal   *positions,
                                                const PetscReal   *velocities,
                                                const PetscReal   *weights,
@@ -397,16 +397,16 @@ PetscErrorCode LOG_PARTICLE_FIELDS(UserCtx* user, PetscInt printInterval)
     PetscReal *positions = NULL;
     PetscInt64 *particleIDs = NULL;
     PetscMPIInt *particleRanks = NULL;
-    PetscInt64 *cellIDs = NULL;
+    PetscInt *cellIDs = NULL;
     PetscReal *weights = NULL;
     PetscReal *velocities = NULL;
     PetscMPIInt rank;
     
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL,LOG_INFO, "PrintParticleFields - Rank %d is retrieving particle data.\n", rank);
+    LOG_ALLOW(LOCAL,LOG_INFO, "PrintParticleFields - Rank %d is retrieving particle data.\n", rank);
 
     ierr = DMSwarmGetLocalSize(swarm, &localNumParticles); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL,LOG_DEBUG,"PrintParticleFields - Rank %d has %d particles.\n", rank, localNumParticles);
+    LOG_ALLOW(LOCAL,LOG_DEBUG,"PrintParticleFields - Rank %d has %d particles.\n", rank, localNumParticles);
 
     ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
     ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&particleIDs); CHKERRQ(ierr);
@@ -414,7 +414,7 @@ PetscErrorCode LOG_PARTICLE_FIELDS(UserCtx* user, PetscInt printInterval)
     ierr = DMSwarmGetField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs); CHKERRQ(ierr);
     ierr = DMSwarmGetField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr);
     ierr = DMSwarmGetField(swarm, "velocity", NULL, NULL, (void**)&velocities); CHKERRQ(ierr);
-
+    
     /* Compute maximum column widths. */
     int wRank, wPID, wCell, wPos, wVel, wWt;
     wRank = wPID = wCell = wPos = wVel = wWt = 0;
@@ -427,20 +427,53 @@ PetscErrorCode LOG_PARTICLE_FIELDS(UserCtx* user, PetscInt printInterval)
     char rowFmt[256];
     BuildHeaderString(headerFmt, sizeof(headerFmt), wRank, wPID, wCell, wPos, wVel, wWt);
     BuildRowFormatString(wRank, wPID, wCell, wPos, wVel, wWt, rowFmt, sizeof(rowFmt));
-
+    
     /* Print header (using synchronized printing for parallel output). */
     ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "--------------------------------------------------------------------------------------------------------------\n"); CHKERRQ(ierr);
     ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "%s", headerFmt); CHKERRQ(ierr);
     ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "--------------------------------------------------------------------------------------------------------------\n"); CHKERRQ(ierr);
-
+    
     /* Loop over particles and print every printInterval-th row. */
     char rowStr[256];
     for (PetscInt i = 0; i < localNumParticles; i++) {
         if (i % printInterval == 0) {
+	  // ------- DEBUG 
+	  //char cellStr[TMP_BUF_SIZE], posStr[TMP_BUF_SIZE], velStr[TMP_BUF_SIZE], wtStr[TMP_BUF_SIZE];
+	  //CellToStr(&cellIDs[3*i], cellStr, TMP_BUF_SIZE);
+	  //TripleRealToStr(&positions[3*i], posStr, TMP_BUF_SIZE);
+	  //TripleRealToStr(&velocities[3*i], velStr, TMP_BUF_SIZE);
+	  // TripleRealToStr(&weights[3*i], wtStr, TMP_BUF_SIZE);
+            
+	  // if (rank == 0) { // Or whatever rank is Rank 0
+	    //PetscPrintf(PETSC_COMM_SELF, "[Rank 0 DEBUG LPF] Particle %lld: PID=%lld, Rank=%d\n", (long long)i, (long long)particleIDs[i], particleRanks[i]);
+	    //PetscPrintf(PETSC_COMM_SELF, "[Rank 0 DEBUG LPF] Raw Pos: (%.10e, %.10e, %.10e)\n", positions[3*i+0], positions[3*i+1], positions[3*i+2]);
+	    //PetscPrintf(PETSC_COMM_SELF, "[Rank 0 DEBUG LPF] Str Pos: %s\n", posStr);
+	    //PetscPrintf(PETSC_COMM_SELF, "[Rank 0 DEBUG LPF] Raw Vel: (%.10e, %.10e, %.10e)\n", velocities[3*i+0], velocities[3*i+1], velocities[3*i+2]);
+	    // PetscPrintf(PETSC_COMM_SELF, "[Rank 0 DEBUG LPF] Str Vel: %s\n", velStr);
+	    // Add similar for cell, weights
+	    // PetscPrintf(PETSC_COMM_SELF, "[Rank 0 DEBUG LPF] About to build rowStr for particle %lld\n", (long long)i);
+	    //  fflush(stdout);
+	    // }
+
+	  //  snprintf(rowStr, sizeof(rowStr), rowFmt,
+          //           particleRanks[i],
+          //           particleIDs[i],
+          //           cellStr,
+          //           posStr,
+          //           velStr,
+	  //	     wtStr);
+
+	     
+	     //    ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "%s", rowStr); CHKERRQ(ierr);
+	  
+	     // ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "%s", rowStr); CHKERRQ(ierr); 
+	  
+	  // -------- DEBUG
             /* Format the row by converting each field to a string first.
              * We use temporary buffers and then build the row string.
              */
-            char cellStr[TMP_BUF_SIZE], posStr[TMP_BUF_SIZE], velStr[TMP_BUF_SIZE], wtStr[TMP_BUF_SIZE];
+	  
+	   char cellStr[TMP_BUF_SIZE], posStr[TMP_BUF_SIZE], velStr[TMP_BUF_SIZE], wtStr[TMP_BUF_SIZE];
             CellToStr(&cellIDs[3*i], cellStr, TMP_BUF_SIZE);
             TripleRealToStr(&positions[3*i], posStr, TMP_BUF_SIZE);
             TripleRealToStr(&velocities[3*i], velStr, TMP_BUF_SIZE);
@@ -454,10 +487,11 @@ PetscErrorCode LOG_PARTICLE_FIELDS(UserCtx* user, PetscInt printInterval)
                      posStr,
                      velStr,
                      wtStr);
-            ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "%s", rowStr); CHKERRQ(ierr);
+	 ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "%s", rowStr); CHKERRQ(ierr);
         }
     }
-    
+
+ 
     ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "--------------------------------------------------------------------------------------------------------------\n"); CHKERRQ(ierr);
     ierr = PetscSynchronizedPrintf(PETSC_COMM_WORLD, "\n"); CHKERRQ(ierr);
     ierr = PetscSynchronizedFlush(PETSC_COMM_WORLD, PETSC_STDOUT); CHKERRQ(ierr);

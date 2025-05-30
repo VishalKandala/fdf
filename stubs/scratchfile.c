@@ -1464,3 +1464,285 @@ static PetscErrorCode InitializeParticleBasicProperties(UserCtx *user,
               rank, particlesPerProcess);
     PetscFunctionReturn(0);
 }
+
+/////////////////
+
+/**
+ * @brief Determines cell selection and intra-cell logical coordinates for surface initialization (Mode 0).
+ *
+ * (Keep existing detailed Doxygen comments, just ensure parameters align)
+ *
+ * @param[in]  user Pointer to `UserCtx` (contains `identifiedInletBCFace`, IM, JM, KM).
+ * @param[in]  info Pointer to `DMDALocalInfo` for the current rank's grid portion (from user->da).
+ * @param[in]  xs_gnode, ys_gnode, zs_gnode Local indices (in the ghosted array) of the first *owned node*.
+ * @param[in]  IM_gcells_global, JM_gcells_global, KM_gcells_global Total number of CELLS in the global domain in I, J, K. (user->IM, user->JM, user->KM)
+ * @param[in]  rand_logic_i_ptr Pointer to the RNG for i-dimension tasks [0,1).
+ * @param[in]  rand_logic_j_ptr Pointer to the RNG for j-dimension tasks [0,1).
+ * @param[in]  rand_logic_k_ptr Pointer to the RNG for k-dimension tasks [0,1).
+ * @param[out] ci_metric_lnode_out Pointer to store the local i-node index of the selected cell's origin.
+ * @param[out] cj_metric_lnode_out Pointer to store the local j-node index of the selected cell's origin.
+ * @param[out] ck_metric_lnode_out Pointer to store the local k-node index of the selected cell's origin.
+ * @param[out] xi_metric_logic_out Pointer to store the intra-cell logical xi-coordinate [0,1).
+ * @param[out] eta_metric_logic_out Pointer to store the intra-cell logical eta-coordinate [0,1).
+ * @param[out] zta_metric_logic_out Pointer to store the intra-cell logical zeta-coordinate [0,1).
+ * @param[out] can_place_on_surface_out PETSC_TRUE if placement parameters were successfully determined, PETSC_FALSE otherwise.
+ * @return PetscErrorCode 0 on success, or a PETSc error code.
+ *
+ */
+static PetscErrorCode DetermineSurfaceInitializationParameters(
+    UserCtx *user, DMDALocalInfo *info, /* DMDALocalInfo from user->da */
+    PetscInt xs_gnode, PetscInt ys_gnode, PetscInt zs_gnode,
+    PetscInt IM_gcells_global, PetscInt JM_gcells_global, PetscInt KM_gcells_global, /* Pass user->IM, user->JM, user->KM */
+    PetscRandom *rand_logic_i_ptr, PetscRandom *rand_logic_j_ptr, PetscRandom *rand_logic_k_ptr,
+    PetscInt *ci_metric_lnode_out, PetscInt *cj_metric_lnode_out, PetscInt *ck_metric_lnode_out,
+    PetscReal *xi_metric_logic_out, PetscReal *eta_metric_logic_out, PetscReal *zta_metric_logic_out,
+    PetscBool *can_place_on_surface_out)
+{
+    PetscErrorCode ierr = 0;
+    PetscReal r_val_i_sel, r_val_j_sel, r_val_k_sel; // For storing random numbers from [0,1) RNGs
+    PetscInt local_cell_idx_on_face_dim1 = 0; // Local owned cell index in the first tangential dimension of the face (0-based relative to owned cells on face)
+    PetscInt local_cell_idx_on_face_dim2 = 0; // Local owned cell index in the second tangential dimension of the face (0-based)
+    PetscMPIInt rank_for_logging;
+
+    PetscFunctionBeginUser;
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank_for_logging); CHKERRQ(ierr);
+
+    *can_place_on_surface_out = PETSC_FALSE;
+
+    if (user->inletFaceDefined == PETSC_FALSE) {
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP - Rank %d: Inlet face is not defined. Cannot place particle on surface. \n", rank_for_logging);
+        PetscFunctionReturn(0);
+    }
+
+    *xi_metric_logic_out = 0.5; *eta_metric_logic_out = 0.5; *zta_metric_logic_out = 0.5;
+    *ci_metric_lnode_out = xs_gnode; *cj_metric_lnode_out = ys_gnode; *ck_metric_lnode_out = zs_gnode; // Default
+
+    // Get the number of cells this rank owns in each dimension using the new GetOwnedCellRange
+    // Note: GlobalNodesInDim = GlobalCellsInDim + 1
+    PetscInt xs_cell_global_i, num_owned_cells_i;
+    PetscInt xs_cell_global_j, num_owned_cells_j;
+    PetscInt xs_cell_global_k, num_owned_cells_k;
+
+    ierr = GetOwnedCellRange(info, 0, &xs_cell_global_i, &num_owned_cells_i); CHKERRQ(ierr);
+    ierr = GetOwnedCellRange(info, 1, &xs_cell_global_j, &num_owned_cells_j); CHKERRQ(ierr);
+    ierr = GetOwnedCellRange(info, 2, &xs_cell_global_k, &num_owned_cells_k); CHKERRQ(ierr);
+
+    // A rank must own some 3D cells to be able to define a face for particle placement.
+    // Check if it owns at least one cell in each dimension.
+    if (num_owned_cells_i == 0 || num_owned_cells_j == 0 || num_owned_cells_k == 0) {
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP - Rank %d: Has zero owned cells in at least one dimension (owned cells i,j,k: %d,%d,%d). Cannot place particle on surface.\n",
+                  rank_for_logging, num_owned_cells_i, num_owned_cells_j, num_owned_cells_k);
+        PetscFunctionReturn(0);
+    }
+
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP - Rank %d: Processing inlet face %d. Owned cell counts (i,j,k): (%d,%d,%d). Global CELL counts (I,J,K): (%d,%d,%d). Ghosted node starts (xs_g,ys_g,zs_g): (%d,%d,%d). Owned cell global starts (xs_c,ys_c,zs_c): (%d,%d,%d) \n",
+        rank_for_logging, user->identifiedInletBCFace, num_owned_cells_i, num_owned_cells_j, num_owned_cells_k,
+        IM_gcells_global, JM_gcells_global, KM_gcells_global,
+        xs_gnode, ys_gnode, zs_gnode, xs_cell_global_i, xs_cell_global_j, xs_cell_global_k);
+
+    switch (user->identifiedInletBCFace) {
+        case BC_FACE_NEG_X: // Global I-MIN face (global cell index i=0)
+            // Check if this rank owns cells at the global I=0 boundary
+            // info->xs is the global starting NODE index. If it's 0, this rank owns node N0, so it owns cell C0.
+            if (info->xs == 0 && num_owned_cells_i > 0) { // Rank owns cell C0
+                *can_place_on_surface_out = PETSC_TRUE;
+                *ci_metric_lnode_out = xs_gnode;         // Cell C0 origin is the first owned node in i (local index xs_gnode)
+                *xi_metric_logic_out = 1.0e-6;
+
+                // Tangential dimensions are J and K. Select an owned cell randomly on this face.
+                if (num_owned_cells_j > 0) {
+                    ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, &r_val_j_sel); CHKERRQ(ierr);
+                    local_cell_idx_on_face_dim1 = (PetscInt)(r_val_j_sel * num_owned_cells_j);
+                    local_cell_idx_on_face_dim1 = PetscMin(PetscMax(0, local_cell_idx_on_face_dim1), num_owned_cells_j - 1);
+                    *cj_metric_lnode_out = ys_gnode + local_cell_idx_on_face_dim1; // Offset from start of owned nodes in J
+                } else { *can_place_on_surface_out = PETSC_FALSE; }
+
+                if (*can_place_on_surface_out && num_owned_cells_k > 0) {
+                    ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, &r_val_k_sel); CHKERRQ(ierr);
+                    local_cell_idx_on_face_dim2 = (PetscInt)(r_val_k_sel * num_owned_cells_k);
+                    local_cell_idx_on_face_dim2 = PetscMin(PetscMax(0, local_cell_idx_on_face_dim2), num_owned_cells_k - 1);
+                    *ck_metric_lnode_out = zs_gnode + local_cell_idx_on_face_dim2; // Offset from start of owned nodes in K
+                } else if (*can_place_on_surface_out) { *can_place_on_surface_out = PETSC_FALSE; }
+
+                if (*can_place_on_surface_out) {
+                    ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, eta_metric_logic_out); CHKERRQ(ierr);
+                    ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, zta_metric_logic_out); CHKERRQ(ierr);
+                    LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/NEG_Xi: Target. CellNode(loc lnode idx)=(%d,%d,%d). Logic(xi,et,zt)=(%.2e,%.2f,%.2f) \n", *ci_metric_lnode_out, *cj_metric_lnode_out, *ck_metric_lnode_out, *xi_metric_logic_out, *eta_metric_logic_out, *zta_metric_logic_out);
+                }
+            } else { LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/NEG_Xi: Rank %d not on this face (info->xs=%d or num_owned_i=%d is 0). \n", rank_for_logging, info->xs, num_owned_cells_i); }
+            break;
+
+        case BC_FACE_POS_X: // Global I-MAX face (last cell C_{IM_gcells_global - 1})
+            // Check if this rank owns the last cell in I.
+            // The last cell C_{IM-1} has origin N_{IM-1}. Global node indices are 0..IM.
+            // Global cell indices are 0..IM-1.
+            // Last cell origin global index = IM_gcells_global - 1.
+            // This rank owns this cell if xs_cell_global_i <= (IM_gcells_global - 1) AND
+            // (xs_cell_global_i + num_owned_cells_i -1) >= (IM_gcells_global -1)
+            // Simpler: if it owns node N_{IM_gcells_global - 1} (which is the origin of the last cell)
+            if ( (xs_cell_global_i + num_owned_cells_i -1 >= IM_gcells_global - 1) && (xs_cell_global_i <= IM_gcells_global -1) && num_owned_cells_i > 0) {
+                 // This rank's owned cell range includes the last global cell.
+                *can_place_on_surface_out = PETSC_TRUE;
+                // The origin node of the last cell (global index IM_gcells_global - 1)
+                // Its local node index is (IM_gcells_global - 1) - info->xs + xs_gnode
+                // Or, more directly, it's the (num_owned_cells_i - 1)-th owned cell origin.
+                *ci_metric_lnode_out = xs_gnode + ((IM_gcells_global - 1) - xs_cell_global_i) ;
+                *xi_metric_logic_out = 1.0 - 1.0e-6;
+
+                if (num_owned_cells_j > 0) {
+                    ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, &r_val_j_sel); CHKERRQ(ierr);
+                    local_cell_idx_on_face_dim1 = (PetscInt)(r_val_j_sel * num_owned_cells_j);
+                    local_cell_idx_on_face_dim1 = PetscMin(PetscMax(0, local_cell_idx_on_face_dim1), num_owned_cells_j - 1);
+                    *cj_metric_lnode_out = ys_gnode + local_cell_idx_on_face_dim1;
+                } else { *can_place_on_surface_out = PETSC_FALSE; }
+
+                if (*can_place_on_surface_out && num_owned_cells_k > 0) {
+                    ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, &r_val_k_sel); CHKERRQ(ierr);
+                    local_cell_idx_on_face_dim2 = (PetscInt)(r_val_k_sel * num_owned_cells_k);
+                    local_cell_idx_on_face_dim2 = PetscMin(PetscMax(0, local_cell_idx_on_face_dim2), num_owned_cells_k - 1);
+                    *ck_metric_lnode_out = zs_gnode + local_cell_idx_on_face_dim2;
+                } else if (*can_place_on_surface_out) { *can_place_on_surface_out = PETSC_FALSE; }
+
+                if (*can_place_on_surface_out) {
+                    ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, eta_metric_logic_out); CHKERRQ(ierr);
+                    ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, zta_metric_logic_out); CHKERRQ(ierr);
+                    LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/POS_Xi: Target. CellNode(loc lnode idx)=(%d,%d,%d). Logic(xi,et,zt)=(%.2e,%.2f,%.2f) \n", *ci_metric_lnode_out, *cj_metric_lnode_out, *ck_metric_lnode_out, *xi_metric_logic_out, *eta_metric_logic_out, *zta_metric_logic_out);
+                }
+            } else { LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/POS_Xi: Rank %d not on this face (xs_c_i=%d, num_i=%d, IM_g=%d). \n", rank_for_logging, xs_cell_global_i, num_owned_cells_i, IM_gcells_global); }
+            break;
+
+        // --- Cases for BC_FACE_NEG_Y, BC_FACE_POS_Y, BC_FACE_NEG_Z, BC_FACE_POS_Z ---
+        // --- Follow the same pattern as NEG_X and POS_X, swapping dimensions accordingly ---
+
+        case BC_FACE_NEG_Y: // Global J-MIN face (global cell index j=0)
+            if (info->ys == 0 && num_owned_cells_j > 0) { // Rank owns cell C(i,0,k) for some i,k
+                *can_place_on_surface_out = PETSC_TRUE;
+                *cj_metric_lnode_out = ys_gnode;
+                *eta_metric_logic_out = 1.0e-6;
+
+                if (num_owned_cells_i > 0) { // Tangential I
+                    ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, &r_val_i_sel); CHKERRQ(ierr);
+                    local_cell_idx_on_face_dim1 = (PetscInt)(r_val_i_sel * num_owned_cells_i);
+                    local_cell_idx_on_face_dim1 = PetscMin(PetscMax(0, local_cell_idx_on_face_dim1), num_owned_cells_i - 1);
+                    *ci_metric_lnode_out = xs_gnode + local_cell_idx_on_face_dim1;
+                } else { *can_place_on_surface_out = PETSC_FALSE; }
+
+                if (*can_place_on_surface_out && num_owned_cells_k > 0) { // Tangential K
+                    ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, &r_val_k_sel); CHKERRQ(ierr);
+                    local_cell_idx_on_face_dim2 = (PetscInt)(r_val_k_sel * num_owned_cells_k);
+                    local_cell_idx_on_face_dim2 = PetscMin(PetscMax(0, local_cell_idx_on_face_dim2), num_owned_cells_k - 1);
+                    *ck_metric_lnode_out = zs_gnode + local_cell_idx_on_face_dim2;
+                } else if (*can_place_on_surface_out) { *can_place_on_surface_out = PETSC_FALSE; }
+
+                if (*can_place_on_surface_out) {
+                    ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, xi_metric_logic_out); CHKERRQ(ierr);
+                    ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, zta_metric_logic_out); CHKERRQ(ierr);
+                    LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/NEG_Eta: Target. CellNode(loc lnode idx)=(%d,%d,%d). Logic(xi,et,zt)=(%.2f,%.2e,%.2f) \n", *ci_metric_lnode_out, *cj_metric_lnode_out, *ck_metric_lnode_out, *xi_metric_logic_out, *eta_metric_logic_out, *zta_metric_logic_out);
+                }
+            } else { LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/NEG_Eta: Rank %d not on this face (info->ys=%d or num_owned_j=%d is 0).\n", rank_for_logging, info->ys, num_owned_cells_j); }
+            break;
+
+        case BC_FACE_POS_Y: // Global J-MAX face
+            if ( (xs_cell_global_j + num_owned_cells_j -1 >= JM_gcells_global - 1) && (xs_cell_global_j <= JM_gcells_global -1) && num_owned_cells_j > 0) {
+                *can_place_on_surface_out = PETSC_TRUE;
+                *cj_metric_lnode_out = ys_gnode + ((JM_gcells_global - 1) - xs_cell_global_j);
+                *eta_metric_logic_out = 1.0 - 1.0e-6;
+
+                if (num_owned_cells_i > 0) {
+                    ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, &r_val_i_sel); CHKERRQ(ierr);
+                    local_cell_idx_on_face_dim1 = (PetscInt)(r_val_i_sel * num_owned_cells_i);
+                    local_cell_idx_on_face_dim1 = PetscMin(PetscMax(0, local_cell_idx_on_face_dim1), num_owned_cells_i - 1);
+                    *ci_metric_lnode_out = xs_gnode + local_cell_idx_on_face_dim1;
+                } else { *can_place_on_surface_out = PETSC_FALSE; }
+
+                if (*can_place_on_surface_out && num_owned_cells_k > 0) {
+                    ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, &r_val_k_sel); CHKERRQ(ierr);
+                    local_cell_idx_on_face_dim2 = (PetscInt)(r_val_k_sel * num_owned_cells_k);
+                    local_cell_idx_on_face_dim2 = PetscMin(PetscMax(0, local_cell_idx_on_face_dim2), num_owned_cells_k - 1);
+                    *ck_metric_lnode_out = zs_gnode + local_cell_idx_on_face_dim2;
+                } else if (*can_place_on_surface_out) { *can_place_on_surface_out = PETSC_FALSE; }
+
+                if (*can_place_on_surface_out) {
+                    ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, xi_metric_logic_out); CHKERRQ(ierr);
+                    ierr = PetscRandomGetValueReal(*rand_logic_k_ptr, zta_metric_logic_out); CHKERRQ(ierr);
+                    LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/POS_Eta: Target. CellNode(loc lnode idx)=(%d,%d,%d). Logic(xi,et,zt)=(%.2f,%.2e,%.2f) \n", *ci_metric_lnode_out, *cj_metric_lnode_out, *ck_metric_lnode_out, *xi_metric_logic_out, *eta_metric_logic_out, *zta_metric_logic_out);
+                }
+            } else { LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/POS_Eta: Rank %d not on this face (xs_c_j=%d, num_j=%d, JM_g=%d). \n", rank_for_logging, xs_cell_global_j, num_owned_cells_j, JM_gcells_global); }
+            break;
+
+        case BC_FACE_NEG_Z: // Global K-MIN face (global cell index k=0)
+            if (info->zs == 0 && num_owned_cells_k > 0) { // Rank owns cell C(i,j,0) for some i,j
+                *can_place_on_surface_out = PETSC_TRUE;
+                *ck_metric_lnode_out = zs_gnode; // Cell C(i,j,0) origin is the first owned node in k
+                *zta_metric_logic_out = 1.0e-6;
+
+                if (num_owned_cells_i > 0) { // Tangential I
+                    ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, &r_val_i_sel); CHKERRQ(ierr);
+                    local_cell_idx_on_face_dim1 = (PetscInt)(r_val_i_sel * num_owned_cells_i);
+                    local_cell_idx_on_face_dim1 = PetscMin(PetscMax(0, local_cell_idx_on_face_dim1), num_owned_cells_i - 1);
+                    *ci_metric_lnode_out = xs_gnode + local_cell_idx_on_face_dim1;
+                } else { *can_place_on_surface_out = PETSC_FALSE; }
+
+                if (*can_place_on_surface_out && num_owned_cells_j > 0) { // Tangential J
+                    ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, &r_val_j_sel); CHKERRQ(ierr);
+                    local_cell_idx_on_face_dim2 = (PetscInt)(r_val_j_sel * num_owned_cells_j);
+                    local_cell_idx_on_face_dim2 = PetscMin(PetscMax(0, local_cell_idx_on_face_dim2), num_owned_cells_j - 1);
+                    *cj_metric_lnode_out = ys_gnode + local_cell_idx_on_face_dim2;
+                } else if (*can_place_on_surface_out) { *can_place_on_surface_out = PETSC_FALSE; }
+
+                if (*can_place_on_surface_out) {
+                    ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, xi_metric_logic_out); CHKERRQ(ierr);
+                    ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, eta_metric_logic_out); CHKERRQ(ierr);
+                    LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/NEG_Zeta: Target. CellNode(loc lnode idx)=(%d,%d,%d). Logic(xi,et,zt)=(%.2f,%.2f,%.2e) \n", *ci_metric_lnode_out, *cj_metric_lnode_out, *ck_metric_lnode_out, *xi_metric_logic_out, *eta_metric_logic_out, *zta_metric_logic_out);
+                }
+            } else { LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/NEG_Zeta: Rank %d not on this face (info->zs=%d or num_owned_k=%d is 0). \n", rank_for_logging, info->zs, num_owned_cells_k); }
+            break;
+
+        case BC_FACE_POS_Z: // Global K-MAX face
+            if ( (xs_cell_global_k + num_owned_cells_k -1 >= KM_gcells_global - 1) && (xs_cell_global_k <= KM_gcells_global -1) && num_owned_cells_k > 0) {
+                *can_place_on_surface_out = PETSC_TRUE;
+                *ck_metric_lnode_out = zs_gnode + ((KM_gcells_global - 1) - xs_cell_global_k);
+                *zta_metric_logic_out = 1.0 - 1.0e-6;
+
+                if (num_owned_cells_i > 0) {
+                    ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, &r_val_i_sel); CHKERRQ(ierr);
+                    local_cell_idx_on_face_dim1 = (PetscInt)(r_val_i_sel * num_owned_cells_i);
+                    local_cell_idx_on_face_dim1 = PetscMin(PetscMax(0, local_cell_idx_on_face_dim1), num_owned_cells_i - 1);
+                    *ci_metric_lnode_out = xs_gnode + local_cell_idx_on_face_dim1;
+                } else { *can_place_on_surface_out = PETSC_FALSE; }
+
+                if (*can_place_on_surface_out && num_owned_cells_j > 0) {
+                    ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, &r_val_j_sel); CHKERRQ(ierr);
+                    local_cell_idx_on_face_dim2 = (PetscInt)(r_val_j_sel * num_owned_cells_j);
+                    local_cell_idx_on_face_dim2 = PetscMin(PetscMax(0, local_cell_idx_on_face_dim2), num_owned_cells_j - 1);
+                    *cj_metric_lnode_out = ys_gnode + local_cell_idx_on_face_dim2;
+                } else if (*can_place_on_surface_out) { *can_place_on_surface_out = PETSC_FALSE; }
+
+                if (*can_place_on_surface_out) {
+                    ierr = PetscRandomGetValueReal(*rand_logic_i_ptr, xi_metric_logic_out); CHKERRQ(ierr);
+                    ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, eta_metric_logic_out); CHKERRQ(ierr);
+                    LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/POS_Zeta: Target. CellNode(loc lnode idx)=(%d,%d,%d). Logic(xi,et,zt)=(%.2f,%.2f,%.2e) \n", *ci_metric_lnode_out, *cj_metric_lnode_out, *ck_metric_lnode_out, *xi_metric_logic_out, *eta_metric_logic_out, *zta_metric_logic_out);
+                }
+            } else { LOG_ALLOW(LOCAL, LOG_DEBUG, "DSP/POS_Zeta: Rank %d not on this face (xs_c_k=%d, num_k=%d, KM_g=%d).\n", rank_for_logging, xs_cell_global_k, num_owned_cells_k, KM_gcells_global); }
+            break;
+
+    default:
+            LOG_ALLOW(LOCAL, LOG_ERROR, "DSP - Rank %d: Invalid user->identifiedInletBCFace value: %d\n", rank_for_logging, user->identifiedInletBCFace);
+            *can_place_on_surface_out = PETSC_FALSE;
+            break;
+    }
+
+    if (*can_place_on_surface_out) {
+        if (user->identifiedInletBCFace == BC_FACE_NEG_X || user->identifiedInletBCFace == BC_FACE_POS_X) {
+            *eta_metric_logic_out = PetscMin(PetscMax(0.0, *eta_metric_logic_out), 1.0 - 1.0e-7); // Clamp [0, 1-eps]
+            *zta_metric_logic_out = PetscMin(PetscMax(0.0, *zta_metric_logic_out), 1.0 - 1.0e-7);
+        } else if (user->identifiedInletBCFace == BC_FACE_NEG_Y || user->identifiedInletBCFace == BC_FACE_POS_Y) {
+            *xi_metric_logic_out  = PetscMin(PetscMax(0.0, *xi_metric_logic_out),  1.0 - 1.0e-7);
+            *zta_metric_logic_out = PetscMin(PetscMax(0.0, *zta_metric_logic_out), 1.0 - 1.0e-7);
+        } else { // Z-faces (NEG_Z or POS_Z)
+            *xi_metric_logic_out  = PetscMin(PetscMax(0.0, *xi_metric_logic_out),  1.0 - 1.0e-7);
+            *eta_metric_logic_out = PetscMin(PetscMax(0.0, *eta_metric_logic_out), 1.0 - 1.0e-7);
+        }
+    }
+    PetscFunctionReturn(0);
+}

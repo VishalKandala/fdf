@@ -540,6 +540,7 @@ int main(int argc, char **argv)
     char **allowedFuncs  = NULL;
     PetscInt nAllowed   = 0;
     PetscViewer logviewer;
+    PetscBool OnlySetup = PETSC_FALSE;
 
     ierr = PetscInitialize(&argc, &argv, (char *)0, help); CHKERRQ(ierr);
 
@@ -548,7 +549,7 @@ int main(int argc, char **argv)
 
     // Initialize simulation: user context, MPI rank/size, np, etc.
     // This still sets up the DMDA and Vecs even if we only read them once.
-    ierr = InitializeSimulation(&user, &rank, &size, &np, &StartStep, &StepsToRun, &StartTime, &block_number, &OutputFreq,&readFields,&allowedFuncs,&nAllowed,allowedFile,&useCfg); CHKERRQ(ierr);
+    ierr = InitializeSimulation(&user, &rank, &size, &np, &StartStep, &StepsToRun, &StartTime, &block_number, &OutputFreq,&readFields,&allowedFuncs,&nAllowed,allowedFile,&useCfg,&OnlySetup); CHKERRQ(ierr);
 
     // Setup the computational grid (Still needed for DMSwarm association and context)
     ierr = SetupGridAndVectors(user, block_number); CHKERRQ(ierr);

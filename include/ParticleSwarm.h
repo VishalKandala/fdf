@@ -183,7 +183,7 @@ PetscErrorCode FinalizeSwarmSetup(PetscRandom *randx, PetscRandom *randy, PetscR
  * @return PetscErrorCode  Returns `0` on success, non-zero on failure.
  */
 PetscErrorCode InitializeParticle(PetscInt i, const PetscInt64 *PIDs, const PetscReal *weights,
-                                         const PetscReal *positions, const PetscInt64 *cellIndices,
+                                         const PetscReal *positions, const PetscInt *cellIndices,
                                          Particle *particle);
 
 /**
@@ -199,7 +199,7 @@ PetscErrorCode InitializeParticle(PetscInt i, const PetscInt64 *PIDs, const Pets
  * @return PetscErrorCode  Returns `0` on success, non-zero on failure.
  */
 PetscErrorCode UpdateSwarmFields(PetscInt i, const Particle *particle,
-                                        PetscReal *weights, PetscInt64 *cellIndices);
+                                        PetscReal *weights, PetscInt *cellIndices);
 
 
 /**

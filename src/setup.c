@@ -917,24 +917,49 @@ PetscErrorCode PerformInitialSetup(UserCtx *user, PetscReal currentTime, PetscIn
                                                &migrationList_for_initial_sort, &migrationCount_initial_sort, &migrationListCapacity_initial_sort,
                                                currentTime, step, "Preliminary Sort", &globalMigrationCount_initial_sort); CHKERRQ(ierr);
     // migrationList_for_initial_sort is allocated/reallocated within PerformSingleParticleMigrationCycle if needed.
-
-    ierr = PetscBarrier(NULL);
     
     // --- 3. Re-initialize Particles on Inlet Surface (if applicable) ---
     // This is crucial for ParticleInitialization == 0 (Surface Init). After particles have been
     // migrated to the rank(s) owning the inlet surface, this step ensures they are properly
     // distributed *on* that surface, rather than remaining at their migrated position (e.g., (0,0,0)).
+    // ----- DEBUG 
     if (user->ParticleInitialization == 0 && user->inletFaceDefined) {
-        ierr = ReinitializeParticlesOnInletSurface(user, currentTime, step); CHKERRQ(ierr);
+      ierr = ReinitializeParticlesOnInletSurface(user, currentTime, step); CHKERRQ(ierr);
+      if (rank == 0) { // Or the rank that does the re-init
+        PetscReal *coords_check;
+        PetscInt nlocal_check;
+        ierr = DMSwarmGetLocalSize(user->swarm, &nlocal_check); CHKERRQ(ierr);
+        if (nlocal_check > 0) {
+	  ierr = DMSwarmGetField(user->swarm, "position", NULL, NULL, (void**)&coords_check); CHKERRQ(ierr);
+	  LOG_ALLOW(LOCAL,LOG_DEBUG, "[Rank %d DEBUG] After Reinit, first particle pos: (%.2f, %.2f, %.2f)\n",
+		      rank, coords_check[0], coords_check[1], coords_check[2]);
+	  // Check for NaNs/Infs in a few particles if suspicious
+	  for (int p_chk = 0; p_chk < PetscMin(5, nlocal_check); ++p_chk) {
+	    if (PetscIsInfOrNanReal(coords_check[3*p_chk+0]) ||
+		PetscIsInfOrNanReal(coords_check[3*p_chk+1]) ||
+		PetscIsInfOrNanReal(coords_check[3*p_chk+2])) {
+	      LOG_ALLOW(LOCAL,LOG_DEBUG, "[Rank %d DEBUG ERROR] Bad coord for particle %d after reinit!\n", rank, p_chk);
+	    }
+	  }
+	  ierr = DMSwarmRestoreField(user->swarm, "position", NULL, NULL, (void**)&coords_check); CHKERRQ(ierr);
+        }
+        fflush(stdout);
+      }
     }
+    // --------- DEBUG
 
+    LOG_ALLOW(LOCAL,LOG_DEBUG," [ Rank %d] ReinitializeParticlesOnInletSurface completed, heading into PetscBarrier.\n",rank);
+    
+    // Ensure all ranks wait till Reinitialization is done to proceed.
+    ierr = PetscBarrier(NULL);
+    
     // --- 4. Final Locate and Interpolate ---
     // Now that particles are on their correct ranks and (if surface init) correctly positioned on the inlet,
     // perform the definitive location and interpolation for t=0.
-    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Final Initial Locate & Interpolate (post-migration & re-placement).\n", currentTime, step);
+    LOG_ALLOW(LOCAL, LOG_INFO, "[T=%.4f, Step=%d , Rank=%d] Second Initial Locate & Interpolate (post-migration & re-placement).\n", currentTime, step,rank);
     ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
     ierr = InterpolateAllFieldsToSwarm(user); CHKERRQ(ierr);
-
+    
     // --- 5. Scatter Particle Data to Eulerian Grid (if part of initialization) ---
     ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
 
@@ -943,13 +968,17 @@ PetscErrorCode PerformInitialSetup(UserCtx *user, PetscReal currentTime, PetscIn
     if (OutputFreq > 0 || (StepsToRun == 0 && StartStep == 0)) {
         LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Logging initial data and (if applicable) interpolation error.\n", currentTime, step);
         LOG_ALLOW(GLOBAL, LOG_DEBUG, "Printing Initial particle fields at t=%.4f (step %d completed)\n", currentTime, step);
-        ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency); CHKERRQ(ierr);
-
+       
+	//  LOG_ALLOW(LOCAL, LOG_DEBUG, "[Rank %d] ABOUT TO CALL LOG_PARTICLE_FIELDS.\n", rank);
+	ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency); CHKERRQ(ierr);
+	//  LOG_ALLOW(LOCAL, LOG_INFO, "[Rank %d] RETURNED FROM LOG_PARTICLE_FIELDS.\n", rank); 
+	
         if(user->FieldInitialization==1) { // If analytic fields are available for comparison
             ierr = LOG_INTERPOLATION_ERROR(user); CHKERRQ(ierr);
         }
 
         LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Writing initial particle data (for step %d).\n", currentTime, step, step);
+	//	LOG_ALLOW(LOCAL, LOG_INFO, "[%d] About to call WriteSwarmField for position.\n", rank);
         ierr = WriteSwarmField(user, "position", step, "dat"); CHKERRQ(ierr);
         ierr = WriteSwarmField(user, "velocity", step, "dat"); CHKERRQ(ierr);
         // ierr = WriteSwarmField(user, "pos_phy",  step, "dat"); CHKERRQ(ierr); // If needed
@@ -1033,7 +1062,7 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
             PetscFunctionReturn(0);
         }
     }
-
+    
     // --- Time Marching Loop ---
     // Loops from the StartStep up to (but not including) StartStep + StepsToRun
     for (step_loop_counter = StartStep; step_loop_counter < StartStep + StepsToRun; step_loop_counter++)
@@ -1059,6 +1088,8 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
           LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Removed %d out-of-bounds particles globally.\n", currentTime, step_loop_counter, removed_global);
       }
 
+      LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"[Rank %d] ENTERING MIGRATION AFTER UPDATE.\n",rank);
+      
       // Step 5 & 6: Migrate Particles between processors
       // Migration is based on new positions P(currentTime + dt).
       // The time logged for migration is the target time of the new positions.
@@ -1230,14 +1261,18 @@ PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartSte
  *
  * @return PetscErrorCode 0 on success, non-zero on failure.
  */
+/*
 PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
 {
     PetscErrorCode ierr;
     PetscMPIInt    rank;
     const PetscMPIInt *neighbor_ranks_ptr; // Use const pointer from PETSc
+    PetscMPIInt size;
 
     PetscFunctionBeginUser;
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
+    
     LOG_ALLOW(GLOBAL, LOG_INFO, "Rank %d: Computing DMDA neighbor ranks.\n", rank);
 
     if (!user || !user->da) {
@@ -1247,6 +1282,16 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
     // Get the neighbor information from the DMDA
     ierr = DMDAGetNeighbors(user->da, &neighbor_ranks_ptr); CHKERRQ(ierr);
 
+    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"[Rank %d] After DMDAGetNeighbors:\n", rank);
+    LOG_ALLOW_SYNC( GLOBAL,LOG_DEBUG,"[Rank %d]   Raw neighbor_ranks_ptr[4] (for zm) = %d\n", rank, neighbor_ranks_ptr[4]);
+    LOG_ALLOW_SYNC( GLOBAL,LOG_DEBUG,"[Rank %d]   Raw neighbor_ranks_ptr[22] (for zp) = %d\n", rank, neighbor_ranks_ptr[22]);
+    LOG_ALLOW_SYNC( GLOBAL,LOG_DEBUG,"[Rank %d]   Raw neighbor_ranks_ptr[10] (for ym) = %d\n", rank, neighbor_ranks_ptr[10]);
+    LOG_ALLOW_SYNC( GLOBAL,LOG_DEBUG,"[Rank %d]   Raw neighbor_ranks_ptr[16] (for zm) = %d\n", rank, neighbor_ranks_ptr[16]);
+    LOG_ALLOW_SYNC( GLOBAL,LOG_DEBUG,"[Rank %d]   Raw neighbor_ranks_ptr[12] (for xm) = %d\n", rank, neighbor_ranks_ptr[12]);
+    LOG_ALLOW_SYNC( GLOBAL,LOG_DEBUG,"[Rank %d]   Raw neighbor_ranks_ptr[14] (for xp) = %d\n", rank, neighbor_ranks_ptr[14]);
+
+    LOG_ALLOW_SYNC( GLOBAL,LOG_DEBUG,"[Rank %d]   MPI_PROC_NULL = %d\n", rank,(int)MPI_PROC_NULL);
+    
     // --- Extract face neighbors assuming standard PETSc 3D ordering ---
     // Center index in 3x3x3 stencil is 13 (0-based)
     // Z varies slowest, then Y, then X.
@@ -1259,18 +1304,48 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
     // Example: (i,j,k)=(0,0,-1) relative => index = 0*9 + 1*3 + 1 = 4  (zm)
     // Example: (i,j,k)=(0,0,+1) relative => index = 2*9 + 1*3 + 1 = 22 (zp)
 
+    // Helper lambda/function to sanitize neighbor ranks
+    auto sanitize_neighbor = [&](PetscMPIInt neighbor_val) {
+        if (neighbor_val < 0 && neighbor_val != MPI_PROC_NULL) {
+            LOG_ALLOW_SYNC(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] DMDAGetNeighbors returned %d for a boundary, expected MPI_PROC_NULL (%d). Correcting to MPI_PROC_NULL.", rank, neighbor_val, (int)MPI_PROC_NULL);
+            return MPI_PROC_NULL;
+        }
+        // Also, ensure it's not out of valid rank range if it's supposed to be a real rank
+        if (neighbor_val >= size) {
+            LOG_ALLOW_SYNC(GLOBAL, LOG_ERROR, "[CASNR - Rank %d] DMDAGetNeighbors returned invalid rank %d (size is %d). Setting to MPI_PROC_NULL.", rank, neighbor_val, size);
+            return MPI_PROC_NULL; // Or handle as an error
+        }
+        return neighbor_val;
+    };
+
+    
+    
     if (neighbor_ranks_ptr[13] != rank) {
         LOG_ALLOW(GLOBAL, LOG_WARNING, "Rank %d: DMDAGetNeighbors center index mismatch (expected %d, got %d). Neighbor indexing might be incorrect.\n",
                   rank, rank, neighbor_ranks_ptr[13]);
     }
 
-    user->neighbors.rank_xm = neighbor_ranks_ptr[12];
-    user->neighbors.rank_xp = neighbor_ranks_ptr[14];
-    user->neighbors.rank_ym = neighbor_ranks_ptr[10];
-    user->neighbors.rank_yp = neighbor_ranks_ptr[16];
-    user->neighbors.rank_zm = neighbor_ranks_ptr[4];
-    user->neighbors.rank_zp = neighbor_ranks_ptr[22];
 
+    // Assign and sanitize
+    user->neighbors.rank_xm = sanitize_neighbor(neighbor_ranks_ptr[12]);
+    user->neighbors.rank_xp = sanitize_neighbor(neighbor_ranks_ptr[14]);
+    user->neighbors.rank_ym = sanitize_neighbor(neighbor_ranks_ptr[10]);
+    user->neighbors.rank_yp = sanitize_neighbor(neighbor_ranks_ptr[16]);
+    user->neighbors.rank_zm = sanitize_neighbor(neighbor_ranks_ptr[4]);
+    user->neighbors.rank_zp = sanitize_neighbor(neighbor_ranks_ptr[22]);    
+
+    
+    //user->neighbors.rank_xm = neighbor_ranks_ptr[12];
+    //user->neighbors.rank_xp = neighbor_ranks_ptr[14];
+    //user->neighbors.rank_ym = neighbor_ranks_ptr[10];
+    //user->neighbors.rank_yp = neighbor_ranks_ptr[16];
+    //user->neighbors.rank_zm = neighbor_ranks_ptr[4];
+    //user->neighbors.rank_zp = neighbor_ranks_ptr[22];
+
+    LOG_ALLOW_SYNC( GLOBAL,LOG_DEBUG,"[Rank %d]   Raw DMDAGetNeighbors (zm index 4)  = %d | (zp index 22)  = %d MPI_PROC_NULL = %d \n", rank,neigbor_ranks_ptr[4],neigbor_ranks_ptr[22],(int)MPI_PROC_NULL);
+
+    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"[Rank %d] Sanitized user->neighbors: xm=%d, xp=%d, ym=%d, yp=%d, zm=%d, zp=%d\n", rank, user->neighbors.rank_xm, user->neighbors.rank_xp, user->neighbors.rank_ym, user->neighbors.rank_yp, user->neighbors.rank_zm, user->neighbors.rank_zp);
+    
     LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Neighbors: xm=%d, xp=%d, ym=%d, yp=%d, zm=%d, zp=%d\n", rank,
               user->neighbors.rank_xm, user->neighbors.rank_xp,
               user->neighbors.rank_ym, user->neighbors.rank_yp,
@@ -1278,6 +1353,129 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
 
     // Note: neighbor_ranks_ptr memory is managed by PETSc, do not free it.
 
+    PetscFunctionReturn(0);
+}
+*/
+
+/**
+ * @brief Computes and stores the Cartesian neighbor ranks for the DMDA decomposition.
+ *
+ * This function retrieves the neighbor information from the primary DMDA (user->da)
+ * and stores the face neighbors (xm, xp, ym, yp, zm, zp) in the user->neighbors structure.
+ * It assumes a standard PETSc ordering for the neighbors array returned by DMDAGetNeighbors.
+ * If DMDAGetNeighbors returns a negative rank that is not MPI_PROC_NULL (which can happen
+ * in some PETSc/MPI configurations for non-periodic boundaries if not fully standard),
+ * this function will sanitize it to MPI_PROC_NULL to prevent issues.
+ *
+ * @param[in,out] user Pointer to the UserCtx structure where neighbor info will be stored.
+ *
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
+{
+    PetscErrorCode    ierr;
+    PetscMPIInt       rank;
+    PetscMPIInt       size; // MPI communicator size
+    const PetscMPIInt *neighbor_ranks_ptr; // Pointer to raw neighbor data from PETSc
+
+    PetscFunctionBeginUser;
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr); // Get MPI size for validation
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Rank %d: Computing DMDA neighbor ranks.\n", rank);
+
+    if (!user || !user->da) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx or user->da is NULL in ComputeAndStoreNeighborRanks.");
+    }
+
+    // Get the neighbor information from the DMDA
+    // neighbor_ranks_ptr will point to an internal PETSc array of 27 ranks.
+    ierr = DMDAGetNeighbors(user->da, &neighbor_ranks_ptr); CHKERRQ(ierr);
+
+    // Log the raw values from DMDAGetNeighbors for boundary-relevant directions for debugging
+    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "[CASNR - Rank %d] Raw DMDAGetNeighbors: xm_raw=%d, xp_raw=%d, ym_raw=%d, yp_raw=%d, zm_raw=%d, zp_raw=%d. MPI_PROC_NULL is %d.",
+                   rank,
+                   neighbor_ranks_ptr[12], neighbor_ranks_ptr[14],
+                   neighbor_ranks_ptr[10], neighbor_ranks_ptr[16],
+                   neighbor_ranks_ptr[4],  neighbor_ranks_ptr[22],
+                   (int)MPI_PROC_NULL);
+
+    // PETSc standard indices for 3D face neighbors from the 27-point stencil:
+    // Index = k_offset*9 + j_offset*3 + i_offset (where offsets -1,0,1 map to 0,1,2)
+    // Center: (i_off=1, j_off=1, k_off=1) => 1*9 + 1*3 + 1 = 13
+    // X-min:  (i_off=0, j_off=1, k_off=1) => 1*9 + 1*3 + 0 = 12
+    // X-plus: (i_off=2, j_off=1, k_off=1) => 1*9 + 1*3 + 2 = 14
+    // Y-min:  (i_off=1, j_off=0, k_off=1) => 1*9 + 0*3 + 1 = 10
+    // Y-plus: (i_off=1, j_off=2, k_off=1) => 1*9 + 2*3 + 1 = 16
+    // Z-min:  (i_off=1, j_off=1, k_off=0) => 0*9 + 1*3 + 1 = 4
+    // Z-plus: (i_off=1, j_off=1, k_off=2) => 2*9 + 1*3 + 1 = 22
+
+    if (neighbor_ranks_ptr[13] != rank) {
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "Rank %d: DMDAGetNeighbors center index (13) is %d, expected current rank %d. Neighbor indexing might be non-standard or DMDA small.\n",
+                  rank, neighbor_ranks_ptr[13], rank);
+        // This warning is important. If the center isn't the current rank, the offsets are likely wrong.
+        // However, PETSc should ensure this unless the DM is too small for a 3x3x3 stencil.
+    }
+
+    // Assign and sanitize each neighbor rank
+    PetscMPIInt temp_neighbor;
+
+    temp_neighbor = neighbor_ranks_ptr[12]; // xm
+    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid xm neighbor %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+        user->neighbors.rank_xm = MPI_PROC_NULL;
+    } else {
+        user->neighbors.rank_xm = temp_neighbor;
+    }
+
+    temp_neighbor = neighbor_ranks_ptr[14]; // xp
+    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid xp neighbor %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+        user->neighbors.rank_xp = MPI_PROC_NULL;
+    } else {
+        user->neighbors.rank_xp = temp_neighbor;
+    }
+
+    temp_neighbor = neighbor_ranks_ptr[10]; // ym
+    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid ym neighbor %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+        user->neighbors.rank_ym = MPI_PROC_NULL;
+    } else {
+        user->neighbors.rank_ym = temp_neighbor;
+    }
+
+    temp_neighbor = neighbor_ranks_ptr[16]; // yp
+    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
+        // The log for index 16 was "zm" in your output, should be yp
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid yp neighbor (raw index 16) %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+        user->neighbors.rank_yp = MPI_PROC_NULL;
+    } else {
+        user->neighbors.rank_yp = temp_neighbor;
+    }
+
+    temp_neighbor = neighbor_ranks_ptr[4]; // zm
+    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid zm neighbor %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+        user->neighbors.rank_zm = MPI_PROC_NULL;
+    } else {
+        user->neighbors.rank_zm = temp_neighbor;
+    }
+
+    temp_neighbor = neighbor_ranks_ptr[22]; // zp
+    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid zp neighbor %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+        user->neighbors.rank_zp = MPI_PROC_NULL;
+    } else {
+        user->neighbors.rank_zp = temp_neighbor;
+    }
+
+    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "[CASNR - Rank %d] Stored user->neighbors: xm=%d, xp=%d, ym=%d, yp=%d, zm=%d, zp=%d\n", rank,
+              user->neighbors.rank_xm, user->neighbors.rank_xp,
+              user->neighbors.rank_ym, user->neighbors.rank_yp,
+              user->neighbors.rank_zm, user->neighbors.rank_zp);
+    PetscSynchronizedFlush(PETSC_COMM_WORLD, PETSC_STDOUT); // Ensure logs are flushed
+
+    // Note: neighbor_ranks_ptr memory is managed by PETSc, do not free it.
     PetscFunctionReturn(0);
 }
 

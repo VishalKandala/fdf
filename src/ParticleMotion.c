@@ -51,8 +51,10 @@ PetscErrorCode UpdateAllParticlePositions(UserCtx *user)
 
   // 1) Get the number of local particles
   ierr = DMSwarmGetLocalSize(swarm, &nLocal); CHKERRQ(ierr);
-  if (nLocal == 0) PetscFunctionReturn(0);   /* nothing to do, no fields held */
-
+  if (nLocal == 0) {
+    LOG_ALLOW(LOCAL,LOG_DEBUG,"[Rank %d] No particles to move/transport. \n",rank);
+    PetscFunctionReturn(0);   /* nothing to do, no fields held */
+  }
   // 2) Access the "position" and "velocity" fields
   ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void**)&pos); CHKERRQ(ierr);
   ierr = DMSwarmGetField(swarm, "velocity", NULL, NULL, (void**)&vel); CHKERRQ(ierr);
@@ -68,6 +70,8 @@ PetscErrorCode UpdateAllParticlePositions(UserCtx *user)
   ierr = DMSwarmRestoreField(swarm, "position", NULL, NULL, (void**)&pos); CHKERRQ(ierr);
   ierr = DMSwarmRestoreField(swarm, "velocity", NULL, NULL, (void**)&vel); CHKERRQ(ierr);
 
+  LOG_ALLOW(LOCAL,LOG_DEBUG,"Particle moved/transported successfully on Rank %d.\n",rank);
+  
   PetscFunctionReturn(0);
 }
 
@@ -100,7 +104,7 @@ PetscErrorCode CheckAndRemoveOutOfBoundsParticles(UserCtx *user,
     Cmpnts        *pos = NULL;
     // You only *need* the position field to check bounds
     PetscInt       local_removed_count = 0;
-    PetscInt       global_removed_count = 0;
+    PetscMPIInt       global_removed_count = 0;
     PetscMPIInt    rank;
     PetscReal xMin,xMax,yMin,yMax,zMin,zMax;
 
@@ -117,19 +121,19 @@ PetscErrorCode CheckAndRemoveOutOfBoundsParticles(UserCtx *user,
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
     LOG_ALLOW(LOCAL, LOG_INFO, "Rank %d: Checking for out-of-bounds particles (using RemovePointAtIndex)...\n", rank);
 
+    *removedCountLocal = 0;
+    *removedCountGlobal = 0; // Will be summed later
+    
     ierr = DMSwarmGetLocalSize(swarm, &nLocalInitial); CHKERRQ(ierr);
-    if (nLocalInitial == 0) {
-        *removedCountLocal = 0;
-        *removedCountGlobal = 0; // Will be summed later
-        LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: No local particles to check for removal.\n", rank);
-        PetscFunctionReturn(0);
-    }
 
     // Get read-only access to positions
     // Note: We get it before the loop because removal might invalidate pointers
     // if the swarm reallocates internally, although Get/Restore is generally safe.
     // For maximum safety with removal, access inside the loop might be better,
     // but less efficient. Let's try getting it once first.
+    
+    if(nLocalInitial > 0){
+      
     ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void **)&pos); CHKERRQ(ierr);
      if (!pos) {
          SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONGSTATE, "Could not access position field.");
@@ -165,19 +169,28 @@ PetscErrorCode CheckAndRemoveOutOfBoundsParticles(UserCtx *user,
             // Let's try without re-getting inside the loop first for efficiency.
             // We need to re-get 'pos' for the next iteration check.
             if (p > 0) { // Only re-get if there are more iterations
-               ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void **)&pos); CHKERRQ(ierr);
+	      PetscInt nLocalAfterRemoval;
+	      ierr = DMSwarmGetLocalSize(swarm,&nLocalAfterRemoval);
+	      if(nLocalAfterRemoval>0){
+		ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void **)&pos); CHKERRQ(ierr);
                if (!pos) {
                    SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONGSTATE, "Could not re-access position field after removal.");
-               }
-            }
-        }
-    } // End backwards loop
+                   }
+	        }else{
+		  // All remaining particles were removed, or this was the last one
+                  // No need to get 'pos' again as the loop will terminate or p will be 0.
+		  break;
+	          }
+	        }
+	    }
+        } // End backwards loop
 
-    // Restore position field if it was gotten last time inside loop or if loop didn't run/remove
-    if (pos) {
+       // Restore position field if it was gotten last time inside loop or if loop didn't run/remove
+       if (pos) {
          ierr = DMSwarmRestoreField(swarm, "position", NULL, NULL, (void **)&pos); CHKERRQ(ierr);
-    }
+       }
 
+    } // nLocalInitial > 0
 
     // Get the *final* local size after removals
     PetscInt nLocalFinal;
@@ -375,131 +388,211 @@ static inline PetscBool IsParticleInBox(const BoundingBox *bbox, const Cmpnts *p
 }
 
 /**
- * @brief Identifies particles leaving the local bounding box and finds their target neighbor rank.
+ * @brief Identifies particles that have left the local MPI rank's domain and determines their target rank.
  *
- * Iterates local particles, checks against local bounding box `user->bbox`. If outside, checks
- * the pre-computed immediate neighbors (`user->neighbors`) using the global `bboxlist`
- * to see if the particle landed in one of them, prioritizing the exit direction.
- * Populates the `migrationList` with particles found in a neighbor's box.
- * Assumes particles leaving the global domain were handled previously.
+ * This function iterates through all particles currently local to this MPI rank.
+ * For each particle, it first checks if the particle is still within the rank's
+ * primary bounding box (defined by `user->bbox`).
  *
- * @param user           Pointer to the UserCtx (contains local bbox and neighbors).
- * @param bboxlist       Array of BoundingBox structs for all ranks (for checking neighbor boxes).
- * @param migrationList  Pointer to an array of MigrationInfo structs (output, allocated/reallocated by this func).
- * @param migrationCount Pointer to the number of particles marked for migration (output).
- * @param listCapacity   Pointer to the current allocated capacity of migrationList (in/out).
+ * If a particle is outside `user->bbox`:
+ * 1. It preferentially checks the 6 immediate Cartesian neighbors (defined in `user->neighbors`).
+ *    The bounding boxes for these neighbors are looked up in the global `bboxlist`.
+ * 2. If the particle is not found in any of the immediate Cartesian neighbors, a fallback
+ *    search is initiated. This fallback search iterates through *all other* MPI ranks
+ *    (excluding the current rank and already checked immediate neighbors if optimized)
+ *    using the `bboxlist` to find a rank whose bounding box contains the particle.
  *
- * @return PetscErrorCode 0 on success, non-zero on failure.
+ * Particles successfully assigned a `targetRank` are added to the `migrationList`.
+ * If a particle leaves the local box but is not found in any other rank's bounding box
+ * (even after the fallback), a warning is logged, as this particle might be lost from
+ * the global computational domain (assuming `bboxlist` covers the entire domain).
+ * Such "lost" particles should ideally be handled by a separate global boundary condition
+ * check (e.g., `CheckAndRemoveOutOfBoundsParticles`) prior to calling this function.
+ *
+ * The `migrationList` is dynamically reallocated if its current capacity is exceeded.
+ *
+ * @param[in]      user           Pointer to the UserCtx structure. It must contain:
+ *                                - `swarm`: The DMSwarm object.
+ *                                - `bbox`: The BoundingBox of the current MPI rank.
+ *                                - `neighbors`: A RankNeighbors struct with the ranks of the 6 Cartesian neighbors.
+ *                                - `size`: The total number of MPI ranks in PETSC_COMM_WORLD (implicitly via MPI_Comm_size).
+ * @param[in]      bboxlist       An array of BoundingBox structures for ALL MPI ranks, indexed 0 to (size-1).
+ *                                This array must be up-to-date and available on all ranks.
+ * @param[in,out]  migrationList  Pointer to an array of MigrationInfo structures. This array will be
+ *                                populated with particles to be migrated. The function may reallocate
+ *                                this array if more space is needed. The caller is responsible for
+ *                                eventually freeing this memory if it's not NULL.
+ * @param[out]     migrationCount Pointer to a PetscInt that will be set to the number of particles
+ *                                identified for migration (i.e., the number of valid entries in `*migrationList`).
+ * @param[in,out]  listCapacity   Pointer to a PetscInt representing the current allocated capacity of
+ *                                `*migrationList` (in terms of number of MigrationInfo structs).
+ *                                This function will update it if `*migrationList` is reallocated.
+ *
+ * @return PetscErrorCode 0 on success, non-zero on PETSc/MPI errors or if essential fields are missing.
+ *
+ * @note It is assumed that `user->neighbors` contains valid rank identifiers or `MPI_PROC_NULL`.
+ * @note It is assumed that `bboxlist` is correctly populated and broadcast to all ranks before calling this.
+ * @note For the fallback search to be effective, `bboxlist` should represent a tiling of the
+ *       global domain. Particles not found in any box in `bboxlist` are effectively outside this
+ *       tiled global domain.
  */
 PetscErrorCode IdentifyMigratingParticles(UserCtx *user,
-                                        const BoundingBox *bboxlist,
-                                        MigrationInfo **migrationList,
-                                        PetscInt *migrationCount,
-                                        PetscInt *listCapacity)
+					  const BoundingBox *bboxlist,
+					  MigrationInfo **migrationList,
+					  PetscInt *migrationCount,
+					  PetscInt *listCapacity)
 {
-    PetscErrorCode ierr;
-    DM             swarm = user->swarm;
-    PetscInt       nLocal, p;
-    Cmpnts        *pos = NULL;
-    PetscMPIInt    rank;
-    BoundingBox    localBBox = user->bbox;
-    RankNeighbors  neighbors = user->neighbors; // Use stored neighbors
-    PetscInt       currentMigrationCount = 0;
-    PetscInt       currentListCapacity = *listCapacity;
-    MigrationInfo *currentMigrationList = *migrationList;
-    // Add PID pointer if logging PIDs
-    // PetscInt64    *pids = NULL;
+  PetscErrorCode ierr;
+  DM             swarm = user->swarm;
+  PetscInt       nLocal, p;
+  Cmpnts        *pos = NULL;
+  PetscMPIInt    rank,size;
+  BoundingBox    localBBox = user->bbox;
+  RankNeighbors  neighbors = user->neighbors; // Use stored neighbors
+  PetscInt       currentMigrationCount = 0;
+  PetscInt       currentListCapacity = *listCapacity;
+  MigrationInfo *currentMigrationList = *migrationList;
+  // Add PID pointer if logging PIDs
+  PetscInt64    *pids = NULL;
+  PetscFunctionBeginUser;
 
+  // --- Input Validation and Initialization ---
+  if (!user) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx 'user' is NULL.");
+  if (!bboxlist) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Global 'bboxlist' is NULL.");
+  if (!migrationList) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "'migrationList' output pointer is NULL.");
+  if (!migrationCount) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "'migrationCount' output pointer is NULL.");
+  if (!listCapacity) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "'listCapacity' output pointer is NULL.");
 
-    PetscFunctionBeginUser;
-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
-
-    ierr = DMSwarmGetLocalSize(swarm, &nLocal); CHKERRQ(ierr);
-    if (nLocal == 0) {
-        *migrationCount = 0;
-        // Ensure output pointers are consistent even if no allocation happened
-        *migrationList = currentMigrationList;
-        *listCapacity = currentListCapacity;
-        PetscFunctionReturn(0);
-    }
-
-    // Get read-only access to position
-    ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void **)&pos); CHKERRQ(ierr);
-    // ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void **)&pids); CHKERRQ(ierr); // If logging PIDs
-    if (!pos /*|| !pids*/) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONGSTATE, "Could not access required DMSwarm fields.");
-
-
-    currentMigrationCount = 0; // Reset count for this call
-    for (p = 0; p < nLocal; p++) {
-        // Check if particle is OUTSIDE the local bounding box
-        if (!IsParticleInBox(&localBBox, &pos[p]))
-        {
-            PetscInt targetRank = -1; // Target rank not yet found
-
-            // Determine likely exit direction(s) to prioritize neighbor check
-            PetscBool exit_xm = pos[p].x < localBBox.min_coords.x;
-            PetscBool exit_xp = pos[p].x > localBBox.max_coords.x;
-            PetscBool exit_ym = pos[p].y < localBBox.min_coords.y;
-            PetscBool exit_yp = pos[p].y > localBBox.max_coords.y;
-            PetscBool exit_zm = pos[p].z < localBBox.min_coords.z;
-            PetscBool exit_zp = pos[p].z > localBBox.max_coords.z;
-
-            LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Particle %d at (%g,%g,%g) left local bbox. Checking neighbors...\n",
-                      rank, p, pos[p].x, pos[p].y, pos[p].z);
-
-            // Check neighbors preferentially
-            if (exit_xm && neighbors.rank_xm != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors.rank_xm], &pos[p])) targetRank = neighbors.rank_xm;
-            else if (exit_xp && neighbors.rank_xp != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors.rank_xp], &pos[p])) targetRank = neighbors.rank_xp;
-            else if (exit_ym && neighbors.rank_ym != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors.rank_ym], &pos[p])) targetRank = neighbors.rank_ym;
-            else if (exit_yp && neighbors.rank_yp != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors.rank_yp], &pos[p])) targetRank = neighbors.rank_yp;
-            else if (exit_zm && neighbors.rank_zm != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors.rank_zm], &pos[p])) targetRank = neighbors.rank_zm;
-            else if (exit_zp && neighbors.rank_zp != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors.rank_zp], &pos[p])) targetRank = neighbors.rank_zp;
-            // Add checks for edge/corner neighbors if needed and if they were stored
-
-            // --- Optional Fallback (if strict Cartesian neighbors aren't enough) ---
-            // if (targetRank == -1) { /* ... loop through all ranks in bboxlist ... */ }
-
-            if (targetRank != -1) {
-                 // Resize list if needed (using PetscRealloc for safety)
-                if (currentMigrationCount >= currentListCapacity) {
-                    PetscInt newCapacity = (currentListCapacity == 0) ? 16 : currentListCapacity * 2;
-
-		    ierr = PetscRealloc((size_t)newCapacity * sizeof(MigrationInfo),
-					(void**)&currentMigrationList); CHKERRQ(ierr);
-		    currentListCapacity = newCapacity;
-		    
-                    LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Reallocated migrationList capacity to %d\n", rank, newCapacity);
-                 }
-                // Add to migration list
-                currentMigrationList[currentMigrationCount].local_index = p;
-                currentMigrationList[currentMigrationCount].target_rank = targetRank;
-                // currentMigrationList[currentMigrationCount].pid = pids[p]; // If storing PID
-                currentMigrationCount++;
-                LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Particle %d marked for migration to rank %d.\n", rank, p, targetRank);
-            } else {
-                // Particle left local box but was not found in any *checked* neighbor box.
-                // Since CheckAndRemove should have run first, this might indicate a particle
-                // moved more than one cell width into a diagonal neighbor's domain not checked here,
-                // or there's an issue with BBox overlap/gaps.
-                 LOG_ALLOW(LOCAL, LOG_WARNING, "Rank %d: Particle %d at (%g,%g,%g) left local bbox but target neighbor rank not found! (May be lost or need wider neighbor check).\n",
-                           rank, p, pos[p].x, pos[p].y, pos[p].z);
-                 // Consider marking for removal here if this case should not happen:
-                 // Maybe add to a separate 'removalList' or use the marking technique
-                 // from the CheckAndRemove function if it's readily available.
-            }
-        } // end if isOutsideLocal
-    } // end particle loop
-
-    ierr = DMSwarmRestoreField(swarm, "position", NULL, NULL, (void **)&pos); CHKERRQ(ierr);
-    // ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid", NULL, NULL, (void **)&pids); CHKERRQ(ierr);
-
+  if (!swarm) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONGSTATE, "UserCtx->swarm is NULL.");
+  
+  ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+  ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
+  
+  ierr = DMSwarmGetLocalSize(swarm, &nLocal); CHKERRQ(ierr);
+  if (nLocal == 0) {
+    *migrationCount = 0;
+    // Ensure output pointers are consistent even if no allocation happened
     *migrationList = currentMigrationList;
-    *migrationCount = currentMigrationCount;
     *listCapacity = currentListCapacity;
-
-    LOG_ALLOW(LOCAL, LOG_INFO, "Rank %d: Identified %d particles for potential migration.\n", rank, currentMigrationCount);
-
     PetscFunctionReturn(0);
+  }
+  // Get read-only access to position
+  ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void **)&pos); CHKERRQ(ierr);
+  ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void **)&pids); CHKERRQ(ierr); // If logging PIDs
+  if (!pos || !pids) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONGSTATE, "Could not access required DMSwarm fields.");
+  /*
+    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
+    "[IdentifyMigratingParticles - Rank %d INCOMING user->neighbors] xm=%d, xp=%d, ym=%d, yp=%d, zm=%d, zp=%d. MPI_PROC_NULL is %d. \n",
+    rank, user->neighbors.rank_xm, user->neighbors.rank_xp,
+    user->neighbors.rank_ym, user->neighbors.rank_yp,
+    user->neighbors.rank_zm, user->neighbors.rank_zp, (int)MPI_PROC_NULL);
+  */
+  currentMigrationCount = 0; // Reset count for this call
+  for (p = 0; p < nLocal; p++) {
+    // Check if particle is OUTSIDE the local bounding box
+    if (!IsParticleInBox(&localBBox, &pos[p]))
+      {
+	PetscInt targetRank = MPI_PROC_NULL; // Target rank not yet found
+
+	// Determine likely exit direction(s) to prioritize neighbor check
+	PetscBool exit_xm = pos[p].x < localBBox.min_coords.x;
+	PetscBool exit_xp = pos[p].x > localBBox.max_coords.x;
+	PetscBool exit_ym = pos[p].y < localBBox.min_coords.y;
+	PetscBool exit_yp = pos[p].y > localBBox.max_coords.y;
+	PetscBool exit_zm = pos[p].z < localBBox.min_coords.z;
+	PetscBool exit_zp = pos[p].z > localBBox.max_coords.z;
+
+	// DEBUG ------------
+	/*
+	  if (rank == 1 && p < 5) { // Log for first few particles on Rank 1
+	  LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
+	  "[Identify - Rank 1, p=%d] Particle Pos(%.2f,%.2f,%.2f). Exits(xm%d,xp%d,ym%d,yp%d,zm%d,zp%d). Neighbors(xm%d,xp%d,ym%d,yp%d,zm%d,zp%d)",
+	  p, pos[p].x, pos[p].y, pos[p].z,
+	  exit_xm, exit_xp, exit_ym, exit_yp, exit_zm, exit_zp,
+	  neighbors.rank_xm, neighbors.rank_xp, neighbors.rank_ym, neighbors.rank_yp, neighbors.rank_zm, neighbors.rank_zp);
+	  }
+	*/
+	// DEBUG -----------
+
+	
+	LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Particle %d[PID = %ld] at (%g,%g,%g) left local bbox. Checking neighbors...\n",rank, p,pids[p], pos[p].x, pos[p].y, pos[p].z);
+
+	//1.  Check neighbors preferentially
+	if (exit_xm && neighbors.rank_xm != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors.rank_xm], &pos[p])) targetRank = neighbors.rank_xm;
+	else if (exit_xp && neighbors.rank_xp != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors.rank_xp], &pos[p])) targetRank = neighbors.rank_xp;
+	else if (exit_ym && neighbors.rank_ym != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors.rank_ym], &pos[p])) targetRank = neighbors.rank_ym;
+	else if (exit_yp && neighbors.rank_yp != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors.rank_yp], &pos[p])) targetRank = neighbors.rank_yp;
+	else if (exit_zm && neighbors.rank_zm != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors.rank_zm], &pos[p])) targetRank = neighbors.rank_zm;
+	else if (exit_zp && neighbors.rank_zp != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors.rank_zp], &pos[p])) targetRank = neighbors.rank_zp;
+	// Add checks for edge/corner neighbors if needed and if they were stored
+
+	
+	// 2.--- Fallback (if strict Cartesian neighbors aren't enough) ---
+	
+	if (targetRank == MPI_PROC_NULL){
+	  /* ... loop through all ranks in bboxlist ... */
+
+	  LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Particle %" PetscInt64_FMT " not in immediate neighbors. Fallback: checking all %d other ranks...",rank, pids[p],size);
+
+	  for(PetscMPIInt r = 0; r < size; r++){
+
+	    if(IsParticleInBox(&bboxlist[r], &pos[p])){
+
+	      targetRank = r;
+
+	      LOG_ALLOW(LOCAL, LOG_DEBUG, "[Rank %d] Particle %ld FOUND in bboxlist[%d] during fallback search. \n",rank, pids[p],r);
+	      break;
+	    }
+	    
+	  }
+	  
+	}
+	// 3. ---- Add to migration list if a target rank was found.
+	if (targetRank != MPI_PROC_NULL){
+          // Resize list if needed (using PetscRealloc for safety)
+	  if (currentMigrationCount >= currentListCapacity) {
+	    PetscInt OldCapacity = currentListCapacity;
+	    
+	      PetscInt newCapacity = (currentListCapacity == 0) ? 16 : currentListCapacity * 2;
+
+	    ierr = PetscRealloc((size_t)newCapacity * sizeof(MigrationInfo),
+				migrationList); CHKERRQ(ierr);
+
+	    currentMigrationList = *migrationList;
+	    
+	    
+	    currentListCapacity = newCapacity;
+
+	    LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Reallocated migrationList capacity from %d to %d\n", rank,OldCapacity, newCapacity);
+	   }
+	    
+	  // Add to migration list
+	  currentMigrationList[currentMigrationCount].local_index = p;
+	  currentMigrationList[currentMigrationCount].target_rank = targetRank;
+	  // currentMigrationList[currentMigrationCount].pid = pids[p]; // If storing PID
+	  currentMigrationCount++;
+	  LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Particle %d marked for migration to rank %d.\n", rank, p, targetRank);
+	}
+	  else {
+	  // Particle left local box but was not found in any *checked* neighbor box.
+	  // Since CheckAndRemove should have run first, this might indicate a particle
+	  // moved more than one cell width into a diagonal neighbor's domain not checked here,
+	  // or there's an issue with BBox overlap/gaps.
+          LOG_ALLOW(LOCAL, LOG_WARNING, "Rank %d: Particle %d[PID = %ld] at (%g,%g,%g) left local bbox but target neighbor rank not found! (May be lost or need wider neighbor check).\n",
+                    rank, p, pids[p],pos[p].x, pos[p].y, pos[p].z);
+          // Consider marking for removal here if this case should not happen:
+          // Maybe add to a separate 'removalList' or use the marking technique
+          // from the CheckAndRemove function if it's readily available.
+	  }
+      } // end if isOutsideLocal
+  } // end particle loop
+  ierr = DMSwarmRestoreField(swarm, "position", NULL, NULL, (void **)&pos); CHKERRQ(ierr);
+  ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid", NULL, NULL, (void **)&pids); CHKERRQ(ierr);
+  *migrationList = currentMigrationList;
+  *migrationCount = currentMigrationCount;
+  *listCapacity = currentListCapacity;
+  LOG_ALLOW(LOCAL, LOG_INFO, "Rank %d: Identified %d particles for potential migration.\n", rank, currentMigrationCount);
+  PetscFunctionReturn(0);
 }
 
 /**
@@ -583,7 +676,7 @@ PetscErrorCode CalculateParticleCountPerCell(UserCtx *user) {
     DM             swarm = user->swarm;
     Vec            countVec = user->ParticleCount;
     PetscInt       nlocal, p;
-    PetscInt64       *global_cell_id_arr; // Read GLOBAL cell IDs
+    PetscInt       *global_cell_id_arr; // Read GLOBAL cell IDs
     PetscScalar    ***count_arr_3d;     // Use 3D accessor
     PetscInt64       *PID_arr;
     PetscMPIInt    rank;
@@ -939,18 +1032,26 @@ PetscErrorCode PerformSingleParticleMigrationCycle(UserCtx *user, const Bounding
     LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] %s Migration: Identifying migrating particles.\n", currentTime, step, migrationCycleName);
     ierr = IdentifyMigratingParticles(user, bboxlist, migrationList_p, migrationCount_p, migrationListCapacity_p); CHKERRQ(ierr);
 
+    // Ensure Identification is done for all ranks before sharing.
+    ierr = PetscBarrier(NULL);
+    
     // Step 2: Get the global count of migrating particles
     PetscInt localMigrationCount = *migrationCount_p; // Use a local variable for MPI_Allreduce
+    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "[Rank %d] Before MPI_Allreduce. localMigrationCount = %d.\n", rank, localMigrationCount);
     ierr = MPI_Allreduce(&localMigrationCount, globalMigrationCount_out, 1, MPIU_INT, MPI_SUM, PETSC_COMM_WORLD); CHKERRQ(ierr);
-
+    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "[Rank %d] After MPI_Allreduce. globalMigrationCount_out = %d.\n", rank, *globalMigrationCount_out);
+     
     // Step 3: Perform migration if any particles are moving globally
     if (*globalMigrationCount_out > 0) {
-        LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] %s Migration: Performing migration (%d particles globally, %d locally from rank %d).\n",
+        LOG_ALLOW(LOCAL, LOG_INFO, "[T=%.4f, Step=%d] %s Migration: Performing migration (%d particles globally, %d locally from rank %d).\n",
                   currentTime, step, migrationCycleName, *globalMigrationCount_out, localMigrationCount, rank);
         // Set the destination ranks for the locally identified migrating particles
         ierr = SetMigrationRanks(user, *migrationList_p, localMigrationCount); CHKERRQ(ierr);
         // Execute the migration
         ierr = PerformMigration(user); CHKERRQ(ierr);
+
+	// Make sure all ranks finish Migration before proceding.
+	ierr = PetscBarrier(NULL);
     } else {
         LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] %s Migration: No particles identified globally for migration.\n", currentTime, step, migrationCycleName);
     }
@@ -990,7 +1091,7 @@ PetscErrorCode ReinitializeParticlesOnInletSurface(UserCtx *user, PetscReal curr
     PetscInt       xs_gnode_rank, ys_gnode_rank, zs_gnode_rank; // Local starting node indices (incl. ghosts) of rank's DA
     PetscInt       IM_nodes_global, JM_nodes_global, KM_nodes_global; // Global node counts
 
-    PetscRandom    rand_logic_i, rand_logic_j, rand_logic_k; // RNGs for re-placement
+    PetscRandom    rand_logic_reinit_i, rand_logic_reinit_j, rand_logic_reinit_k; // RNGs for re-placement
     PetscInt       nlocal_current;                // Number of particles currently on this rank
     PetscInt       particles_actually_reinitialized_count = 0; // Counter for logging
     PetscBool      can_this_rank_service_inlet = PETSC_FALSE;  // Flag
@@ -1034,7 +1135,7 @@ PetscErrorCode ReinitializeParticlesOnInletSurface(UserCtx *user, PetscReal curr
     ierr = DMSwarmGetField(swarm, "DMSwarm_pid",    NULL, NULL, (void**)&particleIDs);    CHKERRQ(ierr); // For logging
 
     // Initialize fresh RNGs for this re-placement to ensure good distribution
-    ierr = InitializeLogicalSpaceRNGs(&rand_logic_i, &rand_logic_j, &rand_logic_k); CHKERRQ(ierr);
+    ierr = InitializeLogicalSpaceRNGs(&rand_logic_reinit_i, &rand_logic_reinit_j, &rand_logic_reinit_k); CHKERRQ(ierr);
     // Optional: Seed RNGs for deterministic behavior if required, e.g., based on rank and step.
     // PetscRandomSetSeed(rand_logic_i, (unsigned long)rank*1000 + step + 100); PetscRandomSeed(rand_logic_i); // Example
 
@@ -1047,7 +1148,7 @@ PetscErrorCode ReinitializeParticlesOnInletSurface(UserCtx *user, PetscReal curr
         // Get random cell on this rank's portion of the inlet and random logical coords within it
         ierr = GetRandomCellAndLogicOnInletFace(user, &info, xs_gnode_rank, ys_gnode_rank, zs_gnode_rank,
                                                 IM_nodes_global, JM_nodes_global, KM_nodes_global,
-                                                &rand_logic_i, &rand_logic_j, &rand_logic_k,
+                                                &rand_logic_reinit_i, &rand_logic_reinit_j, &rand_logic_reinit_k,
                                                 &ci_metric_lnode, &cj_metric_lnode, &ck_metric_lnode,
                                                 &xi_metric_logic, &eta_metric_logic, &zta_metric_logic); CHKERRQ(ierr);
         
@@ -1082,9 +1183,9 @@ PetscErrorCode ReinitializeParticlesOnInletSurface(UserCtx *user, PetscReal curr
     }
 
     // Cleanup: Destroy RNGs and restore swarm fields/coordinate array
-    ierr = PetscRandomDestroy(&rand_logic_i); CHKERRQ(ierr);
-    ierr = PetscRandomDestroy(&rand_logic_j); CHKERRQ(ierr);
-    ierr = PetscRandomDestroy(&rand_logic_k); CHKERRQ(ierr);
+    ierr = PetscRandomDestroy(&rand_logic_reinit_i); CHKERRQ(ierr);
+    ierr = PetscRandomDestroy(&rand_logic_reinit_j); CHKERRQ(ierr);
+    ierr = PetscRandomDestroy(&rand_logic_reinit_k); CHKERRQ(ierr);
 
     ierr = DMSwarmRestoreField(swarm, "position",       NULL, NULL, (void**)&positions_field); CHKERRQ(ierr);
     ierr = DMSwarmRestoreField(swarm, "pos_phy",        NULL, NULL, (void**)&pos_phy_field);   CHKERRQ(ierr);

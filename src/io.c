@@ -1628,45 +1628,6 @@ PetscErrorCode ReadAllSwarmFields(UserCtx *user, PetscInt ti)
   LOG_ALLOW(GLOBAL, LOG_INFO, "ReadAllSwarmFields - Finished reading DMSwarm fields for timestep %d.\n", ti);
   PetscFunctionReturn(0);
 }
-/*
-PetscErrorCode ReadAllSwarmFields(UserCtx *user, PetscInt ti)
-{
-  PetscErrorCode ierr;
-  PetscInt nGlobal;
-
-  PetscFunctionBegin;
-  LOG_ALLOW(GLOBAL, LOG_INFO, "ReadAllSwarmFields - Starting to read DMSwarm fields for timestep %d.\n", ti);
-
-  // 1) Read positions (this should set the swarm size)
-  ierr = ReadSwarmField(user, "position", ti, "dat");
-  if (ierr == PETSC_ERR_FILE_OPEN) { // Handle missing position file specifically
-      LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadAllSwarmFields - Position file for step %d not found. Skipping step.\n", ti);
-      PetscFunctionReturn(0); // Return success, but skip rest of processing for this step
-  } else CHKERRQ(ierr); // Handle other errors from ReadSwarmField/ReadFieldData
-
-  // --- Check size after reading position ---
-  ierr = DMSwarmGetSize(user->swarm, &nGlobal); CHKERRQ(ierr);
-  if (nGlobal == 0) {
-      LOG_ALLOW(GLOBAL, LOG_INFO, "ReadAllSwarmFields - Swarm is empty after reading position for step %d. Skipping other fields.\n", ti);
-  } else {
-      LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadAllSwarmFields - Swarm size is %d after reading position for step %d. Reading other fields.\n", nGlobal, ti);
-      // 2) Read velocity (only if particles exist)
-      ierr = ReadSwarmField(user, "velocity", ti, "dat");
-       if (ierr == PETSC_ERR_FILE_OPEN) { // Handle potentially missing file
-            LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadAllSwarmFields - Velocity file for step %d not found. Velocity data may be invalid.\n", ti);
-            // Decide if this is fatal or if processing can continue without velocity
-       } else CHKERRQ(ierr);
-
-      // 3) Read CellID (Optional)
-      // ierr = ReadSwarmField(user, "DMSwarm_CellID", ti, "dat"); // Handle potential errors
-
-      // 4) Read weight (Optional)
-      // ierr = ReadSwarmField(user, "weight", ti, "dat"); // Handle potential errors
-  }
-
-  LOG_ALLOW(GLOBAL, LOG_INFO, "ReadAllSwarmFields - Finished reading DMSwarm fields for timestep %d.\n", ti);
-  PetscFunctionReturn(0);
-  }*/
 
 /**
  * @brief Reads coordinate data (for particles)  from file into a PETSc Vec, then gathers it to rank 0.

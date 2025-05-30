@@ -59,7 +59,7 @@ typedef struct {
  */
 typedef struct {
     PetscInt64 PID;     /**< Unique Particle ID. */
-    PetscInt64 cell[3]; /**< Indices of the cell containing the particle (i, j, k). */
+    PetscInt cell[3]; /**< Indices of the cell containing the particle (i, j, k). */
     Cmpnts loc;         /**< Location of the particle in 3D space. */
     Cmpnts vel;         /**< Velocity of the particle in 3D space. */
     Cmpnts weights;     /**< Weights associated with the particle (e.g., for interpolation). */
