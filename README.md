@@ -164,6 +164,63 @@ make clean_all
 
 ---
 
+## Physical Locations of Key Vector and Scalar Quantities
+
+This table outlines the physical locations of various fields used in the CFD solver, relative to computational cell `(ic,jc,kc)` and its bounding nodes and faces.
+
+| Variable Name (Array Access Example)         | Data Type     | Physical Quantity                                   | Primary Physical Location                                     | Associated DMDA | Notes                                                                                                                               |
+| :------------------------------------------- | :------------ | :-------------------------------------------------- | :------------------------------------------------------------ | :-------------- | :---------------------------------------------------------------------------------------------------------------------------------- |
+| **Cell-Centered Quantities**                 |               |                                                     | **Geometric Center of Cell `(ic,jc,kc)`**                     |                 | Stored with array indices `[kc][jc][ic]`                                                                                              |
+| `P[kc][jc][ic]`                              | `PetscScalar` | Pressure                                            | Center of Cell `(ic,jc,kc)`                                   | `da`            |                                                                                                                                     |
+| `ucat[kc][jc][ic]`                           | `Cmpnts`      | Cartesian Velocity (u,v,w)                          | Center of Cell `(ic,jc,kc)`                                   | `fda`           | Derived from face-based `ucont`.                                                                                                      |
+| `Aj[kc][jc][ic]`                             | `PetscScalar` | Jacobian Inverse (1/J)                              | Center of Cell `(ic,jc,kc)`                                   | `da`            | Primary Jacobian calculation.                                                                                                       |
+| `nvert[kc][jc][ic]`                          | `PetscScalar` | Cell Status / Blanking Flag                         | Center of Cell `(ic,jc,kc)`                                   | `da`            | Used for IBM, overset grids.                                                                                                        |
+| `K_Omega[kc][jc][ic]` (if cell-centered)    | `Cmpnts`      | Turbulence k & ω                                    | Center of Cell `(ic,jc,kc)`                                   | `fda2`          | For RANS models.                                                                                                                    |
+| `Cent[kc][jc][ic]`                           | `Cmpnts`      | Physical Coords (x,y,z) of Cell Center              | Center of Cell `(ic,jc,kc)`                                   | `fda`           | Calculated by averaging node coordinates.                                                                                             |
+| `GridSpace[kc][jc][ic]`                      | `Cmpnts`      | Characteristic Grid Spacings (dx,dy,dz-like)        | Center of Cell `(ic,jc,kc)`                                   | `fda`           | Represents distances between face centers in computational directions.                                                                |
+| **Node-Based Quantities**                    |               |                                                     | **Geometric Grid Node**                                       |                 |                                                                                                                                     |
+| `coor[kn][jn][in]`                           | `Cmpnts`      | Physical Coords (x,y,z) of Node                     | Grid Node `(in,jn,kn)`                                        | `fda`           | `coor[kc][jc][ic]` is the Bottom-Left-Front node of cell `(ic,jc,kc)`.                                                              |
+| **Face-Based Quantities (Staggered)**        |               |                                                     | **On the Surface of a Cell Face**                             |                 |                                                                                                                                     |
+| `ucont[k_any][j_any][iface].x`               | `PetscScalar` | U-Contravariant Velocity (ξ-component)              | On I-Face `iface`                                             | `fda`           | Normal velocity component to I-Face. `csi` is collocated.                                                                           |
+| `csi[k_any][j_any][iface]`                   | `Cmpnts`      | Metric Vector ∇ξ (ξ_x, ξ_y, ξ_z)                    | On I-Face `iface`                                             | `fda` (`lCsi`)  | Related to area vector of I-Face.                                                                                                   |
+| `ucont[k_any][jface][i_any].y`               | `PetscScalar` | V-Contravariant Velocity (η-component)              | On J-Face `jface`                                             | `fda`           | Normal velocity component to J-Face. `eta` is collocated.                                                                           |
+| `eta[k_any][jface][i_any]`                   | `Cmpnts`      | Metric Vector ∇η (η_x, η_y, η_z)                    | On J-Face `jface`                                             | `fda` (`lEta`)  | Related to area vector of J-Face.                                                                                                   |
+| `ucont[kface][j_any][i_any].z`               | `PetscScalar` | W-Contravariant Velocity (ζ-component)              | On K-Face `kface`                                             | `fda`           | Normal velocity component to K-Face. `zet` is collocated.                                                                           |
+| `zet[kface][j_any][i_any]`                   | `Cmpnts`      | Metric Vector ∇ζ (ζ_x, ζ_y, ζ_z)                    | On K-Face `kface`                                             | `fda` (`lZet`)  | Related to area vector of K-Face.                                                                                                   |
+| **Face-Center Based Quantities (Interpolated/Calculated)** |               |                                       | **Geometric Center of a Cell Face**                         |                 |                                                                                                                                     |
+| `Centx[k_any][j_any][iface]`                 | `Cmpnts`      | Physical Coords (x,y,z) of I-Face Center            | Geometric Center of I-Face `iface`                            | `fda`           |                                                                                                                                     |
+| `IAj[k_any][j_any][iface]`                   | `PetscScalar` | Jacobian Inverse (1/J) at I-Face Center             | Geometric Center of I-Face `iface`                            | `da`            |                                                                                                                                     |
+| `ICsi[k_any][j_any][iface]` (and IEta, IZet) | `Cmpnts`      | Metrics (∇ξ, ∇η, ∇ζ) at I-Face Center               | Geometric Center of I-Face `iface`                            | `fda`           |                                                                                                                                     |
+| `Centy[k_any][jface][i_any]`                 | `Cmpnts`      | Physical Coords (x,y,z) of J-Face Center            | Geometric Center of J-Face `jface`                            | `fda`           |                                                                                                                                     |
+| `JAj[k_any][jface][i_any]`                   | `PetscScalar` | Jacobian Inverse (1/J) at J-Face Center             | Geometric Center of J-Face `jface`                            | `da`            |                                                                                                                                     |
+| `JCsi[k_any][jface][i_any]` (and JEta, JZet) | `Cmpnts`      | Metrics (∇ξ, ∇η, ∇ζ) at J-Face Center               | Geometric Center of J-Face `jface`                            | `fda`           |                                                                                                                                     |
+| `Centz[kface][j_any][i_any]`                 | `Cmpnts`      | Physical Coords (x,y,z) of K-Face Center            | Geometric Center of K-Face `kface`                            | `fda`           |                                                                                                                                     |
+| `KAj[kface][j_any][i_any]`                   | `PetscScalar` | Jacobian Inverse (1/J) at K-Face Center             | Geometric Center of K-Face `kface`                            | `da`            |                                                                                                                                     |
+| `KCsi[kface][j_any][i_any]` (and KEta, KZet) | `Cmpnts`      | Metrics (∇ξ, ∇η, ∇ζ) at K-Face Center               | Geometric Center of K-Face `kface`                            | `fda`           |                                                                                                                                     |
+
+**Notes on `ucont`, `csi`, `eta`, `zet` Indexing Relative to Cell `(ic,jc,kc)`:**
+
+*   **Left I-Face (Face `ic`):**
+    *   U-velocity: `ucont[kc][jc][ic].x`
+    *   Metrics: `csi[kc][jc][ic]`
+*   **Right I-Face (Face `ic+1`):**
+    *   U-velocity: `ucont[kc][jc][ic+1].x`
+    *   Metrics: `csi[kc][jc][ic+1]`
+*   **Bottom J-Face (Face `jc`):**
+    *   V-velocity: `ucont[kc][jc][ic].y` (Assuming the `jc` index corresponds to the J-Face `jc` when accessing the `.y` component for cell `ic,kc`)
+    *   Metrics: `eta[kc][jc][ic]`
+*   **Top J-Face (Face `jc+1`):**
+    *   V-velocity: `ucont[kc][jc+1][ic].y`
+    *   Metrics: `eta[kc][jc+1][ic]`
+*   **Front K-Face (Face `kc`):**
+    *   W-velocity: `ucont[kc][jc][ic].z` (Assuming the `kc` index corresponds to the K-Face `kc` when accessing the `.z` component for cell `ic,jc`)
+    *   Metrics: `zet[kc][jc][ic]`
+*   **Back K-Face (Face `kc+1`):**
+    *   W-velocity: `ucont[kc+1][jc][ic].z`
+    *   Metrics: `zet[kc+1][jc][ic]`
+
+The "k_any", "j_any", "i_any" in the table for face-based quantities indicate that the other two indices typically align with a cell or a path along the face, while the defining index (`iface`, `jface`, `kface`) specifies the particular face sheet. The exact mapping for the non-defining indices depends on how the loops iterate over the faces but usually aligns with the `k,j,i` of one of the cells bounded by that face.
+
 **Grid Structure** 
 **Assumptions:**
 
