@@ -61,9 +61,7 @@ PetscErrorCode InitializeSimulation(UserCtx **user_ptr, /* Changed name for clar
                                     char *allowedFile_inout, PetscBool *useCfg_out,PetscBool* OnlySetup)
 {
     PetscErrorCode ierr;
-    UserCtx*       local_user; // Temporary local pointer to the user context
-    PetscBool      bcsFileOptionFound;
-    char           bcs_filename_buffer[PETSC_MAX_PATH_LEN]; // Local buffer for the filename    
+    UserCtx*       local_user; // Temporary local pointer to the user context;    
 
     PetscFunctionBeginUser;
 
@@ -141,16 +139,6 @@ PetscErrorCode InitializeSimulation(UserCtx **user_ptr, /* Changed name for clar
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeSimulation - Initialized on rank %d out of %d processes.\n", *rank_out, *size_out);
 
-   // Set default BCs filename
-    strcpy(bcs_filename_buffer, "bcs.dat");
-    // Attempt to override with command-line/control.dat option
-    ierr = PetscOptionsGetString(NULL, NULL, "-bcs_file", bcs_filename_buffer, PETSC_MAX_PATH_LEN, &bcsFileOptionFound); CHKERRQ(ierr);
-    if (bcsFileOptionFound) {
-        LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeSimulation - Using BCs file specified by option: %s\n", bcs_filename_buffer);
-    } else {
-        LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeSimulation - No -bcs_file option found, using default: %s\n", bcs_filename_buffer);
-    }
-    
     // --- 2. Read Runtime Options for Simulation Parameters ---
     ierr = PetscOptionsGetInt(NULL, NULL, "-numParticles", np_out, NULL); CHKERRQ(ierr);
     local_user->NumberofParticles = *np_out;
@@ -166,10 +154,11 @@ PetscErrorCode InitializeSimulation(UserCtx **user_ptr, /* Changed name for clar
     ierr = PetscOptionsGetInt(NULL, NULL, "-finit", &(local_user->FieldInitialization), NULL); CHKERRQ(ierr);
     ierr = PetscOptionsGetInt(NULL, NULL, "-tio", outputFreq_out, NULL); CHKERRQ(ierr);
     ierr = PetscOptionsGetInt(NULL, NULL, "-logfreq", &(local_user->LoggingFrequency), NULL); CHKERRQ(ierr); // Ensure LoggingFrequency is in UserCtx
-
     ierr = PetscOptionsGetReal(NULL, NULL, "-dt", &(local_user->dt), NULL); CHKERRQ(ierr);
-    ierr = PetscOptionsGetReal(NULL, NULL, "-uin", &(local_user->ConstantVelocity), NULL); CHKERRQ(ierr);
-
+    
+    ierr = PetscOptionsGetReal(NULL, NULL, "-ucont_x", &(local_user->InitialConstantContra.x), NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-ucont_y", &(local_user->InitialConstantContra.y), NULL); CHKERRQ(ierr);
+    ierr = PetscOptionsGetReal(NULL, NULL, "-ucont_z", &(local_user->InitialConstantContra.z), NULL); CHKERRQ(ierr);
     ierr = PetscOptionsGetBool(NULL, NULL, "-read_fields", readFields_out, NULL); CHKERRQ(ierr);
 
     ierr = PetscOptionsGetBool(NULL, NULL, "-Setup_Only", OnlySetup, NULL); CHKERRQ(ierr);
@@ -179,14 +168,7 @@ PetscErrorCode InitializeSimulation(UserCtx **user_ptr, /* Changed name for clar
       LOG_ALLOW(GLOBAL,LOG_DEBUG,"   [%2d] «%s»\n", i, (*allowedFuncs_out)[i]);
     }
 
-    // --- 3. Parse Boundary Conditions File ---
-    // This is called by all ranks. Rank 0 reads, then broadcasts to all.
-    // It populates user->face_bc_types[], user->inletFaceDefined, and user->identifiedInletBCFace.
-    LOG_ALLOW(GLOBAL, LOG_INFO, "InitializeSimulation - Parsing boundary conditions from %s.\n", bcs_filename_buffer);
-    ierr = ParseAllBoundaryConditions(local_user,bcs_filename_buffer); CHKERRQ(ierr);
-    // After this call, user->identifiedInletBCFace (and other BC info) is set on all ranks.
-
-    // --- 4. PETSc Logging Setup ---
+    // --- 3. PETSc Logging Setup ---
     ierr = PetscLogDefaultBegin(); CHKERRQ(ierr);
     ierr = registerEvents(); CHKERRQ(ierr); // Assuming registerEvents is defined elsewhere
 
@@ -194,70 +176,114 @@ PetscErrorCode InitializeSimulation(UserCtx **user_ptr, /* Changed name for clar
     PetscFunctionReturn(0);
 }
 
-/** 
- * @brief Setup grid and vectors for the simulation.
+/**
+ * @brief Setup grid DMs, field vectors, and compute grid metrics for the simulation block.
  *
- * @param[in,out] user Pointer to the UserCtx structure.
- * @param[in] block_number The number of grid blocks in the domain.
+ * This function orchestrates the setup for the simulation grid block. It:
+ * 1. Defines the grid geometry and physical coordinates using DefineGridCoordinates.
+ * 2. Creates the primary global and local PETSc Vecs for flow variables (Ucat, P, etc.).
+ * 3. Creates the Vecs required for storing grid metrics.
+ * 4. Initializes all newly created vectors to zero.
+ * 5. Calls subroutines to compute and populate the grid metrics (Csi, Eta, Zet, Aj).
+ *    This includes interior calculation and boundary extrapolation.
+ *
+ * @param[in,out] user           Pointer to the single UserCtx structure for the simulation.
+ * @param[in]     block_number   The number of grid blocks (expected to be 1 for this setup).
+ *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
 PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
     PetscErrorCode ierr;
 
+    PetscFunctionBeginUser;
+
     if (!user) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx pointer is null.");
-    if (block_number <= 0) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_OUTOFRANGE, "block_number must be > 0");
+    // This function assumes it's handling a single block context passed from main.
+    if (block_number != 1) {
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "SetupGridAndVectors is optimized for block_number=1 but was called with %d. The loop will run, but ensure `user` is an array.", block_number);
+    }
 
-    // Define grid coordinates
+    // --- 1. Define Grid DMs and Assign Physical Coordinates ---
+    // DefineGridCoordinates is assumed to work on the single 'user' context passed in.
+    // If it were truly multi-block, its signature would be `DefineGridCoordinates(user, block_number)`.
+    // Let's assume it sets up user->da, user->fda, and coordinates correctly.
     ierr = DefineGridCoordinates(user); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL, LOG_INFO, "SetupGridAndVectors - Grid setup complete.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Grid DMs and coordinates defined.\n");
 
+    // --- 2. Get local info and store it in the context ---
     ierr = DMDAGetLocalInfo(user->da, &user->info); CHKERRQ(ierr);
-   
-    // Create global vectors for each block
-      for (PetscInt bi = 0; bi < block_number; bi++) {
-        // Check that the DMs are valid
-        if (!user[bi].fda || !user[bi].da) {
-           SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "DMs not initialized \n");
-     }
 
-        LOG_ALLOW(GLOBAL,LOG_DEBUG,"Creating vectors for block %d: fda=%p, da=%p\n", bi, (void*)user[bi].fda, (void*)user[bi].da);
+    // Check that the DMs are valid
+    if (!user->fda || !user->da) {
+       SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "DMs not initialized after DefineGridCoordinates");
+    }
 
-        // Create global vectors (Destroyed in FinalizeSimulation)
-	ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Ucat); CHKERRQ(ierr);
-	ierr = DMCreateGlobalVector(user[bi].fda, &user[bi].Ucont); CHKERRQ(ierr);
-	ierr = DMCreateGlobalVector(user[bi].da, &user[bi].P); CHKERRQ(ierr);
-	ierr = DMCreateGlobalVector(user[bi].da, &user[bi].Nvert); CHKERRQ(ierr);
-	ierr = DMCreateGlobalVector(user[bi].da, &user[bi].Nvert_o); CHKERRQ(ierr);
-	ierr = DMCreateGlobalVector(user[bi].da, &user[bi].ParticleCount); CHKERRQ(ierr);
+    // --- 3. Create and Initialize All Vectors ---
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Creating and initializing all simulation vectors.");
+    // Primary Field Vecs
+    ierr = DMCreateGlobalVector(user->fda, &user->Ucat); CHKERRQ(ierr);
+    ierr = DMCreateGlobalVector(user->fda, &user->Ucont); CHKERRQ(ierr);
+    ierr = DMCreateGlobalVector(user->da,  &user->P); CHKERRQ(ierr);
+    ierr = DMCreateGlobalVector(user->da,  &user->Nvert); CHKERRQ(ierr);
+    ierr = DMCreateGlobalVector(user->da,  &user->Nvert_o); CHKERRQ(ierr);
+    ierr = DMCreateGlobalVector(user->da,  &user->ParticleCount); CHKERRQ(ierr);
+    ierr = DMCreateLocalVector(user->fda, &user->lUcat); CHKERRQ(ierr);
+    ierr = DMCreateLocalVector(user->fda, &user->lUcont); CHKERRQ(ierr);
+    ierr = DMCreateLocalVector(user->da,  &user->lP); CHKERRQ(ierr);
+    ierr = DMCreateLocalVector(user->da,  &user->lNvert); CHKERRQ(ierr);
+    ierr = DMCreateLocalVector(user->da,  &user->lNvert_o); CHKERRQ(ierr);
 
-	// Create local vectors (Destroyed in FinalizeSimulation)
-        ierr = DMCreateLocalVector(user[bi].fda, &user[bi].lUcat); CHKERRQ(ierr);
-	ierr = DMCreateLocalVector(user[bi].fda, &user[bi].lUcont); CHKERRQ(ierr);
-	ierr = DMCreateLocalVector(user[bi].da, &user[bi].lP); CHKERRQ(ierr);
-	ierr = DMCreateLocalVector(user[bi].da, &user[bi].lNvert); CHKERRQ(ierr);
-	ierr = DMCreateLocalVector(user[bi].da, &user[bi].lNvert_o); CHKERRQ(ierr);
+    // Metric Vecs
+    ierr = DMCreateGlobalVector(user->fda, &user->Csi); CHKERRQ(ierr);
+    ierr = DMCreateGlobalVector(user->fda, &user->Eta); CHKERRQ(ierr);
+    ierr = DMCreateGlobalVector(user->fda, &user->Zet); CHKERRQ(ierr);
+    ierr = DMCreateGlobalVector(user->da,  &user->Aj); CHKERRQ(ierr);
+    ierr = DMCreateLocalVector(user->fda, &user->lCsi); CHKERRQ(ierr);
+    ierr = DMCreateLocalVector(user->fda, &user->lEta); CHKERRQ(ierr);
+    ierr = DMCreateLocalVector(user->fda, &user->lZet); CHKERRQ(ierr);
+    ierr = DMCreateLocalVector(user->da,  &user->lAj); CHKERRQ(ierr);
+    // (Create ICsi, IAj, etc. here if needed)
 
-	// Set Initial values for all vectors
-	ierr = VecSet(user[bi].Ucat,0.0);
-	ierr = VecSet(user[bi].lUcat,0.0);
-	
-	ierr = VecSet(user[bi].Ucont,0.0);	
-	ierr = VecSet(user[bi].lUcont,0.0);
+    // Zero out global vectors
+    ierr = VecSet(user->Ucat, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->Ucont, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->P, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->Nvert, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->Nvert_o, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->ParticleCount, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->Csi, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->Eta, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->Zet, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->Aj, 0.0); CHKERRQ(ierr);
 
-	ierr = VecSet(user[bi].P,0.0);
-	ierr = VecSet(user[bi].lP,0.0);
+    // Zero out local vectors
+    ierr = VecSet(user->lUcat, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->lUcont, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->lP, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->lNvert, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->lNvert_o, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->lCsi, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->lEta, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->lZet, 0.0); CHKERRQ(ierr);
+    ierr = VecSet(user->lAj, 0.0); CHKERRQ(ierr);    
 
-	ierr = VecSet(user[bi].Nvert,0.0);
-	ierr = VecSet(user[bi].lNvert,0.0);
+    // =========================================================================
+    // --- 4. CALL THE METRIC COMPUTATION SUBROUTINES ---
+    // =========================================================================
+    // These functions now operate directly on the 'user' context, handling
+    // all internal steps including getting coordinates, calculation, extrapolation,
+    // assembly, and updating the local ghosted vectors.
 
-	ierr = VecSet(user[bi].Nvert_o,0.0);
-	ierr = VecSet(user[bi].lNvert_o,0.0);
+    ierr = ComputeFaceMetrics(user); CHKERRQ(ierr);
+    ierr = ComputeCellCenteredJacobianInverse(user); CHKERRQ(ierr);
 
-	ierr = VecSet(user[bi].ParticleCount,0.0);
-      } //bi 
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Primary metrics (Csi, Eta, Zet, Aj) computed and prepared.");
 
-    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "SetupGridAndVectors - Grid and vectors setup completed on all ranks. \n");
-    return 0;
+    // --- (Optional) Compute face-centered metrics ---
+    // ierr = ComputeFaceCenteredMetrics(user); CHKERRQ(ierr);
+
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "Grid and vectors setup completed on all ranks.\n");
+    PetscFunctionReturn(0);
 }
 
 /**
@@ -305,6 +331,18 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
 	LOG_ALLOW(GLOBAL,LOG_DEBUG," Nvert_o Destroyed \n");
 	ierr = VecDestroy(&(user[bi].ParticleCount)); CHKERRQ(ierr);
 	LOG_ALLOW(GLOBAL,LOG_DEBUG," ParticleCount Destroyed \n");
+	ierr = VecDestroy(&(user[bi].Csi)); CHKERRQ(ierr);
+        ierr = VecDestroy(&(user[bi].lCsi)); CHKERRQ(ierr);
+	LOG_ALLOW(GLOBAL,LOG_DEBUG," Csi Destroyed \n");
+	ierr = VecDestroy(&(user[bi].Eta)); CHKERRQ(ierr);
+        ierr = VecDestroy(&(user[bi].lEta)); CHKERRQ(ierr);
+	LOG_ALLOW(GLOBAL,LOG_DEBUG," Eta Destroyed \n");
+	ierr = VecDestroy(&(user[bi].Zet)); CHKERRQ(ierr);
+        ierr = VecDestroy(&(user[bi].lZet)); CHKERRQ(ierr);
+	LOG_ALLOW(GLOBAL,LOG_DEBUG," Zet Destroyed \n");
+	ierr = VecDestroy(&(user[bi].Aj)); CHKERRQ(ierr);
+        ierr = VecDestroy(&(user[bi].lAj)); CHKERRQ(ierr);
+	LOG_ALLOW(GLOBAL,LOG_DEBUG," Ucont Destroyed \n");
 	
 	//  ierr = DMDestroy(&(user[bi].fda)); CHKERRQ(ierr);
 	//	LOG_ALLOW(GLOBAL,LOG_DEBUG," fda Destroyed \n");
@@ -314,6 +352,9 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
         ierr = DMDestroy(&(user[bi].swarm)); CHKERRQ(ierr);
 	LOG_ALLOW(GLOBAL,LOG_DEBUG," swarm Destroyed \n");
     }
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Finalizing simulation, destroying boundary system.\n");
+    ierr = BoundarySystem_Destroy(user); CHKERRQ(ierr);    
 
     // Free user context
     ierr = PetscFree(user); CHKERRQ(ierr);
@@ -734,12 +775,28 @@ PetscErrorCode UpdateLocalGhosts(UserCtx* user, const char *fieldName)
         globalVec = user->P;
         localVec  = user->lP;
         dm        = user->da;
-    } else if (strcmp(fieldName, "Nvert") == 0) {
+    } else if (strcmp(fieldName, "Csi") == 0) {
+        globalVec = user->Csi;
+        localVec  = user->lCsi;
+        dm        = user->fda;
+    } else if (strcmp(fieldName, "Eta") == 0) {
+        globalVec = user->Eta;
+        localVec  = user->lEta;
+        dm        = user->fda;
+    }  else if (strcmp(fieldName, "Zet") == 0) {
+        globalVec = user->Zet;
+        localVec  = user->lZet;
+        dm        = user->fda;
+    }else if (strcmp(fieldName, "Nvert") == 0) {
         globalVec = user->Nvert;
         localVec  = user->lNvert;
         dm        = user->da;
-    } // Add other fields as needed
-    else {
+     // Add other fields as needed
+    } else if (strcmp(fieldName, "Aj") == 0) {
+        globalVec = user->Aj;
+        localVec  = user->lAj;
+        dm        = user->da;
+    }else {
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_UNKNOWN_TYPE, "Field '%s' not recognized for ghost update.", fieldName);
     }
 
@@ -922,31 +979,32 @@ PetscErrorCode PerformInitialSetup(UserCtx *user, PetscReal currentTime, PetscIn
     // This is crucial for ParticleInitialization == 0 (Surface Init). After particles have been
     // migrated to the rank(s) owning the inlet surface, this step ensures they are properly
     // distributed *on* that surface, rather than remaining at their migrated position (e.g., (0,0,0)).
-    // ----- DEBUG 
+ 
     if (user->ParticleInitialization == 0 && user->inletFaceDefined) {
       ierr = ReinitializeParticlesOnInletSurface(user, currentTime, step); CHKERRQ(ierr);
-      if (rank == 0) { // Or the rank that does the re-init
-        PetscReal *coords_check;
-        PetscInt nlocal_check;
-        ierr = DMSwarmGetLocalSize(user->swarm, &nlocal_check); CHKERRQ(ierr);
-        if (nlocal_check > 0) {
-	  ierr = DMSwarmGetField(user->swarm, "position", NULL, NULL, (void**)&coords_check); CHKERRQ(ierr);
-	  LOG_ALLOW(LOCAL,LOG_DEBUG, "[Rank %d DEBUG] After Reinit, first particle pos: (%.2f, %.2f, %.2f)\n",
-		      rank, coords_check[0], coords_check[1], coords_check[2]);
+      // ---   DEBUG
+      // if (rank == 0) { // Or the rank that does the re-init
+      //  PetscReal *coords_check;
+      //  PetscInt nlocal_check;
+      //  ierr = DMSwarmGetLocalSize(user->swarm, &nlocal_check); CHKERRQ(ierr);
+      //  if (nlocal_check > 0) {
+      //     ierr = DMSwarmGetField(user->swarm, "position", NULL, NULL, (void**)&coords_check); CHKERRQ(ierr);
+      //	  LOG_ALLOW(LOCAL,LOG_DEBUG, "[Rank %d DEBUG] After Reinit, first particle pos: (%.2f, %.2f, %.2f)\n",
+      //	      rank, coords_check[0], coords_check[1], coords_check[2]);
 	  // Check for NaNs/Infs in a few particles if suspicious
-	  for (int p_chk = 0; p_chk < PetscMin(5, nlocal_check); ++p_chk) {
-	    if (PetscIsInfOrNanReal(coords_check[3*p_chk+0]) ||
-		PetscIsInfOrNanReal(coords_check[3*p_chk+1]) ||
-		PetscIsInfOrNanReal(coords_check[3*p_chk+2])) {
-	      LOG_ALLOW(LOCAL,LOG_DEBUG, "[Rank %d DEBUG ERROR] Bad coord for particle %d after reinit!\n", rank, p_chk);
-	    }
-	  }
-	  ierr = DMSwarmRestoreField(user->swarm, "position", NULL, NULL, (void**)&coords_check); CHKERRQ(ierr);
-        }
-        fflush(stdout);
-      }
+      //  for (int p_chk = 0; p_chk < PetscMin(5, nlocal_check); ++p_chk) {
+      //	    if (PetscIsInfOrNanReal(coords_check[3*p_chk+0]) ||
+      //	PetscIsInfOrNanReal(coords_check[3*p_chk+1]) ||
+      //	PetscIsInfOrNanReal(coords_check[3*p_chk+2])) {
+      //      LOG_ALLOW(LOCAL,LOG_DEBUG, "[Rank %d DEBUG ERROR] Bad coord for particle %d after reinit!\n", rank, p_chk);
+      //    }
+      //  }
+      //  ierr = DMSwarmRestoreField(user->swarm, "position", NULL, NULL, (void**)&coords_check); CHKERRQ(ierr);
+      //  }
+      //  fflush(stdout);
+	// }
+    // --------- DEBUG	
     }
-    // --------- DEBUG
 
     LOG_ALLOW(LOCAL,LOG_DEBUG," [ Rank %d] ReinitializeParticlesOnInletSurface completed, heading into PetscBarrier.\n",rank);
     
@@ -972,10 +1030,11 @@ PetscErrorCode PerformInitialSetup(UserCtx *user, PetscReal currentTime, PetscIn
 	//  LOG_ALLOW(LOCAL, LOG_DEBUG, "[Rank %d] ABOUT TO CALL LOG_PARTICLE_FIELDS.\n", rank);
 	ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency); CHKERRQ(ierr);
 	//  LOG_ALLOW(LOCAL, LOG_INFO, "[Rank %d] RETURNED FROM LOG_PARTICLE_FIELDS.\n", rank); 
-	
-        if(user->FieldInitialization==1) { // If analytic fields are available for comparison
-            ierr = LOG_INTERPOLATION_ERROR(user); CHKERRQ(ierr);
-        }
+
+	// DEPRECIATED - Testing against sinusoidal (now FieldInitialization = 1 has changed meaning.
+	// if(user->FieldInitialization==1) { // If analytic fields are available for comparison
+	//    ierr = LOG_INTERPOLATION_ERROR(user); CHKERRQ(ierr);
+        //}
 
         LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Writing initial particle data (for step %d).\n", currentTime, step, step);
 	//	LOG_ALLOW(LOCAL, LOG_INFO, "[%d] About to call WriteSwarmField for position.\n", rank);
@@ -1073,9 +1132,9 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
       // If StartStep was 0, fields for t=0 were already set.
       // If restarting (StartStep > 0), or for subsequent steps (step_loop_counter > StartStep),
       // set/update fields for the current `currentTime`.
-      if (step_loop_counter > StartStep || (step_loop_counter == StartStep && StartStep > 0)) {
-          ierr = SetEulerianFields(user, step_loop_counter, StartStep, currentTime, readFields); CHKERRQ(ierr);
-      }
+      //    if (step_loop_counter > StartStep || (step_loop_counter == StartStep && StartStep > 0)) {
+      //   ierr = SetEulerianFields(user, step_loop_counter, StartStep, currentTime, readFields); CHKERRQ(ierr);
+	  //	    }
 
       // Step 3: Update Particle Positions
       // Moves particles from P(currentTime) to P(currentTime + dt) using velocity_particle(currentTime).
@@ -1101,9 +1160,7 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
       // Step 7: Advance Time
       currentTime += dt; // currentTime now represents the time at the *end* of the step just completed.
 
-      // Step 8: Update global step counter in user context.
-      // This should reflect the step number *completed*.
-      user->step = step_loop_counter + 1;
+      ierr = SetEulerianFields(user, step_loop_counter+1, StartStep, currentTime, readFields); CHKERRQ(ierr);
 
       // Step 9: Locate Particles at New Positions (t = currentTime)
       // This is for particles now on the current rank after migration, using their P(currentTime) positions.
@@ -1120,12 +1177,20 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
       ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
       LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Scattering particle fields to grid (Rank: %d).\n", currentTime, step_loop_counter, rank);
 
+      // Step 8: Update global step counter in user context.
+      // This should reflect the step number *completed*.
+      user->step = step_loop_counter + 1;
+      
       // Step 12: Output and Error Logging (based on the step *just completed*, using user->step)
       if (OutputFreq > 0 && (user->step % OutputFreq == 0) ) {
           LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d completed (Output for step %d)] Logging interpolation error.\n", currentTime, step_loop_counter, user->step);
-          if(user->FieldInitialization==1) { // If analytic fields are available for comparison
-              ierr = LOG_INTERPOLATION_ERROR(user); CHKERRQ(ierr);
-          }
+
+	// DEPRECIATED - Testing against sinusoidal (now FieldInitialization = 1 has changed meaning.
+	//  if(user->FieldInitialization==1) { // If analytic fields are available for comparison
+        //      ierr = LOG_INTERPOLATION_ERROR(user); CHKERRQ(ierr);
+        //  }
+
+	  
           LOG_ALLOW(GLOBAL, LOG_DEBUG, "Printing particle fields at t=%.4f (step %d completed, output for step %d)\n", currentTime, step_loop_counter, user->step);
           ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency); CHKERRQ(ierr);
 
@@ -1156,206 +1221,133 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
 }
 
 /**
- * @brief Initializes or updates all necessary simulation fields for a given timestep.
+ * @brief Initializes or updates the complete, consistent state of all Eulerian fields for a given timestep.
  *
- * This function handles the logic for either:
- * A) Initializing fields analytically (for the first step or if not reading):
- *    - Sets interior values using SetAnalyticalCartesianField.
- *    - Applies boundary conditions using ApplyAnalyticalBC.
- *    - Updates local vectors with ghosts using UpdateLocalGhosts.
- *    - Optionally writes the initial fields.
- * B) Reading fields from a file for a specific timestep index:
- *    - Reads global vectors using ReadSimulationFields.
- *    - Updates local vectors with ghosts using UpdateLocalGhosts.
- * C) Updating fields using a fluid solver (Placeholder for future integration):
- *    - Calls a placeholder function SolveFluidEquations.
- *    - Applies boundary conditions using ApplyAnalyticalBC.
- *    - Updates local vectors with ghosts using UpdateLocalGhosts.
+ * This function is a high-level wrapper that orchestrates the entire process of preparing
+ * the fluid fields for a single time step. It follows the standard procedure for a
+ * curvilinear solver: first resolving contravariant velocities (`Ucont`) and then
+ * converting them to Cartesian (`Ucat`).
  *
- * @param user        Pointer to the UserCtx structure.
- * @param step        The current timestep number (0 for initial step).
+ * Its sequential operations are:
+ * 1.  Update the INTERIOR of the domain:
+ *     - For the initial step, it calls `SetInitialInteriorField` to generate values.
+ *     - For subsequent steps, it calls the main fluid solver.
+ *     - If restarting from a file, it reads the data, overwriting the whole field.
+ *
+ * 2.  Apply Boundary Conditions:
+ *     - It then calls the modular `BoundarySystem_ExecuteStep` to enforce all configured
+ *       boundary conditions on the domain edges.
+ *
+ * 3.  Convert to Cartesian and Finalize:
+ *     - It calls `Contra2Cart` to compute `Ucat` from `Ucont`.
+ *     - It calls `UpdateLocalGhosts` to ensure all parallel data is synchronized.
+ *
+ * @param user        Pointer to the UserCtx structure, containing all simulation data.
+ * @param step        The current timestep number being processed.
+ * @param StartStep   The initial timestep number of the simulation.
  * @param time        The current simulation time.
- * @param readFields  Flag indicating whether to read fields from file.
- * @param fieldSource Source for field data (e.g., ANALYTICAL, FILE, SOLVER).
- *                    (Here using readFields bool for simplicity based on original code)
- *
- * @return PetscErrorCode 0 on success, non-zero on failure.
+ * @param readFields  A boolean flag. If true, the simulation attempts to read fields
+ *                    from files at the StartStep instead of generating them.
+ * @return PetscErrorCode 0 on success.
  */
 PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartStep, PetscReal time, PetscBool readFields)
 {
     PetscErrorCode ierr;
     PetscFunctionBeginUser;
-    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Updating simulation fields.\n", time, step);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Preparing complete Eulerian state.\n", time, step);
 
-    if (step == StartStep){
-      if(!readFields) { 
-        // --- Initial Analytical Setup (Step 0, Not Reading) ---
-        LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Setting analytical interior fields.\n", time, step);
-        ierr = SetAnalyticalCartesianField(user,"Ucat"); CHKERRQ(ierr);
-        // Add other fields (P, Nvert, Ucont...) if needed
-        // ierr = SetAnalyticalCartesianField(user,"P"); CHKERRQ(ierr);
+    PetscReal umax=0.0;
+    PetscReal ucont_max=0.0;
+    // ==============================================================================
+    // --- STEP 1: Update the INTERIOR of the domain ---
+    // ==============================================================================
 
-        LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Applying analytical boundary conditions.\n", time, step);
-        ierr = ApplyAnalyticalBC(user, "Ucat"); CHKERRQ(ierr);
-        // Add other fields
-        // ierr = ApplyAnalyticalBC(user, "P"); CHKERRQ(ierr);
+    if (step == StartStep && readFields) {
+        // --- RESTART from file ---
+        // This case reads the full, previously saved state, overwriting everything.
+        LOG_ALLOW(GLOBAL, LOG_INFO, "RESTART condition: Reading all fields from file for step %d.\n", step);
+        ierr = ReadSimulationFields(user, step); CHKERRQ(ierr);
 
-        LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Updating local ghosts after initial setup.\n", time, step);
+	// Even after reading, we must update local ghosts to ensure consistency for subsequent steps.
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Updating local ghost regions for all fields after reading.\n", time, step);
+        ierr = UpdateLocalGhosts(user, "Ucont"); CHKERRQ(ierr);
         ierr = UpdateLocalGhosts(user, "Ucat"); CHKERRQ(ierr);
-        // Add other fields
-        // ierr = UpdateLocalGhosts(user, "P"); CHKERRQ(ierr);
-
-        // Optional: Write the very initial fields (at step 0)
-        // This might be better done once in main after this call returns
-        // LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Writing initial simulation fields.\n", time, step);
-        // ierr = WriteSimulationFields(user, step); CHKERRQ(ierr); // Pass step for filename
-
-    } else if (readFields) {
-        // -- Initial Field Read Setup ----------
 	
-        LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Reading fields from file (timestep index %d).\n", time, step, step); // Assuming step is timestep index 'ti'
-        ierr = ReadSimulationFields(user, step); CHKERRQ(ierr); // Pass step as timestep index 'ti'
+    } else {
+        // --- This block handles both initial setup and time-advancement ---
+        
+          if (step == StartStep) {
+            // --- Initial Field Setup ---
+            // The boundaries have already been initialized by BoundarySystem_Create.
+            // We now fill the domain interior using the newly named function.
+	    // ierr = VecZeroEntries(user->Ucont);CHKERRQ(ierr);
+            LOG_ALLOW(GLOBAL, LOG_INFO, "INITIAL start: Generating INTERIOR fields for initial step %d.\n", step);
+            ierr = SetInitialInteriorField(user, "Ucont"); CHKERRQ(ierr);
 
-        LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Updating local ghosts after reading fields.\n", time, step);
-        ierr = UpdateLocalGhosts(user,"Ucat");CHKERRQ(ierr);
-        // Update ghosts for all fields read
-        // ierr = UpdateLocalGhosts(user, "P"); CHKERRQ(ierr);
+	    ierr = VecNorm(user->Ucont, NORM_INFINITY, &ucont_max); CHKERRQ(ierr);
+	    LOG_ALLOW(GLOBAL,LOG_INFO,"[DEBUG] max(|Ucont|) aftee SetInitialInteriorField = %.6e\n", ucont_max);
+	    ucont_max=0.0;
+	    
+	         } else { // Advancing the simulation (step > StartStep)
+            LOG_ALLOW(GLOBAL, LOG_DEBUG, "ADVANCE step: Updating INTERIOR fields for step %d.\n", step);
 
-       }
-    }else {
-        // -- Could add another if/else loop if we want to read fields for every timestep!
-      if(!readFields){
-        // --- Update Fields During Time Marching (step > 0, Not Reading) ---
-        // This is where you would call your fluid solver if Ucat wasn't static.
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Updating fields via solver (Placeholder).\n", time, step);
 
-        // Placeholder: In a real simulation, update Ucat, P etc. here
-        // ierr = SolveFluidEquations(user, user->dt); CHKERRQ(ierr);
+	    ierr = VecNorm(user->Ucont, NORM_INFINITY, &ucont_max); CHKERRQ(ierr);
+	    LOG_ALLOW(GLOBAL,LOG_INFO,"[DEBUG] max(|Ucont|) (timestep = %d)  = %.6e\n",step,ucont_max);
+	    ucont_max=0.0;
+	    // This is the hook for the actual fluid dynamics solver, which would update Ucont.
+            // ierr = YourNavierStokesSolver(user, user->dt); CHKERRQ(ierr);
+	        }
 
-        // For the analytical case, Ucat is constant in time, but we might
-        // re-apply BCs if they were time-dependent. If BCs are also static,
-        // we might not strictly need to do anything here for Ucat.
-        // However, it's good practice to update ghosts if the solver *could* change things.
-        // Re-applying static analytical BCs doesn't hurt.
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Re-applying boundary conditions.\n", time, step);
-        ierr = ApplyAnalyticalBC(user, "Ucat"); CHKERRQ(ierr);
-        // ierr = ApplyAnalyticalBC(user, "P"); CHKERRQ(ierr);
+        // ==============================================================================
+        // --- STEP 2: APPLY BOUNDARY CONDITIONS ---
+        // ==============================================================================
+        // The boundary system applies conditions. For a wall, this sets the normal
+        // component of Ucont to 0 and also sets the ghost-cell Ucat values.
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Executing boundary condition system.\n", time, step);
+	ierr = BoundarySystem_ExecuteStep(user); CHKERRQ(ierr);
+	
+	// ==============================================================================
+        // --- STEP 3: SYNCHRONIZE Ucont BEFORE CONVERSION ---
+        // ==============================================================================
+        // THIS IS THE CRITICAL FIX: Update lUcont with correct global data and ghost cells
+        // BEFORE calling Contra2Cart, which relies on lUcont for its stencil.
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Updating local ghost regions for Ucont.\n", time, step);
+        ierr = UpdateLocalGhosts(user, "Ucont"); CHKERRQ(ierr);
 
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Updating local ghosts after field update/BCs.\n", time, step);      }
+        // ==============================================================================
+        // --- STEP 4: CONVERT CONTRAVARIANT TO CARTESIAN ---
+        // ==============================================================================
+        // With Ucont fully defined (interior + boundaries), compute the Cartesian velocity.
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Converting Ucont to Ucat.\n", time, step);
+	ierr = VecZeroEntries(user->Ucat); CHKERRQ(ierr);
+        ierr = Contra2Cart(user); CHKERRQ(ierr);
+
+
+	ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
+	LOG_ALLOW(GLOBAL,LOG_INFO,"[DEBUG] max(|Ucat|) after Contra2Cart = %.6e\n", umax);
+	umax = 0.0;
+
+	// ==============================================================================
+        // --- STEP 5: SYNCHRONIZE Ucat AFTER CONVERSION ---
+        // ==============================================================================
+        // Finally, update the local lUcat with the newly computed global Ucat data.
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Updating local ghost regions for Ucat.\n", time, step);
         ierr = UpdateLocalGhosts(user, "Ucat"); CHKERRQ(ierr);
-        // ierr = UpdateLocalGhosts(user, "P"); CHKERRQ(ierr);
-      }
+    }
+    
+    // ==============================================================================
+    // --- STEP 4: UPDATE GHOST CELLS (FINALIZATION) ---
+    // ==============================================================================
+    // This final step synchronizes the ghost cell layers across all MPI ranks for
+    // all relevant fields, ensuring a consistent state before they are used.
+    //  LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Updating local ghost regions for all fields.\n", time, step);
+    //  ierr = UpdateLocalGhosts(user, "Ucont"); CHKERRQ(ierr);
+    // ierr = UpdateLocalGhosts(user, "Ucat"); CHKERRQ(ierr);
 
+    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Complete Eulerian state is now finalized and consistent.\n", time, step);
     PetscFunctionReturn(0);
 }
-
-/**
- * @brief Computes and stores the Cartesian neighbor ranks for the DMDA decomposition.
- *
- * This function retrieves the neighbor information from the primary DMDA (user->da)
- * and stores the face neighbors (xm, xp, ym, yp, zm, zp) in the user->neighbors structure.
- * It assumes a standard PETSc ordering for the neighbors array returned by DMDAGetNeighbors.
- * Logs warnings if the assumed indices seem incorrect (e.g., center rank mismatch).
- *
- * @param[in,out] user Pointer to the UserCtx structure where neighbor info will be stored.
- *
- * @return PetscErrorCode 0 on success, non-zero on failure.
- */
-/*
-PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
-{
-    PetscErrorCode ierr;
-    PetscMPIInt    rank;
-    const PetscMPIInt *neighbor_ranks_ptr; // Use const pointer from PETSc
-    PetscMPIInt size;
-
-    PetscFunctionBeginUser;
-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
-    ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
-    
-    LOG_ALLOW(GLOBAL, LOG_INFO, "Rank %d: Computing DMDA neighbor ranks.\n", rank);
-
-    if (!user || !user->da) {
-        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx or user->da is NULL in ComputeAndStoreNeighborRanks.");
-    }
-
-    // Get the neighbor information from the DMDA
-    ierr = DMDAGetNeighbors(user->da, &neighbor_ranks_ptr); CHKERRQ(ierr);
-
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"[Rank %d] After DMDAGetNeighbors:\n", rank);
-    LOG_ALLOW_SYNC( GLOBAL,LOG_DEBUG,"[Rank %d]   Raw neighbor_ranks_ptr[4] (for zm) = %d\n", rank, neighbor_ranks_ptr[4]);
-    LOG_ALLOW_SYNC( GLOBAL,LOG_DEBUG,"[Rank %d]   Raw neighbor_ranks_ptr[22] (for zp) = %d\n", rank, neighbor_ranks_ptr[22]);
-    LOG_ALLOW_SYNC( GLOBAL,LOG_DEBUG,"[Rank %d]   Raw neighbor_ranks_ptr[10] (for ym) = %d\n", rank, neighbor_ranks_ptr[10]);
-    LOG_ALLOW_SYNC( GLOBAL,LOG_DEBUG,"[Rank %d]   Raw neighbor_ranks_ptr[16] (for zm) = %d\n", rank, neighbor_ranks_ptr[16]);
-    LOG_ALLOW_SYNC( GLOBAL,LOG_DEBUG,"[Rank %d]   Raw neighbor_ranks_ptr[12] (for xm) = %d\n", rank, neighbor_ranks_ptr[12]);
-    LOG_ALLOW_SYNC( GLOBAL,LOG_DEBUG,"[Rank %d]   Raw neighbor_ranks_ptr[14] (for xp) = %d\n", rank, neighbor_ranks_ptr[14]);
-
-    LOG_ALLOW_SYNC( GLOBAL,LOG_DEBUG,"[Rank %d]   MPI_PROC_NULL = %d\n", rank,(int)MPI_PROC_NULL);
-    
-    // --- Extract face neighbors assuming standard PETSc 3D ordering ---
-    // Center index in 3x3x3 stencil is 13 (0-based)
-    // Z varies slowest, then Y, then X.
-    // Index = k*9 + j*3 + i (where i,j,k are relative offsets -1, 0, +1 mapped to 0, 1, 2)
-    // Example: (i,j,k)=(0,0,0) relative => index = 1*9 + 1*3 + 1 = 13 (Center)
-    // Example: (i,j,k)=(-1,0,0) relative => index = 1*9 + 1*3 + 0 = 12 (xm)
-    // Example: (i,j,k)=(+1,0,0) relative => index = 1*9 + 1*3 + 2 = 14 (xp)
-    // Example: (i,j,k)=(0,-1,0) relative => index = 1*9 + 0*3 + 1 = 10 (ym)
-    // Example: (i,j,k)=(0,+1,0) relative => index = 1*9 + 2*3 + 1 = 16 (yp)
-    // Example: (i,j,k)=(0,0,-1) relative => index = 0*9 + 1*3 + 1 = 4  (zm)
-    // Example: (i,j,k)=(0,0,+1) relative => index = 2*9 + 1*3 + 1 = 22 (zp)
-
-    // Helper lambda/function to sanitize neighbor ranks
-    auto sanitize_neighbor = [&](PetscMPIInt neighbor_val) {
-        if (neighbor_val < 0 && neighbor_val != MPI_PROC_NULL) {
-            LOG_ALLOW_SYNC(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] DMDAGetNeighbors returned %d for a boundary, expected MPI_PROC_NULL (%d). Correcting to MPI_PROC_NULL.", rank, neighbor_val, (int)MPI_PROC_NULL);
-            return MPI_PROC_NULL;
-        }
-        // Also, ensure it's not out of valid rank range if it's supposed to be a real rank
-        if (neighbor_val >= size) {
-            LOG_ALLOW_SYNC(GLOBAL, LOG_ERROR, "[CASNR - Rank %d] DMDAGetNeighbors returned invalid rank %d (size is %d). Setting to MPI_PROC_NULL.", rank, neighbor_val, size);
-            return MPI_PROC_NULL; // Or handle as an error
-        }
-        return neighbor_val;
-    };
-
-    
-    
-    if (neighbor_ranks_ptr[13] != rank) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "Rank %d: DMDAGetNeighbors center index mismatch (expected %d, got %d). Neighbor indexing might be incorrect.\n",
-                  rank, rank, neighbor_ranks_ptr[13]);
-    }
-
-
-    // Assign and sanitize
-    user->neighbors.rank_xm = sanitize_neighbor(neighbor_ranks_ptr[12]);
-    user->neighbors.rank_xp = sanitize_neighbor(neighbor_ranks_ptr[14]);
-    user->neighbors.rank_ym = sanitize_neighbor(neighbor_ranks_ptr[10]);
-    user->neighbors.rank_yp = sanitize_neighbor(neighbor_ranks_ptr[16]);
-    user->neighbors.rank_zm = sanitize_neighbor(neighbor_ranks_ptr[4]);
-    user->neighbors.rank_zp = sanitize_neighbor(neighbor_ranks_ptr[22]);    
-
-    
-    //user->neighbors.rank_xm = neighbor_ranks_ptr[12];
-    //user->neighbors.rank_xp = neighbor_ranks_ptr[14];
-    //user->neighbors.rank_ym = neighbor_ranks_ptr[10];
-    //user->neighbors.rank_yp = neighbor_ranks_ptr[16];
-    //user->neighbors.rank_zm = neighbor_ranks_ptr[4];
-    //user->neighbors.rank_zp = neighbor_ranks_ptr[22];
-
-    LOG_ALLOW_SYNC( GLOBAL,LOG_DEBUG,"[Rank %d]   Raw DMDAGetNeighbors (zm index 4)  = %d | (zp index 22)  = %d MPI_PROC_NULL = %d \n", rank,neigbor_ranks_ptr[4],neigbor_ranks_ptr[22],(int)MPI_PROC_NULL);
-
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"[Rank %d] Sanitized user->neighbors: xm=%d, xp=%d, ym=%d, yp=%d, zm=%d, zp=%d\n", rank, user->neighbors.rank_xm, user->neighbors.rank_xp, user->neighbors.rank_ym, user->neighbors.rank_yp, user->neighbors.rank_zm, user->neighbors.rank_zp);
-    
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Neighbors: xm=%d, xp=%d, ym=%d, yp=%d, zm=%d, zp=%d\n", rank,
-              user->neighbors.rank_xm, user->neighbors.rank_xp,
-              user->neighbors.rank_ym, user->neighbors.rank_yp,
-              user->neighbors.rank_zm, user->neighbors.rank_zp);
-
-    // Note: neighbor_ranks_ptr memory is managed by PETSc, do not free it.
-
-    PetscFunctionReturn(0);
-}
-*/
 
 /**
  * @brief Computes and stores the Cartesian neighbor ranks for the DMDA decomposition.
@@ -1537,7 +1529,6 @@ PetscErrorCode SetDMDAProcLayout(DM dm, UserCtx *user)
     ierr = DMDASetNumProcs(dm, px, py, pz); CHKERRQ(ierr);
     LOG_ALLOW(GLOBAL, LOG_DEBUG, "Rank %d: DMDASetNumProcs called with px=%d, py=%d, pz=%d.\n", rank, px, py, pz);
 
-
     // --- Store the values in UserCtx (Optional) ---
     // Note: If PETSC_DECIDE was used, PETSc calculates the actual values during DMSetUp.
     // We store the *requested* values here. To get the *actual* values used,
@@ -1590,5 +1581,214 @@ PetscErrorCode SetupDomainRankInfo(UserCtx *user, BoundingBox **bboxlist)
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "SetupDomainRankCommunications: Completed successfully.\n");
 
+    PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Reconstructs Cartesian velocity (Ucat) at cell centers from contravariant
+ *        velocity (Ucont) defined on cell faces.
+ *
+ * This function performs the transformation from a contravariant velocity representation
+ * (which is natural on a curvilinear grid) to a Cartesian (x,y,z) representation.
+ * For each interior computational cell owned by the rank, it performs the following:
+ *
+ * 1.  It averages the contravariant velocity components (U¹, U², U³) from the
+ *     surrounding faces to get an estimate of the contravariant velocity at the cell center.
+ * 2.  It averages the metric vectors (Csi, Eta, Zet) from the surrounding faces
+ *     to get an estimate of the metric tensor at the cell center. This tensor forms
+ *     the transformation matrix.
+ * 3.  It solves the linear system `[MetricTensor] * [ucat] = [ucont]` for the
+ *     Cartesian velocity vector `ucat = (u,v,w)` using Cramer's rule.
+ * 4.  The computed Cartesian velocity is stored in the global `user->Ucat` vector.
+ *
+ * The function operates on local, ghosted versions of the input vectors (`user->lUcont`,
+ * `user->lCsi`, etc.) to ensure stencils are valid across processor boundaries.
+ *
+ * @param[in,out] user      Pointer to the UserCtx structure. The function reads from
+ *                          `user->lUcont`, `user->lCsi`, `user->lEta`, `user->lZet`, `user->lNvert`
+ *                          and writes to the global `user->Ucat` vector.
+ *
+ * @return PetscErrorCode 0 on success.
+ *
+ * @note
+ *  - This function should be called AFTER `user->lUcont` and all local metric vectors
+ *    (`user->lCsi`, etc.) have been populated with up-to-date ghost values via `UpdateLocalGhosts`.
+ *  - It only computes `Ucat` for interior cells (not on physical boundaries) and for
+ *    cells not marked as solid/blanked by `user->lNvert`.
+ *  - The caller is responsible for subsequently applying boundary conditions to `user->Ucat`
+ *    and calling `UpdateLocalGhosts(user, "Ucat")` to populate `user->lUcat`.
+ */
+PetscErrorCode Contra2Cart(UserCtx *user)
+{
+    PetscErrorCode ierr;
+    DMDALocalInfo  info;
+    Cmpnts       ***lcsi_arr, ***leta_arr, ***lzet_arr; // Local metric arrays
+    Cmpnts       ***lucont_arr;                       // Local contravariant velocity array
+    Cmpnts       ***gucat_arr;                        // Global Cartesian velocity array
+    PetscReal    ***lnvert_arr;                       // Local Nvert array
+    PetscReal    ***laj_arr;                          // Local Jacobian Determinant inverse array
+
+    PetscFunctionBeginUser;
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Starting Contravariant-to-Cartesian velocity transformation.\n");
+
+    // --- 1. Get DMDA Info and Check for Valid Inputs ---
+    // All inputs (lUcont, lCsi, etc.) and outputs (Ucat) are on DMs from the UserCtx.
+    // We get local info from fda, which governs the layout of most arrays here.
+    ierr = DMDAGetLocalInfo(user->fda, &info); CHKERRQ(ierr);
+    if (!user->lUcont || !user->lCsi || !user->lEta || !user->lZet || !user->lNvert || !user->Ucat) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONGSTATE, "Contra2Cart requires lUcont, lCsi/Eta/Zet, lNvert, and Ucat to be non-NULL.");
+    }
+
+
+    // --- 2. Get Read-Only Array Access to Local Input Vectors (with ghosts) ---
+    ierr = DMDAVecGetArrayRead(user->fda, user->lUcont, &lucont_arr); CHKERRQ(ierr);
+    ierr = DMDAVecGetArrayRead(user->fda, user->lCsi,   &lcsi_arr);   CHKERRQ(ierr);
+    ierr = DMDAVecGetArrayRead(user->fda, user->lEta,   &leta_arr);   CHKERRQ(ierr);
+    ierr = DMDAVecGetArrayRead(user->fda, user->lZet,   &lzet_arr);   CHKERRQ(ierr);
+    ierr = DMDAVecGetArrayRead(user->da,  user->lNvert, &lnvert_arr); CHKERRQ(ierr);
+    ierr = DMDAVecGetArrayRead(user->da,  user->lAj, &laj_arr); CHKERRQ(ierr);
+
+    // --- 3. Get Write-Only Array Access to the Global Output Vector ---
+    // We compute for local owned cells and write into the global vector.
+    // PETSc handles mapping the global indices to the correct local memory locations.
+    ierr = DMDAVecGetArray(user->fda, user->Ucat, &gucat_arr); CHKERRQ(ierr);
+
+
+    // --- 4. Define Loop Bounds for INTERIOR Cells ---
+    // We use adjusted bounds to avoid calculating Ucat on the physical domain boundaries,
+    // as these are typically set explicitly by boundary condition functions.
+    // The stencils use indices like i-1, j-1, k-1, so we must start loops at least at index 1.
+    PetscInt i_start = (info.xs == 0) ? info.xs + 1 : info.xs;
+    PetscInt i_end   = (info.xs + info.xm == info.mx) ? info.xs + info.xm - 1 : info.xs + info.xm;
+
+    PetscInt j_start = (info.ys == 0) ? info.ys + 1 : info.ys;
+    PetscInt j_end   = (info.ys + info.ym == info.my) ? info.ys + info.ym - 1 : info.ys + info.ym;
+
+    PetscInt k_start = (info.zs == 0) ? info.zs + 1 : info.zs;
+    PetscInt k_end   = (info.zs + info.zm == info.mz) ? info.zs + info.zm - 1 : info.zs + info.zm;
+
+    // --- 5. Main Computation Loop ---
+    // Loops over the GLOBAL indices of interior cells owned by this rank.
+    for (PetscInt k_cell = k_start; k_cell < k_end; ++k_cell) {
+        for (PetscInt j_cell = j_start; j_cell < j_end; ++j_cell) {
+            for (PetscInt i_cell = i_start; i_cell < i_end; ++i_cell) {
+
+                // Check if the cell is a fluid cell (not solid/blanked)
+	      //    if (lnvert_arr[k_cell][j_cell][i_cell] > 0.1) continue; // Skip solid/blanked cells
+
+                // Transformation matrix [mat] is the metric tensor at the cell center,
+                // estimated by averaging metrics from adjacent faces.
+                PetscReal mat[3][3];
+
+		PetscReal aj_center = laj_arr[k_cell+1][j_cell+1][i_cell+1];
+		
+                mat[0][0] = 0.5 * (lcsi_arr[k_cell][j_cell][i_cell-1].x + lcsi_arr[k_cell][j_cell][i_cell].x); //* aj_center;
+                mat[0][1] = 0.5 * (lcsi_arr[k_cell][j_cell][i_cell-1].y + lcsi_arr[k_cell][j_cell][i_cell].y); //* aj_center;
+                mat[0][2] = 0.5 * (lcsi_arr[k_cell][j_cell][i_cell-1].z + lcsi_arr[k_cell][j_cell][i_cell].z); //* aj_center;
+
+                mat[1][0] = 0.5 * (leta_arr[k_cell][j_cell-1][i_cell].x + leta_arr[k_cell][j_cell][i_cell].x); //* aj_center;
+                mat[1][1] = 0.5 * (leta_arr[k_cell][j_cell-1][i_cell].y + leta_arr[k_cell][j_cell][i_cell].y); //* aj_center;
+                mat[1][2] = 0.5 * (leta_arr[k_cell][j_cell-1][i_cell].z + leta_arr[k_cell][j_cell][i_cell].z); //* aj_center;
+
+                mat[2][0] = 0.5 * (lzet_arr[k_cell-1][j_cell][i_cell].x + lzet_arr[k_cell][j_cell][i_cell].x); //* aj_center;
+                mat[2][1] = 0.5 * (lzet_arr[k_cell-1][j_cell][i_cell].y + lzet_arr[k_cell][j_cell][i_cell].y); //* aj_center;
+                mat[2][2] = 0.5 * (lzet_arr[k_cell-1][j_cell][i_cell].z + lzet_arr[k_cell][j_cell][i_cell].z); //* aj_center;
+	
+                // Contravariant velocity vector `q` at the cell center,
+                // estimated by averaging face-based contravariant velocities.
+                PetscReal q[3];
+                q[0] = 0.5 * (lucont_arr[k_cell][j_cell][i_cell-1].x + lucont_arr[k_cell][j_cell][i_cell].x); // U¹ at cell center
+                q[1] = 0.5 * (lucont_arr[k_cell][j_cell-1][i_cell].y + lucont_arr[k_cell][j_cell][i_cell].y); // U² at cell center
+                q[2] = 0.5 * (lucont_arr[k_cell-1][j_cell][i_cell].z + lucont_arr[k_cell][j_cell][i_cell].z); // U³ at cell center
+
+                // Solve the 3x3 system `mat * ucat = q` using Cramer's rule.
+                PetscReal det = mat[0][0] * (mat[1][1] * mat[2][2] - mat[1][2] * mat[2][1]) -
+                                mat[0][1] * (mat[1][0] * mat[2][2] - mat[1][2] * mat[2][0]) +
+                                mat[0][2] * (mat[1][0] * mat[2][1] - mat[1][1] * mat[2][0]);
+
+                if (PetscAbsReal(det) < 1.0e-12) {
+                    SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FLOP_COUNT, "Transformation matrix determinant is near zero at cell (%d,%d,%d) \n", i_cell, j_cell, k_cell);
+                }
+
+                PetscReal det_inv = 1.0 / det;
+
+                PetscReal det0 = q[0] * (mat[1][1] * mat[2][2] - mat[1][2] * mat[2][1]) -
+                                 q[1] * (mat[0][1] * mat[2][2] - mat[0][2] * mat[2][1]) +
+                                 q[2] * (mat[0][1] * mat[1][2] - mat[0][2] * mat[1][1]);
+
+                PetscReal det1 = -q[0] * (mat[1][0] * mat[2][2] - mat[1][2] * mat[2][0]) +
+                                  q[1] * (mat[0][0] * mat[2][2] - mat[0][2] * mat[2][0]) -
+                                  q[2] * (mat[0][0] * mat[1][2] - mat[0][2] * mat[1][0]);
+
+                PetscReal det2 = q[0] * (mat[1][0] * mat[2][1] - mat[1][1] * mat[2][0]) -
+                                 q[1] * (mat[0][0] * mat[2][1] - mat[0][1] * mat[2][0]) +
+                                 q[2] * (mat[0][0] * mat[1][1] - mat[0][1] * mat[1][0]);
+
+                // Store computed Cartesian velocity in the GLOBAL Ucat array at the
+                // array index corresponding to the cell's origin node.
+                gucat_arr[k_cell][j_cell][i_cell].x = det0 * det_inv;
+                gucat_arr[k_cell][j_cell][i_cell].y = det1 * det_inv;
+                gucat_arr[k_cell][j_cell][i_cell].z = det2 * det_inv;
+            }
+        }
+    }
+
+    // --- 6. Restore Array Access ---
+    ierr = DMDAVecRestoreArrayRead(user->fda, user->lUcont, &lucont_arr); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArrayRead(user->fda, user->lCsi,   &lcsi_arr);   CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArrayRead(user->fda, user->lEta,   &leta_arr);   CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArrayRead(user->fda, user->lZet,   &lzet_arr);   CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArrayRead(user->da,  user->lNvert, &lnvert_arr); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArrayRead(user->da,  user->lAj, &laj_arr); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArray(user->fda, user->Ucat, &gucat_arr); CHKERRQ(ierr);
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Completed Contravariant-to-Cartesian velocity transformation. \n");
+    PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Sets up the entire boundary condition system for the simulation.
+ *
+ * This function is the main entry point for all boundary condition setup. It performs
+ * two main tasks:
+ *   1. It determines the name of the boundary condition file, using "bcs.dat" as a
+ *      default but allowing it to be overridden by the PETSc option `-bcs_file`.
+ *   2. It then calls the core `BoundarySystem_Create` function, which reads the file,
+ *      creates all the necessary handler objects, and calls their Initialize() methods
+ *      to set the initial state of the boundary fields.
+ *
+ * This function should be called in `main()` AFTER `SetupGridAndVectors()` has completed
+ * to ensure that the grid DMs and DMDALocalInfo are valid.
+ *
+ * @param user The main UserCtx struct.
+ * @return PetscErrorCode 0 on success.
+ */
+PetscErrorCode SetupBoundaryConditions(UserCtx *user)
+{
+    PetscErrorCode ierr;
+    PetscBool      bcsFileOptionFound = PETSC_FALSE;
+    char           bcs_filename_buffer[PETSC_MAX_PATH_LEN];
+    PetscFunctionBeginUser;
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Starting boundary condition system setup...");
+
+    // --- Step 1: Determine the BCs configuration file name ---
+    // Set a default name first.
+    ierr = PetscStrcpy(bcs_filename_buffer, "bcs.dat"); CHKERRQ(ierr);
+    
+    // Check for a user-provided override from the command line or a control file.
+    ierr = PetscOptionsGetString(NULL, NULL, "-bcs_file", bcs_filename_buffer, sizeof(bcs_filename_buffer), &bcsFileOptionFound); CHKERRQ(ierr);
+    
+    if (bcsFileOptionFound) {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "Using user-specified boundary conditions file: '%s'", bcs_filename_buffer);
+    } else {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "No -bcs_file option found. Using default: '%s'", bcs_filename_buffer);
+    }
+
+    // --- Step 2: Call the main creator for the boundary system ---
+    // This single call will parse the file, create all handlers, and initialize them.
+    ierr = BoundarySystem_Create(user, bcs_filename_buffer); CHKERRQ(ierr);
+    
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Boundary condition system setup complete.");
     PetscFunctionReturn(0);
 }

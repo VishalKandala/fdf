@@ -335,4 +335,59 @@ PetscErrorCode SetDMDAProcLayout(DM dm, UserCtx *user);
  */
 PetscErrorCode SetupDomainRankInfo(UserCtx *user, BoundingBox **bboxlist);
 
+/**
+ * @brief Reconstructs Cartesian velocity (Ucat) at cell centers from contravariant
+ *        velocity (Ucont) defined on cell faces.
+ *
+ * This function performs the transformation from a contravariant velocity representation
+ * (which is natural on a curvilinear grid) to a Cartesian (x,y,z) representation.
+ * For each interior computational cell owned by the rank, it performs the following:
+ *
+ * 1.  It averages the contravariant velocity components (U¹, U², U³) from the
+ *     surrounding faces to get an estimate of the contravariant velocity at the cell center.
+ * 2.  It averages the metric vectors (Csi, Eta, Zet) from the surrounding faces
+ *     to get an estimate of the metric tensor at the cell center. This tensor forms
+ *     the transformation matrix.
+ * 3.  It solves the linear system `[MetricTensor] * [ucat] = [ucont]` for the
+ *     Cartesian velocity vector `ucat = (u,v,w)` using Cramer's rule.
+ * 4.  The computed Cartesian velocity is stored in the global `user->Ucat` vector.
+ *
+ * The function operates on local, ghosted versions of the input vectors (`user->lUcont`,
+ * `user->lCsi`, etc.) to ensure stencils are valid across processor boundaries.
+ *
+ * @param[in,out] user      Pointer to the UserCtx structure. The function reads from
+ *                          `user->lUcont`, `user->lCsi`, `user->lEta`, `user->lZet`, `user->lNvert`
+ *                          and writes to the global `user->Ucat` vector.
+ *
+ * @return PetscErrorCode 0 on success.
+ *
+ * @note
+ *  - This function should be called AFTER `user->lUcont` and all local metric vectors
+ *    (`user->lCsi`, etc.) have been populated with up-to-date ghost values via `UpdateLocalGhosts`.
+ *  - It only computes `Ucat` for interior cells (not on physical boundaries) and for
+ *    cells not marked as solid/blanked by `user->lNvert`.
+ *  - The caller is responsible for subsequently applying boundary conditions to `user->Ucat`
+ *    and calling `UpdateLocalGhosts(user, "Ucat")` to populate `user->lUcat`.
+ */
+PetscErrorCode Contra2Cart(UserCtx *user);
+
+/**
+ * @brief Sets up the entire boundary condition system for the simulation.
+ *
+ * This function is the main entry point for all boundary condition setup. It performs
+ * two main tasks:
+ *   1. It determines the name of the boundary condition file, using "bcs.dat" as a
+ *      default but allowing it to be overridden by the PETSc option `-bcs_file`.
+ *   2. It then calls the core `BoundarySystem_Create` function, which reads the file,
+ *      creates all the necessary handler objects, and calls their Initialize() methods
+ *      to set the initial state of the boundary fields.
+ *
+ * This function should be called in `main()` AFTER `SetupGridAndVectors()` has completed
+ * to ensure that the grid DMs and DMDALocalInfo are valid.
+ *
+ * @param user The main UserCtx struct.
+ * @return PetscErrorCode 0 on success.
+ */
+PetscErrorCode SetupBoundaryConditions(UserCtx *user);
+
  #endif // SETUP_H

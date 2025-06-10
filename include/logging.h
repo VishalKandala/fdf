@@ -17,6 +17,7 @@
 #include <ctype.h>
 #include "common.h"
 #include "AnalyticalSolution.h"
+#include "Boundaries.h"
 // --------------------- Logging Levels Definition ---------------------
 
 /**
@@ -593,5 +594,17 @@ const char* BCFaceToString(BCFace face);
  * @return Pointer to a constant string representing the BC type.
  */
 const char* BCTypeToString(BCType type);
+
+/**
+ * @brief Converts a BCHandlerType enum to its string representation.
+ *
+ * Provides a descriptive string for a specific boundary condition implementation strategy.
+ * This is crucial for logging the exact behavior configured for a face.
+ *
+ * @param handler_type The BCHandlerType enum value (e.g., BC_HANDLER_WALL_NOSLIP).
+ * @return A constant character string corresponding to the enum. Returns
+ *         "UNKNOWN_HANDLER" if the enum value is not recognized.
+ */
+const char* BCHandlerTypeToString(BCHandlerType handler_type);
 
 #endif // LOGGING_H

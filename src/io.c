@@ -1799,7 +1799,7 @@ PetscErrorCode DisplayBanner(UserCtx *user,
 	  BCFace current_face = (BCFace)i_face;
 	  // The BCFaceToString will now return the Xi, Eta, Zeta versions
 	  const char* face_str = BCFaceToString(current_face); 
-	  const char* bc_type_str = BCTypeToString(user->face_bc_types[current_face]);
+	  const char* bc_type_str = BCTypeToString(user->boundary_faces[current_face].mathematical_type);
             
 	  ierr = PetscPrintf(PETSC_COMM_SELF, " Face %-*s : %s\n", 
 			     face_name_width, face_str, bc_type_str); CHKERRQ(ierr);
@@ -1820,8 +1820,8 @@ PetscErrorCode DisplayBanner(UserCtx *user,
             }
         }
         ierr = PetscPrintf(PETSC_COMM_SELF, " Field Initialization Mode   : %d\n", user->FieldInitialization); CHKERRQ(ierr);
-        if (user->FieldInitialization == 0) {
-            ierr = PetscPrintf(PETSC_COMM_SELF, " Constant Velocity           : %.4f\n", (double)user->ConstantVelocity); CHKERRQ(ierr);
+        if (user->FieldInitialization == 1) {
+	  ierr = PetscPrintf(PETSC_COMM_SELF, " Constant Velocity           : x - %.4f, y - %.4f, z - %.4f \n", (double)user->InitialConstantContra.x,(double)user->InitialConstantContra.y,(double)user->InitialConstantContra.z ); CHKERRQ(ierr);
         }
         ierr = PetscPrintf(PETSC_COMM_SELF, "=============================================================\n"); CHKERRQ(ierr);
         ierr = PetscPrintf(PETSC_COMM_SELF, "\n"); CHKERRQ(ierr);
@@ -1844,6 +1844,7 @@ PetscErrorCode DisplayBanner(UserCtx *user,
  * @param[in]     bcs_input_filename   The name/path of the boundary conditions file to parse.
  * @return PetscErrorCode 0 on success, error code on failure.
  */
+/*
 PetscErrorCode ParseAllBoundaryConditions(UserCtx *user, const char *bcs_input_filename) { // Added const char *bcs_input_filename
     PetscErrorCode ierr = 0;
     FILE           *file;
@@ -1975,5 +1976,289 @@ PetscErrorCode ParseAllBoundaryConditions(UserCtx *user, const char *bcs_input_f
                   rank, bcs_input_filename);
     }
 
+    PetscFunctionReturn(0);
+}
+*/
+
+//================================================================================
+//
+//                        PRIVATE HELPER FUNCTIONS
+//
+//================================================================================
+
+/**
+ * @brief Frees the memory allocated for a linked list of BC_Param structs.
+ * @param head A pointer to the head of the linked list to be freed.
+ */
+void FreeBC_ParamList(BC_Param *head) {
+    BC_Param *current = head;
+    while (current != NULL) {
+        BC_Param *next = current->next;
+        PetscFree(current->key);
+        PetscFree(current->value);
+        PetscFree(current);
+        current = next;
+    }
+}
+
+/**
+ * @brief Converts a string representation of a face to a BCFace enum.
+ * @param str The input string (e.g., "-Xi", "+Zeta"). Case-insensitive.
+ * @param[out] face_out The resulting BCFace enum.
+ * @return 0 on success.
+ */
+PetscErrorCode StringToBCFace(const char* str, BCFace* face_out) {
+    if      (strcasecmp(str, "-Xi")   == 0) *face_out = BC_FACE_NEG_X;
+    else if (strcasecmp(str, "+Xi")   == 0) *face_out = BC_FACE_POS_X;
+    else if (strcasecmp(str, "-Eta")  == 0) *face_out = BC_FACE_NEG_Y;
+    else if (strcasecmp(str, "+Eta")  == 0) *face_out = BC_FACE_POS_Y;
+    else if (strcasecmp(str, "-Zeta") == 0) *face_out = BC_FACE_NEG_Z;
+    else if (strcasecmp(str, "+Zeta") == 0) *face_out = BC_FACE_POS_Z;
+    else SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_UNKNOWN_TYPE, "Unknown face specifier: %s", str);
+    return 0;
+}
+
+/**
+ * @brief Converts a string representation of a BC type to a BCType enum.
+ * @param str The input string (e.g., "WALL", "INLET"). Case-insensitive.
+ * @param[out] type_out The resulting BCType enum.
+ * @return 0 on success.
+ */
+PetscErrorCode StringToBCType(const char* str, BCType* type_out) {
+    if      (strcasecmp(str, "WALL")      == 0) *type_out = WALL;
+    else if (strcasecmp(str, "SYMMETRY")  == 0) *type_out = SYMMETRY;
+    else if (strcasecmp(str, "INLET")     == 0) *type_out = INLET;
+    else if (strcasecmp(str, "OUTLET")    == 0) *type_out = OUTLET;
+    // ... add other BCTypes here ...
+    else SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_UNKNOWN_TYPE, "Unknown BC Type string: %s", str);
+    return 0;
+}
+
+/**
+ * @brief Converts a string representation of a handler to a BCHandlerType enum.
+ * @param str The input string (e.g., "noslip", "constant_velocity"). Case-insensitive.
+ * @param[out] handler_out The resulting BCHandlerType enum.
+ * @return 0 on success.
+ */
+PetscErrorCode StringToBCHandlerType(const char* str, BCHandlerType* handler_out) {
+    if      (strcasecmp(str, "noslip")              == 0) *handler_out = BC_HANDLER_WALL_NOSLIP;
+    else if (strcasecmp(str, "constant_velocity")   == 0) *handler_out = BC_HANDLER_INLET_CONSTANT_VELOCITY;
+    else if (strcasecmp(str, "conservation")        == 0) *handler_out = BC_HANDLER_OUTLET_CONSERVATION;
+    // ... add other BCHandlerTypes here ...
+    else SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_UNKNOWN_TYPE, "Unknown BC Handler string: %s", str);
+    return 0;
+}
+
+/**
+ * @brief Validates that a specific handler is compatible with a general BC type.
+ * @param type The general BCType.
+ * @param handler The specific BCHandlerType.
+ * @return 0 if compatible, error code otherwise.
+ */
+PetscErrorCode ValidateBCHandlerForBCType(BCType type, BCHandlerType handler) {
+    switch (type) {
+        case WALL:
+            if (handler != BC_HANDLER_WALL_NOSLIP && handler != BC_HANDLER_WALL_MOVING) return PETSC_ERR_ARG_WRONG;
+            break;
+        case INLET:
+            if (handler != BC_HANDLER_INLET_CONSTANT_VELOCITY && handler != BC_HANDLER_INLET_PULSANTILE_FLUX) return PETSC_ERR_ARG_WRONG;
+            break;
+        // ... add other validation cases here ...
+        default: break;
+    }
+    return 0; // Combination is valid
+}
+
+//================================================================================
+//
+//                        PUBLIC PARSING FUNCTION
+//
+//================================================================================
+
+/**
+ * @brief Parses the boundary conditions file to configure the type, handler, and
+ *        any associated parameters for all 6 global faces of the domain.
+ *
+ * This function performs the following steps:
+ * 1.  On MPI rank 0, it reads the specified configuration file line-by-line.
+ * 2.  It parses each line for `<Face> <Type> <Handler> [param=value]...` format.
+ * 3.  It validates the parsed strings and stores the configuration, including a
+ *     linked list of parameters, in a temporary array.
+ * 4.  It then serializes this configuration and broadcasts it to all other MPI ranks.
+ * 5.  All ranks (including rank 0) then deserialize the broadcasted data to populate
+ *     their local `user->boundary_faces` array identically.
+ * 6.  It also sets legacy fields in UserCtx for compatibility with other modules.
+ *
+ * @param[in,out] user               The main UserCtx struct where the final configuration
+ *                                   for all ranks will be stored.
+ * @param[in]     bcs_input_filename The path to the boundary conditions configuration file.
+ * @return PetscErrorCode 0 on success, error code on failure.
+ */
+PetscErrorCode ParseAllBoundaryConditions(UserCtx *user, const char *bcs_input_filename)
+{
+    PetscErrorCode ierr;
+    PetscMPIInt    rank;
+
+    // Temporary storage for rank 0 to build the configuration before broadcasting.
+    BoundaryFaceConfig configs_rank0[6];
+    
+    PetscFunctionBeginUser;
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+
+    if (rank == 0) {
+        FILE *file;
+        char line_buffer[1024];
+
+        // Initialize the temporary config array with safe defaults on rank 0.
+        for (int i = 0; i < 6; i++) {
+            configs_rank0[i].face_id = (BCFace)i;
+            configs_rank0[i].mathematical_type = WALL;
+            configs_rank0[i].handler_type = BC_HANDLER_WALL_NOSLIP;
+            configs_rank0[i].params = NULL;
+            configs_rank0[i].handler = NULL; // Handler object is not created here.
+        }
+
+        LOG_ALLOW(GLOBAL, LOG_INFO, "Parsing BC configuration from '%s' on rank 0... \n", bcs_input_filename);
+        file = fopen(bcs_input_filename, "r");
+        if (!file) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FILE_OPEN, "Could not open BCs file '%s'.", bcs_input_filename);
+
+        while (fgets(line_buffer, sizeof(line_buffer), file)) {
+            char *current_pos = line_buffer;
+            while (isspace((unsigned char)*current_pos)) current_pos++; // Skip leading whitespace
+            if (*current_pos == '#' || *current_pos == '\0' || *current_pos == '\n' || *current_pos == '\r') continue;
+
+            char *face_str = strtok(current_pos, " \t\n\r");
+            char *type_str = strtok(NULL, " \t\n\r");
+            char *handler_str = strtok(NULL, " \t\n\r");
+
+            if (!face_str || !type_str || !handler_str) {
+                LOG_ALLOW(GLOBAL, LOG_WARNING, "Malformed line in bcs.dat, skipping: %s \n", line_buffer);
+                continue;
+            }
+
+            BCFace      face_enum;
+            BCType      type_enum;
+            BCHandlerType handler_enum;
+            const char* handler_name_for_log;
+
+            // --- Convert strings to enums and validate ---
+            ierr = StringToBCFace(face_str, &face_enum); CHKERRQ(ierr);
+            ierr = StringToBCType(type_str, &type_enum); CHKERRQ(ierr);
+            ierr = StringToBCHandlerType(handler_str, &handler_enum); CHKERRQ(ierr);
+            ierr = ValidateBCHandlerForBCType(type_enum, handler_enum);
+            if (ierr) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG, "Validation failed: Handler '%s' is not valid for Type '%s' on Face '%s'.\n", handler_str, type_str, face_str);
+
+            // Store the core types for the corresponding face
+            configs_rank0[face_enum].mathematical_type = type_enum;
+            configs_rank0[face_enum].handler_type = handler_enum;
+            handler_name_for_log = BCHandlerTypeToString(handler_enum); // Assumes this utility exists
+            LOG_ALLOW(GLOBAL, LOG_DEBUG, "  Parsed Face '%s': Type=%s, Handler=%s \n", face_str, type_str, handler_name_for_log);
+
+            // --- Parse optional key=value parameters for this face ---
+            FreeBC_ParamList(configs_rank0[face_enum].params); // Clear any previous (default) params
+            configs_rank0[face_enum].params = NULL;
+            BC_Param **param_next_ptr = &configs_rank0[face_enum].params; // Pointer to the 'next' pointer to build the list
+
+            char* token;
+            while ((token = strtok(NULL, " \t\n\r")) != NULL) {
+                char* equals_ptr = strchr(token, '=');
+                if (!equals_ptr) {
+                    LOG_ALLOW(GLOBAL, LOG_WARNING, "Malformed parameter '%s' on face '%s', skipping. \n", token, face_str);
+                    continue;
+                }
+                
+                *equals_ptr = '\0'; // Temporarily split the string at '=' to separate key and value
+                char* key_str = token;
+                char* value_str = equals_ptr + 1;
+
+                BC_Param *new_param;
+                ierr = PetscMalloc1(1, &new_param); CHKERRQ(ierr);
+                ierr = PetscStrallocpy(key_str, &new_param->key); CHKERRQ(ierr);
+                ierr = PetscStrallocpy(value_str, &new_param->value); CHKERRQ(ierr);
+                new_param->next = NULL;
+
+                *param_next_ptr = new_param;
+                param_next_ptr = &new_param->next;
+                LOG_ALLOW(GLOBAL, LOG_DEBUG, "    - Found param: [%s] = [%s] \n", new_param->key, new_param->value);
+            }
+        }
+        fclose(file);
+    }
+
+    // =========================================================================
+    //               BROADCASTING THE CONFIGURATION FROM RANK 0
+    // =========================================================================
+    // This is a critical step to ensure all processes have the same configuration.
+    
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d broadcasting/receiving BC configuration.\n", rank);
+
+    for (int i = 0; i < 6; i++) {
+        // --- Broadcast simple enums ---
+        if (rank == 0) {
+            user->boundary_faces[i] = configs_rank0[i]; // Rank 0 populates its final struct
+        }
+        MPI_Bcast(&user->boundary_faces[i].mathematical_type, 1, MPI_INT, 0, PETSC_COMM_WORLD);
+        MPI_Bcast(&user->boundary_faces[i].handler_type, 1, MPI_INT, 0, PETSC_COMM_WORLD);
+        
+        // --- Serialize and Broadcast the parameter linked list ---
+        PetscInt n_params = 0;
+        if (rank == 0) { // On rank 0, count the number of parameters to send
+            for (BC_Param *p = user->boundary_faces[i].params; p; p = p->next) n_params++;
+        }
+        MPI_Bcast(&n_params, 1, MPI_INT, 0, PETSC_COMM_WORLD);
+        
+        if (rank != 0) { // Non-root ranks need to receive and build the list
+            FreeBC_ParamList(user->boundary_faces[i].params); // Ensure list is empty before building
+            user->boundary_faces[i].params = NULL;
+        }
+
+        BC_Param **param_next_ptr = &user->boundary_faces[i].params;
+
+        for (int j = 0; j < n_params; j++) {
+            char key_buf[256] = {0}, val_buf[256] = {0};
+            if (rank == 0) {
+                // On rank 0, navigate to the j-th param and copy its data to buffers
+                BC_Param *p = user->boundary_faces[i].params;
+                for (int k = 0; k < j; k++) p = p->next;
+                strncpy(key_buf, p->key, 255);
+                strncpy(val_buf, p->value, 255);
+            }
+
+            MPI_Bcast(key_buf, 256, MPI_CHAR, 0, PETSC_COMM_WORLD);
+            MPI_Bcast(val_buf, 256, MPI_CHAR, 0, PETSC_COMM_WORLD);
+
+            if (rank != 0) {
+                // On non-root ranks, deserialize: create a new node and append it
+                BC_Param *new_param;
+                ierr = PetscMalloc1(1, &new_param); CHKERRQ(ierr);
+                ierr = PetscStrallocpy(key_buf, &new_param->key); CHKERRQ(ierr);
+                ierr = PetscStrallocpy(val_buf, &new_param->value); CHKERRQ(ierr);
+                new_param->next = NULL;
+                *param_next_ptr = new_param;
+                param_next_ptr = &new_param->next;
+            } else {
+                 // On rank 0, just advance the pointer for the next iteration
+                 param_next_ptr = &((*param_next_ptr)->next);
+            }
+        }
+        user->boundary_faces[i].face_id = (BCFace)i; // Ensure face_id is set on all ranks
+    }
+    
+    // --- Set legacy fields for compatibility with particle system ---
+    user->inletFaceDefined = PETSC_FALSE;
+    for (int i=0; i<6; i++) {
+        if (user->boundary_faces[i].mathematical_type == INLET) {
+            user->inletFaceDefined = PETSC_TRUE;
+            user->identifiedInletBCFace = (BCFace)i;
+            LOG_ALLOW(GLOBAL, LOG_INFO, "Inlet face for particle initialization identified as Face %d.\n", i);
+            break; // Found the first one, stop looking
+        }
+    }
+
+    if (rank == 0) {
+        // Rank 0 can now free the linked lists it created, as they have been broadcast.
+        // Or, if user->boundary_faces was used directly, this is not needed.
+    }
+    
     PetscFunctionReturn(0);
 }

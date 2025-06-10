@@ -381,9 +381,9 @@ static PetscErrorCode InitializeParticleBasicProperties(UserCtx *user,
     if (user->ParticleInitialization == 0) { // Surface initialization
         ierr = CanRankServiceInletFace(user, &info, IM_nodes_global, JM_nodes_global, KM_nodes_global, &can_this_rank_service_inlet); CHKERRQ(ierr);
         if (can_this_rank_service_inlet) {
-            LOG_ALLOW(LOCAL, LOG_INFO, "InitProps - Rank %d: Will attempt to place particles on inlet face %d.", rank, user->identifiedInletBCFace);
+            LOG_ALLOW(LOCAL, LOG_INFO, "InitProps - Rank %d: Will attempt to place particles on inlet face %d.\n", rank, user->identifiedInletBCFace);
         } else {
-            LOG_ALLOW(LOCAL, LOG_INFO, "InitProps - Rank %d: Cannot service inlet face %d. Particles will be at default (0,0,0) and rely on migration.", rank, user->identifiedInletBCFace);
+            LOG_ALLOW(LOCAL, LOG_INFO, "InitProps - Rank %d: Cannot service inlet face %d. Particles will be at default (0,0,0) and rely on migration.\n", rank, user->identifiedInletBCFace);
         }
     }
 

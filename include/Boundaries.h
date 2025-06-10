@@ -21,6 +21,34 @@
 #include "interpolation.h"  // Interpolation routines
 #include "AnalyticalSolution.h" // Analytical Solution for testing
 #include "ParticleMotion.h" // Functions related to motion of particles
+#include "BC_Handlers.h"    // Boundary Handlers 
+
+//================================================================================
+//
+//                        PUBLIC SYSTEM-LEVEL FUNCTIONS
+//
+// These are the main entry points for interacting with the boundary system.
+//
+//================================================================================
+
+/**
+ * @brief Initializes the entire boundary system.
+ * @param user The main UserCtx struct.
+ * @param bcs_filename The path to the boundary conditions configuration file.
+ */
+PetscErrorCode BoundarySystem_Create(UserCtx *user, const char *bcs_filename);
+
+/**
+ * @brief Executes one full boundary condition update cycle for a time step.
+ * @param user The main UserCtx struct.
+ */
+PetscErrorCode BoundarySystem_ExecuteStep(UserCtx *user);
+
+/**
+ * @brief Cleans up and destroys all boundary system resources.
+ * @param user The main UserCtx struct.
+ */
+PetscErrorCode BoundarySystem_Destroy(UserCtx *user);
 
 /**
  * @brief Determines if the current MPI rank owns any part of the globally defined inlet face,
@@ -43,6 +71,22 @@
 PetscErrorCode CanRankServiceInletFace(UserCtx *user, const DMDALocalInfo *info,
                                               PetscInt IM_nodes_global, PetscInt JM_nodes_global, PetscInt KM_nodes_global,
                                               PetscBool *can_service_inlet_out);
+
+/**
+ * @brief Determines if the current MPI rank owns any part of a specified global face.
+ *
+ * This function is a general utility for parallel boundary operations. It checks if the
+ * local domain of the current MPI rank is adjacent to a specified global boundary face.
+ * A rank "services" a face if it owns the cells adjacent to that global boundary and has
+ * a non-zero extent (i.e., owns at least one cell) in the tangential dimensions of that face.
+ *
+ * @param info              Pointer to the DMDALocalInfo for the current rank's DA.
+ * @param face_id           The specific global face (e.g., BC_FACE_NEG_Z) to check.
+ * @param[out] can_service_out Pointer to a PetscBool; set to PETSC_TRUE if the rank
+ *                           services the face, PETSC_FALSE otherwise.
+ * @return PetscErrorCode 0 on success.
+ */
+PetscErrorCode CanRankServiceFace(const DMDALocalInfo *info, BCFace face_id, PetscBool *can_service_out);
 
 
 /**

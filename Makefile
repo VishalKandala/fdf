@@ -113,7 +113,7 @@ data: dirs $(DATA_EXE)
 
 $(DATA_EXE): $(OBJDIR)/variables.o $(OBJDIR)/compgeom.o $(OBJDIR)/data_ibm.o \
              $(OBJDIR)/ibm_io.o $(OBJDIR)/fsi.o $(OBJDIR)/fsi_move.o \
-             $(OBJDIR)/fish.o $(OBJDIR)/data.o $(OBJDIR)/Metric.o $(OBJDIR)/Boundaries.o
+             $(OBJDIR)/fish.o $(OBJDIR)/data.o $(OBJDIR)/Metric.o $(OBJDIR)/Boundaries.o $(OBJDIR)/BC_Handlers.o
 	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(PETSC_SNES_LIB) $(PETSC_TS_LIB) $(LDFLAGS) $(LIBS)
 
 # -----------------------------------------------------
@@ -124,7 +124,7 @@ inttest: dirs $(INTTEST_EXE)
 $(INTTEST_EXE): $(OBJDIR)/inttest.o $(OBJDIR)/interpolation.o $(OBJDIR)/walkingsearch.o \
                 $(OBJDIR)/ParticleSwarm.o $(OBJDIR)/logging.o $(OBJDIR)/setup.o \
                 $(OBJDIR)/AnalyticalSolution.o $(OBJDIR)/grid.o $(OBJDIR)/io.o $(OBJDIR)/ParticleMotion.o \
-                $(OBJDIR)/Metric.o $(OBJDIR)/Boundaries.o 
+                $(OBJDIR)/Metric.o $(OBJDIR)/Boundaries.o $(OBJDIR)/BC_Handlers.o
 	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(LDFLAGS) $(LIBS)
 
 # -----------------------------------------------------
@@ -179,7 +179,7 @@ postprocess: dirs $(POSTPROCESS_EXE)
 $(POSTPROCESS_EXE): $(OBJDIR)/postprocess.o $(OBJDIR)/interpolation.o \
 			$(OBJDIR)/walkingsearch.o $(OBJDIR)/grid.o $(OBJDIR)/ParticleSwarm.o \
 			$(OBJDIR)/logging.o $(OBJDIR)/io.o $(OBJDIR)/setup.o $(OBJDIR)/Metric.o \
-                        $(OBJDIR)/AnalyticalSolution.o $(OBJDIR)/ParticleMotion.o $(OBJDIR)/Boundaries.o 
+                        $(OBJDIR)/AnalyticalSolution.o $(OBJDIR)/ParticleMotion.o $(OBJDIR)/Boundaries.o $(OBJDIR)/BC_Handlers.o
 	$(CLINKER) $(CFLAGS) -o $@ $^ $(PETSC_LIB) $(LDFLAGS) $(LIBS)
 
 # -----------------------------------------------------

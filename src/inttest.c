@@ -76,6 +76,8 @@ int main(int argc, char **argv) {
 
     LOG_ALLOW(GLOBAL,LOG_INFO," Simulation Fields %s \n",readFields ? "read":"generated");    
 
+    ierr = SetupBoundaryConditions(user);
+    
     if(get_log_level() == LOG_INFO && is_function_allowed(__func__)){
     // Compute and print maximum velocity magnitude
     ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
@@ -86,7 +88,6 @@ int main(int argc, char **argv) {
     ierr = SetupDomainRankInfo(user, &bboxlist);
     
     LOG_ALLOW(GLOBAL,LOG_INFO," Bounding Boxes setup \n");
-
 
     // Display Banner for simulation
     ierr = DisplayBanner(user, StartTime, StartStep, StepsToRun, size, np, bboxlist); CHKERRQ(ierr);

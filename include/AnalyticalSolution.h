@@ -98,6 +98,29 @@ PetscErrorCode SetLocalCartesianField_Vector(const char *fieldName, Cmpnts *vecF
  */
 PetscErrorCode SetAnalyticalCartesianField(UserCtx *user, const char *fieldName);
 
+/**
+ * @brief Sets an analytical contravariant field (Ucont) at nodes, where each component
+ *        is evaluated using the physical coordinates of its respective face center.
+ *
+ * This function:
+ * 1. Interpolates nodal physical coordinates to the centers of i-faces, j-faces, and k-faces
+ *    for the cells relevant to the current rank, storing them in temporary local arrays.
+ * 2. For each node (i,j,k) owned by the current rank (where Ucont components are stored):
+ *    a. Retrieves the pre-calculated physical coordinate of the i-face center.
+ *    b. Evaluates the analytical function for U^1 using this i-face center coordinate.
+ *    c. Retrieves the pre-calculated physical coordinate of the j-face center.
+ *    d. Evaluates the analytical function for U^2 using this j-face center coordinate.
+ *    e. Retrieves the pre-calculated physical coordinate of the k-face center.
+ *    f. Evaluates the analytical function for U^3 using this k-face center coordinate.
+ *    g. Stores these (U^1, U^2, U^3) into user->Ucont[k][j][i].
+ *
+ * @param[in]  user      Pointer to the UserCtx structure.
+ * @param[in]  fieldName Name of the field to update (currently only "Ucont").
+ *
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode SetAnalyticalContravariantField(UserCtx *user, const char *fieldName);
+
 
 /**
  * @brief Applies the analytical solution to the position vector.
@@ -126,5 +149,29 @@ PetscErrorCode SetAnalyticalSolution(Vec tempVec, PetscInt FieldInitialization);
  * @return PetscErrorCode 0 on success, non-zero on failure.
  */
 PetscErrorCode ApplyAnalyticalBC(UserCtx *user, const char *fieldName);
+
+/**
+ * @brief Sets the initial values for the INTERIOR of a specified Eulerian field.
+ *
+ * This function initializes the interior nodes of `Ucont` based on a profile selected
+ * by `user->FieldInitialization`. It explicitly skips any node that lies on a global
+ * boundary, as those values are set by the Boundary System's `Initialize` methods.
+ *
+ * The initialization is directional, aligned with the primary INLET face that was
+ * identified by the parser. This ensures the initial flow is physically meaningful.
+ *
+ * Supported `user->FieldInitialization` profiles for "Ucont":
+ *  - 0: Zero Velocity. All interior components of Ucont are set to 0.
+ *  - 1: Constant Normal Velocity. The contravariant velocity component normal to the
+ *       inlet direction is set such that the physical velocity normal to those grid
+ *       planes is a constant `uin`. Other contravariant components are zero.
+ *  - 2: Poiseuille Normal Velocity. The contravariant component normal to the
+ *       inlet direction is set with a parabolic profile.
+ *
+ * @param user      The main UserCtx struct, containing all simulation data and configuration.
+ * @param fieldName A string ("Ucont" or "P") identifying which field to initialize.
+ * @return PetscErrorCode 0 on success.
+ */
+PetscErrorCode SetInitialInteriorField(UserCtx *user, const char *fieldName);
 
 #endif // ANALYTICALSOLUTION_H

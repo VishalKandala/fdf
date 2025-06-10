@@ -709,12 +709,55 @@ const char* BCFaceToString(BCFace face) {
  */
 const char* BCTypeToString(BCType type) {
     switch (type) {
-        case DIRICHLET: return "DIRICHLET";
-        case NEUMANN:   return "NEUMANN";
+      //  case DIRICHLET: return "DIRICHLET";
+      //  case NEUMANN:   return "NEUMANN";
         case WALL:      return "WALL";
         case INLET:     return "INLET";
         case OUTLET:    return "OUTLET";
-        // case CUSTOM:    return "CUSTOM";
+        case FARFIELD:  return "FARFIELD";
+        case PERIODIC:  return "PERIODIC";
+        case INTERFACE:     return "INTERFACE";
+
+	// case CUSTOM:    return "CUSTOM";
         default:        return "Unknown BC Type";
+    }
+}
+
+/**
+ * @brief Converts a BCHandlerType enum to its string representation.
+ *
+ * Provides a descriptive string for a specific boundary condition implementation strategy.
+ * This is crucial for logging the exact behavior configured for a face.
+ *
+ * @param handler_type The BCHandlerType enum value (e.g., BC_HANDLER_WALL_NOSLIP).
+ * @return A constant character string corresponding to the enum. Returns
+ *         "UNKNOWN_HANDLER" if the enum value is not recognized.
+ */
+const char* BCHandlerTypeToString(BCHandlerType handler_type) {
+    switch (handler_type) {
+        // Wall & Symmetry Handlers
+        case BC_HANDLER_WALL_NOSLIP:             return "noslip";
+        case BC_HANDLER_WALL_MOVING:             return "moving";
+        case BC_HANDLER_SYMMETRY_PLANE:          return "symmetry_plane";
+
+        // Inlet Handlers
+        case BC_HANDLER_INLET_CONSTANT_VELOCITY: return "constant_velocity";
+        case BC_HANDLER_INLET_PULSANTILE_FLUX:   return "pulsatile_flux";
+        case BC_HANDLER_INLET_DEVELOPED_PROFILE: return "developed_profile";
+
+        // Outlet Handlers
+        case BC_HANDLER_OUTLET_CONSERVATION:     return "conservation";
+        case BC_HANDLER_OUTLET_PRESSURE:         return "pressure";
+
+        // Other Physical Handlers
+        case BC_HANDLER_FARFIELD_NONREFLECTING:  return "nonreflecting";
+
+        // Multi-Block / Interface Handlers
+        case BC_HANDLER_PERIODIC:                return "periodic";
+        case BC_HANDLER_INTERFACE_OVERSET:       return "overset";
+
+        // Default case
+        case BC_HANDLER_UNDEFINED:
+        default:                                 return "UNKNOWN_HANDLER";
     }
 }

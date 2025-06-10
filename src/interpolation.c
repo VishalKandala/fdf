@@ -67,7 +67,7 @@ PetscErrorCode InterpolateFieldFromCornerToCenter_Vector(
     PetscInt ye_cell_global_j_excl = ys_cell_global_j + ym_cell_local_j;
     PetscInt ze_cell_global_k_excl = zs_cell_global_k + zm_cell_local_k;
 
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d (IFCTCV): Processing Owned Cells (global indices) k=%d..%d (count %d), j=%d..%d (count %d), i=%d..%d (count %d)\n",
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d : Processing Owned Cells (global indices) k=%d..%d (count %d), j=%d..%d (count %d), i=%d..%d (count %d)\n",
               rank,
               zs_cell_global_k, ze_cell_global_k_excl -1, zm_cell_local_k,
               ys_cell_global_j, ye_cell_global_j_excl -1, ym_cell_local_j,
@@ -1886,3 +1886,211 @@ PetscErrorCode ScatterAllParticleFieldsToEulerFields(UserCtx *user)
 }
 
 /** @} */ // End of scatter_module group
+
+/**
+ * @brief Interpolates a scalar field from corner nodes to all face centers.
+ *
+ * This routine computes the average of the four corner-node values
+ * defining each face of a hexahedral cell:
+ *   - X-faces (perpendicular to X): face between (i-1,i) in X-dir
+ *   - Y-faces (perpendicular to Y): face between (j-1,j) in Y-dir
+ *   - Z-faces (perpendicular to Z): face between (k-1,k) in Z-dir
+ *
+ * @param[in]  corner_arr  Ghosted node-centered array (global indexing) from user->fda.
+ * @param[out] faceX_arr   Local array for X-faces sized [zm][ym][xm+1].
+ * @param[out] faceY_arr   Local array for Y-faces sized [zm][ym+1][xm].
+ * @param[out] faceZ_arr   Local array for Z-faces sized [zm+1][ym][xm].
+ * @param[in]  user        User context containing DMDA 'fda' and GetOwnedCellRange.
+ *
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode InterpolateCornerToFaceCenter_Scalar(
+    PetscReal ***corner_arr,
+    PetscReal ***faceX_arr,
+    PetscReal ***faceY_arr,
+    PetscReal ***faceZ_arr,
+    UserCtx *user)
+{
+    PetscErrorCode ierr;
+    DMDALocalInfo info;
+    ierr = DMDAGetLocalInfo(user->fda, &info); CHKERRQ(ierr);
+
+    // Determine owned-cell ranges based on corner-node ownership
+    PetscInt xs, xm, ys, ym, zs, zm;
+    ierr = GetOwnedCellRange(&info, 0, &xs, &xm); CHKERRQ(ierr);
+    ierr = GetOwnedCellRange(&info, 1, &ys, &ym); CHKERRQ(ierr);
+    ierr = GetOwnedCellRange(&info, 2, &zs, &zm); CHKERRQ(ierr);
+
+    // Global exclusive end indices for cells
+    PetscInt xe = xs + xm;
+    PetscInt ye = ys + ym;
+    PetscInt ze = zs + zm;
+
+    // --- X‐faces: loops k=zs..ze-1, j=ys..ye-1, i=xs..xe (xm+1 faces per row) ---
+    for (PetscInt k = zs; k < ze; ++k) {
+        PetscInt k_loc = k - zs;
+        for (PetscInt j = ys; j < ye; ++j) {
+            PetscInt j_loc = j - ys;
+            for (PetscInt i = xs; i <= xe; ++i) {
+                PetscInt i_loc = i - xs; // 0..xm
+                // Average the four corners of the Y-Z face at X = i
+                PetscReal sum = corner_arr[k  ][j  ][i]
+                              + corner_arr[k+1][j  ][i]
+                              + corner_arr[k  ][j+1][i]
+                              + corner_arr[k+1][j+1][i];
+                faceX_arr[k_loc][j_loc][i_loc] = sum * 0.25;
+            }
+        }
+    }
+
+    // --- Y‐faces: loops k=zs..ze-1, j=ys..ye (ym+1 faces), i=xs..xe-1 ---
+    for (PetscInt k = zs; k < ze; ++k) {
+        PetscInt k_loc = k - zs;
+        for (PetscInt j = ys; j <= ye; ++j) {
+            PetscInt j_loc = j - ys; // 0..ym
+            for (PetscInt i = xs; i < xe; ++i) {
+                PetscInt i_loc = i - xs;
+                // Average the four corners of the X-Z face at Y = j
+                PetscReal sum = corner_arr[k  ][j][i  ]
+                              + corner_arr[k+1][j][i  ]
+                              + corner_arr[k  ][j][i+1]
+                              + corner_arr[k+1][j][i+1];
+                faceY_arr[k_loc][j_loc][i_loc] = sum * 0.25;
+            }
+        }
+    }
+
+    // --- Z‐faces: loops k=zs..ze (zm+1), j=ys..ye-1, i=xs..xe-1 ---
+    for (PetscInt k = zs; k <= ze; ++k) {
+        PetscInt k_loc = k - zs;
+        for (PetscInt j = ys; j < ye; ++j) {
+            PetscInt j_loc = j - ys;
+            for (PetscInt i = xs; i < xe; ++i) {
+                PetscInt i_loc = i - xs;
+                // Average the four corners of the X-Y face at Z = k
+                PetscReal sum = corner_arr[k][j  ][i  ]
+                              + corner_arr[k][j  ][i+1]
+                              + corner_arr[k][j+1][i  ]
+                              + corner_arr[k][j+1][i+1];
+                faceZ_arr[k_loc][j_loc][i_loc] = sum * 0.25;
+            }
+        }
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Interpolates a vector field from corner nodes to all face centers.
+ *
+ * Identical to the scalar version, except it averages each component of the
+ * Cmpnts struct at the four corner-nodes per face.
+ *
+ * @param[in]  corner_arr  Ghosted 3-component array (global node indices).
+ * @param[out] faceX_arr   Local array of Cmpnts for X-faces sized [zm][ym][xm+1].
+ * @param[out] faceY_arr   Local array of Cmpnts for Y-faces sized [zm][ym+1][xm].
+ * @param[out] faceZ_arr   Local array of Cmpnts for Z-faces sized [zm+1][ym][xm].
+ * @param[in]  user        User context containing DMDA 'fda'.
+ *
+ * @return PetscErrorCode 0 on success.
+ */
+PetscErrorCode InterpolateCornerToFaceCenter_Vector(
+    Cmpnts ***corner_arr,
+    Cmpnts ***faceX_arr,
+    Cmpnts ***faceY_arr,
+    Cmpnts ***faceZ_arr,
+    UserCtx *user)
+{
+    PetscErrorCode ierr;
+    DMDALocalInfo info;
+    PetscMPIInt rank;
+
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
+                   "Rank %d starting InterpolateFieldFromCornerToFaceCenter_Vector.\n", rank);
+    
+    ierr = DMDAGetLocalInfo(user->fda, &info); CHKERRQ(ierr);
+
+    PetscInt xs, xm, ys, ym, zs, zm;
+    ierr = GetOwnedCellRange(&info, 0, &xs, &xm); CHKERRQ(ierr);
+    ierr = GetOwnedCellRange(&info, 1, &ys, &ym); CHKERRQ(ierr);
+    ierr = GetOwnedCellRange(&info, 2, &zs, &zm); CHKERRQ(ierr);
+
+    PetscInt xe = xs + xm;
+    PetscInt ye = ys + ym;
+    PetscInt ze = zs + zm;
+
+    // X-faces
+    for (PetscInt k = zs; k < ze; ++k) {
+        PetscInt k_loc = k - zs;
+        for (PetscInt j = ys; j < ye; ++j) {
+            PetscInt j_loc = j - ys;
+            for (PetscInt i = xs; i <= xe; ++i) {
+                PetscInt i_loc = i - xs;
+                Cmpnts sum = {0,0,0};
+                sum.x = corner_arr[k  ][j  ][i].x + corner_arr[k+1][j  ][i].x
+                      + corner_arr[k  ][j+1][i].x + corner_arr[k+1][j+1][i].x;
+                sum.y = corner_arr[k  ][j  ][i].y + corner_arr[k+1][j  ][i].y
+                      + corner_arr[k  ][j+1][i].y + corner_arr[k+1][j+1][i].y;
+                sum.z = corner_arr[k  ][j  ][i].z + corner_arr[k+1][j  ][i].z
+                      + corner_arr[k  ][j+1][i].z + corner_arr[k+1][j+1][i].z;
+                faceX_arr[k_loc][j_loc][i_loc].x = sum.x * 0.25;
+                faceX_arr[k_loc][j_loc][i_loc].y = sum.y * 0.25;
+                faceX_arr[k_loc][j_loc][i_loc].z = sum.z * 0.25;
+            }
+        }
+    }
+
+    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
+                   "Rank %d x-face Interpolation complete.\n", rank);
+    
+    // Y-faces
+    for (PetscInt k = zs; k < ze; ++k) {
+        PetscInt k_loc = k - zs;
+        for (PetscInt j = ys; j <= ye; ++j) {
+            PetscInt j_loc = j - ys;
+            for (PetscInt i = xs; i < xe; ++i) {
+                PetscInt i_loc = i - xs;
+                Cmpnts sum = {0,0,0};
+                sum.x = corner_arr[k  ][j][i  ].x + corner_arr[k+1][j][i  ].x
+                      + corner_arr[k  ][j][i+1].x + corner_arr[k+1][j][i+1].x;
+                sum.y = corner_arr[k  ][j][i  ].y + corner_arr[k+1][j][i  ].y
+                      + corner_arr[k  ][j][i+1].y + corner_arr[k+1][j][i+1].y;
+                sum.z = corner_arr[k  ][j][i  ].z + corner_arr[k+1][j][i  ].z
+                      + corner_arr[k  ][j][i+1].z + corner_arr[k+1][j][i+1].z;
+                faceY_arr[k_loc][j_loc][i_loc].x = sum.x * 0.25;
+                faceY_arr[k_loc][j_loc][i_loc].y = sum.y * 0.25;
+                faceY_arr[k_loc][j_loc][i_loc].z = sum.z * 0.25;
+            }
+        }
+    }
+
+    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
+                   "Rank %d y-face Interpolation complete.\n", rank);
+    
+    // Z-faces
+    for (PetscInt k = zs; k <= ze; ++k) {
+        PetscInt k_loc = k - zs;
+        for (PetscInt j = ys; j < ye; ++j) {
+            PetscInt j_loc = j - ys;
+            for (PetscInt i = xs; i < xe; ++i) {
+                PetscInt i_loc = i - xs;
+                Cmpnts sum = {0,0,0};
+                sum.x = corner_arr[k][j  ][i  ].x + corner_arr[k][j  ][i+1].x
+                      + corner_arr[k][j+1][i  ].x + corner_arr[k][j+1][i+1].x;
+                sum.y = corner_arr[k][j  ][i  ].y + corner_arr[k][j  ][i+1].y
+                      + corner_arr[k][j+1][i  ].y + corner_arr[k][j+1][i+1].y;
+                sum.z = corner_arr[k][j  ][i  ].z + corner_arr[k][j  ][i+1].z
+                      + corner_arr[k][j+1][i  ].z + corner_arr[k][j+1][i+1].z;
+                faceZ_arr[k_loc][j_loc][i_loc].x = sum.x * 0.25;
+                faceZ_arr[k_loc][j_loc][i_loc].y = sum.y * 0.25;
+                faceZ_arr[k_loc][j_loc][i_loc].z = sum.z * 0.25;
+            }
+        }
+    }
+
+    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG,
+                   "Rank %d z-face Interpolation complete.\n", rank);
+    
+    return 0;
+}

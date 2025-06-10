@@ -1,191 +1,257 @@
 /**
  * @file common.h
- * @brief Common type definitions and structures shared across multiple modules.
+ * @brief Foundational type definitions and structures for the entire simulation.
  *
- * This header file contains the definitions of shared types such as `UserCtx`, `Particle`,
- * `BoundingBox`, `Cmpnts`, and other structures used throughout the simulation.
- * Including this file in other headers and source files ensures consistent type definitions
- * and avoids circular dependencies.
+ * This header is the central location for all shared data structures and enumerations.
+ * It is structured to avoid circular dependencies by using forward declarations for
+ * complex types before their full definition. It should be included by most other
+ * files in the project to ensure access to a consistent set of types like UserCtx,
+ * Cmpnts, and the boundary condition system structs.
  */
 
 #ifndef COMMON_H
 #define COMMON_H
 
-// Include PETSc library header
+// --- Primary Library Includes ---
 #include <petsc.h>
 #include <petscdmda.h>
 #include <petscdmswarm.h>
 
-// Standard C library headers
+// --- Standard C Library Includes ---
 #include <stdlib.h>
 #include <stdbool.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h> 
 
-// --------------------- Type Definitions ---------------------
+//================================================================================
+//
+//                 1. FORWARD DECLARATIONS & BASIC TYPES
+//
+//================================================================================
 
-/**
- * @brief Represents a 3D point or vector with x, y, z components.
- */
+// --- Forward Declarations ---
+// These declarations inform the compiler that these struct types exist, allowing
+// pointers to them to be used before their full content is defined. This is
+// essential for breaking circular dependencies between complex structs.
+typedef struct BC_Param_s BC_Param;
+typedef struct BoundaryCondition_s BoundaryCondition;
+typedef struct BoundaryFaceConfig_s BoundaryFaceConfig;
+typedef struct UserCtx_s UserCtx;
+
+// --- Foundational Geometric and Data Types ---
+
+/** @brief A 3D point or vector with PetscScalar components. */
 typedef struct {
     PetscScalar x, y, z;
 } Cmpnts;
 
-/**
- * @brief Represents a 2D point or vector with x, y components.
- */
+/** @brief A 2D point or vector with PetscScalar components. */
 typedef struct {
     PetscScalar x, y;
 } Cmpnts2;
 
-/**
- * @brief Represents a flow wave with time and frequency components.
- */
+/** @brief Represents a single point in a time-varying flow waveform. */
 typedef struct {
     PetscReal t, f;
 } FlowWave;
 
-/**
- * @brief Represents a bounding box in 3D space defined by minimum and maximum coordinates.
- */
+/** @brief Defines a 3D axis-aligned bounding box. */
 typedef struct {
-    Cmpnts min_coords; /**< Minimum x, y, z coordinates of the bounding box. */
-    Cmpnts max_coords; /**< Maximum x, y, z coordinates of the bounding box. */
+    Cmpnts min_coords; ///< Minimum x, y, z coordinates of the bounding box.
+    Cmpnts max_coords; ///< Maximum x, y, z coordinates of the bounding box.
 } BoundingBox;
 
-/**
- * @brief Represents a particle with its properties for use in particle simulations.
- */
+/** @brief Defines the vertices of a single hexahedral grid cell. */
 typedef struct {
-    PetscInt64 PID;     /**< Unique Particle ID. */
-    PetscInt cell[3]; /**< Indices of the cell containing the particle (i, j, k). */
-    Cmpnts loc;         /**< Location of the particle in 3D space. */
-    Cmpnts vel;         /**< Velocity of the particle in 3D space. */
-    Cmpnts weights;     /**< Weights associated with the particle (e.g., for interpolation). */
-  //PetscReal P;          // Pressure associated with the particle //
-} Particle;
-
-// Structure to hold neighbor ranks (using common directions)
-typedef struct {
-    PetscMPIInt rank_xm; // Neighbor at x-
-    PetscMPIInt rank_xp; // Neighbor at x+
-    PetscMPIInt rank_ym; // Neighbor at y-
-    PetscMPIInt rank_yp; // Neighbor at y+
-    PetscMPIInt rank_zm; // Neighbor at z-
-    PetscMPIInt rank_zp; // Neighbor at z+
-    // Add edge/corner neighbors if needed later
-} RankNeighbors;
-
-/**
- * @brief Represents a cell in the computational grid with its eight vertices.
- */
-typedef struct {
-    Cmpnts vertices[8]; /**< Coordinates of the eight vertices of the cell. */
+    Cmpnts vertices[8]; ///< Coordinates of the eight vertices of the cell.
 } Cell;
 
-/* Domain face identifiers */
+/** @brief Defines a particle's core properties for Lagrangian tracking. */
+typedef struct {
+    PetscInt64 PID;     ///< Unique Particle ID.
+    PetscInt cell[3];   ///< Computational indices (i, j, k) of the cell containing the particle.
+    Cmpnts loc;         ///< Physical location (x,y,z) of the particle.
+    Cmpnts vel;         ///< Physical velocity (vx,vy,vz) of the particle.
+    Cmpnts weights;     ///< Interpolation weights within its host cell.
+} Particle;
+
+/** @brief Stores the MPI ranks of neighboring subdomains. */
+typedef struct {
+    PetscMPIInt rank_xm, rank_xp; // Neighbors at -x, +x
+    PetscMPIInt rank_ym, rank_yp; // Neighbors at -y, +y
+    PetscMPIInt rank_zm, rank_zp; // Neighbors at -z, +z
+} RankNeighbors;
+
+
+//================================================================================
+//
+//                 2. BOUNDARY CONDITION SYSTEM ENUMS
+//
+//================================================================================
+
+/** @brief Identifies the six logical faces of a structured computational block. */
 typedef enum {
-    BC_FACE_NEG_X,
-    BC_FACE_POS_X,
-    BC_FACE_NEG_Y,
-    BC_FACE_POS_Y,
-    BC_FACE_NEG_Z,
-    BC_FACE_POS_Z
+    BC_FACE_NEG_X = 0, BC_FACE_POS_X = 1,
+    BC_FACE_NEG_Y = 2, BC_FACE_POS_Y = 3,
+    BC_FACE_NEG_Z = 4, BC_FACE_POS_Z = 5
 } BCFace;
 
-/* BC type identifiers */
+/** @brief Defines the general mathematical/physical category of a boundary. */
 typedef enum {
-    DIRICHLET,
-    NEUMANN,
-    WALL,
-    INLET,
-    OUTLET
-    /* Extend as needed (e.g., Robin conditions) */
+    UNDEFINED = 0, WALL, SYMMETRY, INLET,
+    OUTLET, FARFIELD, PERIODIC, INTERFACE
 } BCType;
 
-/**
- * @brief User-defined context containing simulation data and configurations.
- *
- * This structure holds various simulation parameters, PETSc data structures, and
- * other information needed throughout the simulation.
- */
+/** @brief Defines the specific computational "strategy" for a boundary handler. */
+typedef enum {
+    BC_HANDLER_UNDEFINED = 0,
+    BC_HANDLER_WALL_NOSLIP, BC_HANDLER_WALL_MOVING,
+    BC_HANDLER_SYMMETRY_PLANE,
+    BC_HANDLER_INLET_CONSTANT_VELOCITY, BC_HANDLER_INLET_PULSANTILE_FLUX, BC_HANDLER_INLET_DEVELOPED_PROFILE,
+    BC_HANDLER_OUTLET_CONSERVATION, BC_HANDLER_OUTLET_PRESSURE,
+    BC_HANDLER_FARFIELD_NONREFLECTING,
+    BC_HANDLER_PERIODIC, BC_HANDLER_INTERFACE_OVERSET
+} BCHandlerType;
+
+
+//================================================================================
+//
+//               3. BOUNDARY CONDITION SYSTEM STRUCTS
+//
+//================================================================================
+
+/** @brief A node in a linked list for storing key-value parameters from the bcs.dat file. */
+struct BC_Param_s {
+    char *key;
+    char *value;
+    struct BC_Param_s *next;
+};
+
+/** @brief Provides execution context for a boundary condition handler. */
 typedef struct {
-    // Grid-related fields
-    DM da;                  ///< Data structure for scalar fields.
-    DM fda;                 ///< Data structure for vector fields.
-    DM fda2;                  ///< Data structure for RANS fields.
-    PetscReal xMin,yMin,zMin; /// Minimum bounds of the grid.
-    PetscReal xMax,yMax,zMax; /// Maximum bounds of the grid.
-    PetscInt IM, JM, KM;    ///< Global grid dimensions in x, y, z directions.
-    PetscInt nblk;          /// No.of blocks in the grid.  
-    BoundingBox bbox;       ///< Bounding box for the local grid domain.
-    DMDALocalInfo info;     ///< Local information about the DMDA.
-    PetscReal rx;           // Stretching ratio in x-direction
-    PetscReal ry;           // Stretching ratio in y-direction
-    PetscReal rz;           // Stretching ratio in z-direction
+    UserCtx  *user;             ///< Access to all global simulation data.
+    BCFace    face_id;          ///< The geometric face (0-5) being processed.
+    const PetscReal *global_inflow_sum;  ///< Pointer to total domain inflow for the current step.
+    const PetscReal *global_outflow_sum; ///< Pointer to total measured domain outflow for the current step.
+} BCContext;
 
-   // Boundary Condition Related fields
-    BCType    face_bc_types[6];     // can be indexed directly using BCFace enum-ex: face_bc_types[BC_FACE_NEG_X]. 
-    PetscBool inletFaceDefined;     // Flag: PETSC_TRUE if an INLET face was found in bcs.dat
-    BCFace    identifiedInletBCFace; // Stores the BCFace enum corresponding to the INLET
+/** @brief The "virtual table" struct for a boundary condition handler object. */
+struct BoundaryCondition_s {
+    BCHandlerType type;
+    void         *data;
+    PetscErrorCode (*Initialize)(BoundaryCondition *self, BCContext *ctx);
+    PetscErrorCode (*PreStep)(BoundaryCondition *self, BCContext *ctx, PetscReal *local_inflow, PetscReal *local_outflow);
+    PetscErrorCode (*Apply)(BoundaryCondition *self, BCContext *ctx);
+    PetscErrorCode (*PlaceSource)(BoundaryCondition *self, BCContext *ctx, ...);
+    PetscErrorCode (*Destroy)(BoundaryCondition *self);
+};
 
-    // Simulation fields
-    Vec Ucont,lUcont;              ///< Contravariant velocity field.
-    Vec Ucat, lUcat;               ///< Cartesian velocity field.
-    Vec P, lP;                  ///< Pressure field.
-    Vec Nvert, lNvert;              ///< Node state field (fluid, solid, etc.).
-    Vec Nvert_o, lNvert_o;            ///< Node state field in the previous timestep.
-    PetscReal ConstantVelocity;
-    PetscReal ConstantContra;
-    PetscReal ConstantPressure;
-    PetscReal ConstantNvert;
-  
-    // Statistical fields
-    Vec Ucat_sum;           ///< Sum of Cartesian velocity for averaging.
-    Vec Ucat_cross_sum;     ///< Cross-product sum of Cartesian velocities.
-    Vec Ucat_square_sum;    ///< Squared velocity sum for RMS calculations.
-    Vec P_sum;              ///< Sum of pressure values.
+/** @brief Holds the complete configuration for one of the six boundary faces. */
+struct BoundaryFaceConfig_s {
+    BCFace             face_id;
+    BCType             mathematical_type;
+    BCHandlerType      handler_type;
+    BC_Param           *params;
+    BoundaryCondition *handler;
+};
 
-    // LES-specific fields
-    Vec lCs;                ///< Eddy viscosity field for LES.
-    Vec Cs;                 ///< Global version of the LES constant field.
 
-    // RANS-specific fields
-    Vec K_Omega;            ///< Turbulent kinetic energy (K) and specific dissipation rate (Omega).
-    Vec K_Omega_o;          ///< Old values of K_Omega for time-stepping.
-    Vec lK_Omega,lK_Omega_o;  ///< Local K_Omega and old K_Omega for each process.
+//================================================================================
+//
+//                4. MAIN USER CONTEXT (GOD) STRUCT
+//
+//================================================================================
 
-    // Particle-related fields
-    DM swarm;               ///< Particle data structure using DMSwarm.
+/**
+ * @brief User-defined context containing all simulation data and configurations.
+ */
+struct UserCtx_s {
+    // --- Grid & Parallelization ---
+    DM da;                      ///< DMDA for scalar fields (P, Nvert).
+    DM fda;                     ///< DMDA for primary vector fields (Ucat, Ucont, Metrics).
+    DM fda2;                    ///< DMDA for secondary vector fields (e.g., RANS).
+    DMDALocalInfo info;         ///< Cached local grid info for the current rank.
+    PetscInt IM, JM, KM;        ///< Global grid dimensions (number of cells in i,j,k).
+    PetscReal xMin,yMin,zMin;   ///< Physical minimum bounds of the grid.
+    PetscReal xMax,yMax,zMax;   ///< Physical maximum bounds of the grid.
+    PetscReal rx, ry, rz;       ///< Grid stretching ratios.
+    PetscInt nblk;              ///< Number of grid blocks in the simulation.
+    BoundingBox bbox;           ///< Bounding box for the local processor's grid domain.
+    BoundingBox global_domain_bbox; ///< Bounding box for the entire global domain.
+    RankNeighbors neighbors;    ///< MPI ranks of neighboring subdomains.
+
+    // --- Boundary Condition System ---
+    BoundaryFaceConfig boundary_faces[6]; ///< The new, primary BC configuration array.
+    BCType    face_bc_types[6];
+    PetscBool inletFaceDefined;           ///< Legacy flag for particle system compatibility.
+    BCFace    identifiedInletBCFace;      ///< Legacy field for particle system compatibility.
+
+    // --- Primary Simulation Fields ---
+    Vec Ucont, lUcont;          ///< Global and local Contravariant velocity.
+    Vec Ucat, lUcat;            ///< Global and local Cartesian velocity.
+    Vec P, lP;                  ///< Global and local Pressure.
+    Vec Nvert, lNvert;          ///< Global and local Node state field (fluid, solid, etc.).
+    Vec Nvert_o, lNvert_o;      ///< Global and local Node state from previous timestep.
+
+    // --- Curvilinear Grid Metrics ---
+    Vec Csi, Eta, Zet;          ///< (DEPRECATED: Use local) Global metric vectors.
+    Vec ICsi, IEta, IZet;       ///< (DEPRECATED)
+    Vec JCsi, JEta, JZet;       ///< (DEPRECATED)
+    Vec KCsi, KEta, KZet;       ///< (DEPRECATED)
+    Vec lCsi, lEta, lZet;       ///< Local metric vectors (primary).
+    Vec lICsi, lIEta, lIZet;    ///< Local inverse metric vectors.
+    Vec lJCsi, lJEta, lJZet;    ///< Local inverse metric vectors.
+    Vec lKCsi, lKEta, lKZet;    ///< Local inverse metric vectors.
+    Vec Aj, IAj, JAj, KAj;      ///< (DEPRECATED) Global Jacobian vectors.
+    Vec lAj, lIAj, lJAj, lKAj;  ///< Local Jacobian vectors.
+
+    // --- Particle System ---
+    DM swarm;                   ///< DMSwarm object for particle data.
     PetscMPIInt *miglist;      ///< List of ranks for particle migration.
-    PetscInt ParticleInitialization;
-    PetscInt NumberofParticles;   /// No.of particles in the domain.
-    Vec ParticleCount;        /// Count of number of particles in each cell.
+    PetscInt NumberofParticles; ///< Total number of particles in the simulation.
+    Vec ParticleCount;          ///< Eulerian field to count particles per cell.
+    PetscInt ParticleInitialization; ///< Flag controlling how particles are initially placed.
 
-    // Simulation parameters
-    PetscReal dt;           ///< Time step.
-    PetscReal ren;          ///< Reynolds number.
-    PetscReal ti;            ///< Current time.
-    PetscInt step;            /// Current Timestep Index.
-    PetscInt  FieldInitialization;
-    PetscInt  LoggingFrequency;  // Logging frequency for particle data logging (LOG_PARTICLE_FIELDS)
-  
-    // Flags for simulation modes
-    PetscBool averaging;    ///< Flag to indicate whether statistical averaging is enabled.
-    PetscBool les;          ///< Flag to indicate if LES is active.
-    PetscBool rans;         ///< Flag to indicate if RANS is active.
-
-    // Parallelization Parameters 
-    RankNeighbors neighbors;  // Neighbor ranks
-    BoundingBox global_domain_bbox;
-
-    // Miscellaneous fields
-    PetscInt _this;         ///< Current block index.
+    // --- Simulation Parameters & State ---
+    PetscReal dt;               ///< Time step size.
+    PetscReal ren;              ///< Reynolds number.
+    PetscReal ti;               ///< Current simulation time.
+    PetscInt step;              ///< Current timestep index.
+    PetscInt FieldInitialization; ///< Flag controlling how fields are initially set.
+    PetscInt LoggingFrequency;  ///< Frequency for detailed logging.
     
-  
-} UserCtx;
+    // --- Initial Condition Parameters ---.
+    Cmpnts    InitialConstantContra;   ///< A constant contravariant velocity vector.
+    PetscReal InitialConstantPressure; ///< A constant pressure value.
+    PetscReal InitialConstantNvert;    ///< A constant nvert value.
+    
+    // --- Simulation Mode Flags ---
+    PetscBool averaging;        ///< Flag to enable statistical averaging.
+    PetscBool les;              ///< Flag to enable Large Eddy Simulation.
+    PetscBool rans;             ///< Flag to enable Reynolds-Averaged Navier-Stokes.
 
+    // --- Statistical Averaging Fields ---
+    Vec Ucat_sum;
+    Vec Ucat_cross_sum;
+    Vec Ucat_square_sum;
+    Vec P_sum;
+
+    // --- Turbulence Model Fields (LES/RANS) ---
+    Vec lCs, Cs;                // LES specific.
+    Vec K_Omega, K_Omega_o;     // RANS specific.
+    Vec lK_Omega, lK_Omega_o;   // RANS specific.
+    
+    // --- Miscellaneous ---
+    PetscInt _this;             ///< Legacy block index, likely for multi-block contexts.
+};
+
+//================================================================================
+//
+//                     5. OTHER MISC. DEFINITIONS
+//
+//================================================================================
 /* --------------------------------------------------------------------
    VTKFileType
 
@@ -210,6 +276,7 @@ typedef struct {
     char      particlePrefix[20]; /* directory to save particle fields in */
     PetscBool outputParticles; /* whether to write particle data or not */
 } PostProcessParams;
+
 
 typedef enum {
     VTK_STRUCTURED,
@@ -255,50 +322,6 @@ typedef struct _n_VTKMetaData {
     PetscInt         *offsets;
 } VTKMetaData;
 
-
-// -------- MultiField Particle vtp file implementation ------------
-
-/*
-// A small struct to hold one field's metadata 
-typedef struct {
-    char    name[64];       // e.g. "velocity", "pressure", "temp", etc.
-    int     numComponents;  // e.g. 1 = scalar, 3 = vector, etc. 
-    double *data;           // pointer to the actual data array 
-} PointDataField;
-
-// --------------------------------------------------------------------
-//   VTKMetaData
-
-//   Works for both .vts (structured) and .vtp (polydata).
-//   Now uses an array of 'pointDataFields' for all fields in <PointData>.
-//-------------------------------------------------------------------- 
-typedef struct _n_VTKMetaData {
-    // 1) File type: VTK_STRUCTURED or VTK_POLYDATA 
-    VTKFileType  fileType;
- 
-    // 2) For VTK_STRUCTURED => .vts 
-    int          mx, my, mz;   // domain dimensions 
-    int          nnodes;       // e.g., (mx-1)*(my-1)*(mz-1) or actual node count 
-
-    // 3) For VTK_POLYDATA => .vtp 
-    int          npoints;     //  number of point "particles" 
-
- // 4) Shared coordinate array 
-    double      *coords;       // (3 * npoints) or (3 * nnodes) if you store them explicitly 
-
-    // 5) Array-based approach for multiple fields //
-    int           numFields;   // how many fields in <PointData>? 
-    PointDataField pointDataFields[MAX_POINT_DATA_FIELDS];
-
-    // 6) For polydata connectivity (only used if fileType == VTK_POLYDATA) 
-    int         *connectivity; 
-    int         *offsets;
-} VTKMetaData;
-*/
-
-// Add other shared types (e.g., IBMNodes, IBMInfo) if needed
-
-
 /**
  * @brief Enumerates the six faces of a cubic cell for distance calculations.
  */
@@ -312,11 +335,10 @@ typedef enum {
     NUM_FACES    /**< Total number of faces */
 } Face;
 
-// Structure to hold migration information for a particle
+/** @brief Information needed to migrate a single particle between MPI ranks. */
 typedef struct {
-    PetscInt local_index; // Original local index of the particle on this rank
-    PetscInt target_rank; // Rank this particle should migrate to
-    // Add PID if needed for debugging: PetscInt64 pid;
+    PetscInt local_index;
+    PetscInt target_rank;
 } MigrationInfo;
 
 #endif // COMMON_H

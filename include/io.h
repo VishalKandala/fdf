@@ -13,6 +13,7 @@
 #include "common.h" // For shared definitions like UserCtx.
 #include "logging.h"        // For logging macros.
 #include "grid.h"           // Only if grid-related functions are directly used
+#include "Boundaries.h" 
 
 
 // ------------------------ Function Declarations ------------------------
@@ -382,6 +383,18 @@ PetscErrorCode DisplayBanner(UserCtx *user,
                              PetscInt total_num_particles,
                              BoundingBox *bboxlist_on_rank0);
 
+
+// --- Conversion and Validation Utilities ---
+// These are now public and can be used by other parts of the application.
+
+PetscErrorCode StringToBCFace(const char* str, BCFace* face_out);
+PetscErrorCode StringToBCType(const char* str, BCType* type_out);
+PetscErrorCode StringToBCHandlerType(const char* str, BCHandlerType* handler_out);
+PetscErrorCode ValidateBCHandlerForBCType(BCType type, BCHandlerType handler);
+
+// --- Memory Management ---
+
+void FreeBC_ParamList(BC_Param *head);
 
 /**
  * @brief Parses the specified boundary conditions file to identify BC types for all 6 global faces

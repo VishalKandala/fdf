@@ -47,6 +47,27 @@
     Cmpnts ***:    InterpolateFieldFromCenterToCorner_Vector                  \
   )(centfield, field, info)
 
+/**
+ * @brief A type-generic macro that interpolates a field from corner nodes to all face centers.
+ *
+ * This macro uses C11's _Generic feature to dispatch to the appropriate underlying
+ * function based on the type of the input `corner_arr`.
+ *
+ *   - If `corner_arr` is of type `PetscReal***`, it calls `InterpolateCornerToFaceCenter_Scalar`.
+ *   - If `corner_arr` is of type `Cmpnts***`, it calls `InterpolateCornerToFaceCenter_Vector`.
+ *
+ * @param corner_arr  Ghosted node-centered array (global indexing). The type of this
+ *                    argument determines which function is called.
+ * @param faceX_arr   Local array for X-faces.
+ * @param faceY_arr   Local array for Y-faces.
+ * @param faceZ_arr   Local array for Z-faces.
+ * @param user_ctx    User context containing DMDA 'fda'.
+ */
+#define InterpolateCornerToFaceCenter(corner_arr, faceX_arr, faceY_arr, faceZ_arr, user_ctx) \
+    _Generic((corner_arr),                                                                  \
+        PetscReal***: InterpolateCornerToFaceCenter_Scalar,                                 \
+        Cmpnts***:    InterpolateCornerToFaceCenter_Vector                                  \
+    )(corner_arr, faceX_arr, faceY_arr, faceZ_arr, user_ctx)
 
 /**
  * @brief Macro that calls either the scalar or vector piecewise interpolation function
@@ -387,6 +408,51 @@ PetscErrorCode ScatterParticleFieldToEulerField(UserCtx *user,
  *         are missing or if underlying scatter calls fail.
  */
 PetscErrorCode ScatterAllParticleFieldsToEulerFields(UserCtx *user);
+
+/**
+ * @brief Interpolates a scalar field from corner nodes to all face centers.
+ *
+ * This routine computes the average of the four corner-node values
+ * defining each face of a hexahedral cell:
+ *   - X-faces (perpendicular to X): face between (i-1,i) in X-dir
+ *   - Y-faces (perpendicular to Y): face between (j-1,j) in Y-dir
+ *   - Z-faces (perpendicular to Z): face between (k-1,k) in Z-dir
+ *
+ * @param[in]  corner_arr  Ghosted node-centered array (global indexing) from user->fda.
+ * @param[out] faceX_arr   Local array for X-faces sized [zm][ym][xm+1].
+ * @param[out] faceY_arr   Local array for Y-faces sized [zm][ym+1][xm].
+ * @param[out] faceZ_arr   Local array for Z-faces sized [zm+1][ym][xm].
+ * @param[in]  user        User context containing DMDA 'fda' and GetOwnedCellRange.
+ *
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode InterpolateCornerToFaceCenter_Scalar(
+    PetscReal ***corner_arr,
+    PetscReal ***faceX_arr,
+    PetscReal ***faceY_arr,
+    PetscReal ***faceZ_arr,
+    UserCtx *user);
+
+/**
+ * @brief Interpolates a vector field from corner nodes to all face centers.
+ *
+ * Identical to the scalar version, except it averages each component of the
+ * Cmpnts struct at the four corner-nodes per face.
+ *
+ * @param[in]  corner_arr  Ghosted 3-component array (global node indices).
+ * @param[out] faceX_arr   Local array of Cmpnts for X-faces sized [zm][ym][xm+1].
+ * @param[out] faceY_arr   Local array of Cmpnts for Y-faces sized [zm][ym+1][xm].
+ * @param[out] faceZ_arr   Local array of Cmpnts for Z-faces sized [zm+1][ym][xm].
+ * @param[in]  user        User context containing DMDA 'fda'.
+ *
+ * @return PetscErrorCode 0 on success.
+ */
+PetscErrorCode InterpolateCornerToFaceCenter_Vector(
+    Cmpnts ***corner_arr,
+    Cmpnts ***faceX_arr,
+    Cmpnts ***faceY_arr,
+    Cmpnts ***faceZ_arr,
+    UserCtx *user);
 
 #endif // INTERPOLATION_H
 
