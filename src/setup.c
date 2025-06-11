@@ -276,6 +276,7 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
 
     ierr = ComputeFaceMetrics(user); CHKERRQ(ierr);
     ierr = ComputeCellCenteredJacobianInverse(user); CHKERRQ(ierr);
+    ierr = CheckAndFixGridOrientation(user); CHKERRQ(ierr);
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "Primary metrics (Csi, Eta, Zet, Aj) computed and prepared.");
 
@@ -954,6 +955,7 @@ PetscErrorCode PerformInitialSetup(UserCtx *user, PetscReal currentTime, PetscIn
     PetscInt       migrationListCapacity_initial_sort = 0;
     PetscInt       globalMigrationCount_initial_sort;
     PetscMPIInt    rank; // For logging
+    PetscReal      uMax = 0.0, uMaxcat = 0.0;
 
     PetscFunctionBeginUser;
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
@@ -1017,10 +1019,26 @@ PetscErrorCode PerformInitialSetup(UserCtx *user, PetscReal currentTime, PetscIn
     LOG_ALLOW(LOCAL, LOG_INFO, "[T=%.4f, Step=%d , Rank=%d] Second Initial Locate & Interpolate (post-migration & re-placement).\n", currentTime, step,rank);
     ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
     ierr = InterpolateAllFieldsToSwarm(user); CHKERRQ(ierr);
+
+    VecNorm(user->Ucont, NORM_INFINITY, &uMax);
+    LOG_ALLOW(GLOBAL, LOG_INFO,"[Step %d] Initial  max(|Ucont|) before Scatter  = %.6e\n",step , uMax);
+    uMax = 0.0;
+
+    VecNorm(user->Ucat, NORM_INFINITY, &uMaxcat);
+    LOG_ALLOW(GLOBAL, LOG_INFO,"[Step %d]  Initial max(|Ucat|) before Scatter  = %.6e\n", step, uMaxcat);
+    uMaxcat = 0.0;
     
     // --- 5. Scatter Particle Data to Eulerian Grid (if part of initialization) ---
     ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
 
+    VecNorm(user->Ucont, NORM_INFINITY, &uMax);
+    LOG_ALLOW(GLOBAL, LOG_INFO,"[Step %d] Initial  max(|Ucont|) after Scatter  = %.6e\n",step , uMax);
+    uMax = 0.0;
+
+    VecNorm(user->Ucat, NORM_INFINITY, &uMaxcat);
+    LOG_ALLOW(GLOBAL, LOG_INFO,"[Step %d]  Initial max(|Ucat|) after Scatter  = %.6e\n", step, uMaxcat);
+    uMaxcat = 0.0;
+    
     // --- 6. Initial Output ---
     // Output if OutputFreq > 0 OR if it's a setup-only run (StepsToRun==0 and StartStep==0).
     if (OutputFreq > 0 || (StepsToRun == 0 && StartStep == 0)) {
@@ -1092,6 +1110,7 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
     PetscInt       step_loop_counter; // Loop counter for simulation steps
     PetscReal      currentTime;     // Current simulation time
     PetscInt       removed_local, removed_global; // Counters for out-of-bounds particles
+    PetscReal      uMax = 0.0, uMaxcat = 0.0;
 
     // Variables for particle migration within the main loop
     MigrationInfo  *migrationList_main_loop = NULL;    // Managed by AdvanceSimulation for the loop
@@ -1160,7 +1179,7 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
       // Step 7: Advance Time
       currentTime += dt; // currentTime now represents the time at the *end* of the step just completed.
 
-      ierr = SetEulerianFields(user, step_loop_counter+1, StartStep, currentTime, readFields); CHKERRQ(ierr);
+      // ierr = SetEulerianFields(user, step_loop_counter+1, StartStep, currentTime, readFields); CHKERRQ(ierr);
 
       // Step 9: Locate Particles at New Positions (t = currentTime)
       // This is for particles now on the current rank after migration, using their P(currentTime) positions.
@@ -1173,10 +1192,27 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
       LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Interpolating field (from Ucat at t=%.4f) to new particle positions (Rank: %d).\n", currentTime, step_loop_counter, currentTime-dt, rank);
       ierr = InterpolateAllFieldsToSwarm(user); CHKERRQ(ierr);
 
+      VecNorm(user->Ucont, NORM_INFINITY, &uMax);
+      LOG_ALLOW(GLOBAL, LOG_INFO,"[Step %d]  max(|Ucont|) before Scatter  = %.6e\n", step_loop_counter, uMax);
+      uMax = 0.0;
+
+      VecNorm(user->Ucat, NORM_INFINITY, &uMaxcat);
+      LOG_ALLOW(GLOBAL, LOG_INFO,"[Step %d]  max(|Ucat|) before Scatter  = %.6e\n", step_loop_counter, uMaxcat);
+      uMaxcat = 0.0;
+      
       // Step 11: Scatter Particle Fields back to Eulerian Grid (if applicable)
       ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
       LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Scattering particle fields to grid (Rank: %d).\n", currentTime, step_loop_counter, rank);
 
+
+      VecNorm(user->Ucont, NORM_INFINITY, &uMax);
+      LOG_ALLOW(GLOBAL, LOG_INFO,"[Step %d]  max(|Ucont|) after Scatter  = %.6e\n", step_loop_counter, uMax);
+      uMax = 0.0;
+
+      VecNorm(user->Ucat, NORM_INFINITY, &uMaxcat);
+      LOG_ALLOW(GLOBAL, LOG_INFO,"[Step %d]  max(|Ucat|) after Scatter  = %.6e\n", step_loop_counter, uMaxcat);
+      uMaxcat = 0.0;
+      
       // Step 8: Update global step counter in user context.
       // This should reflect the step number *completed*.
       user->step = step_loop_counter + 1;
@@ -1258,6 +1294,7 @@ PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartSte
 
     PetscReal umax=0.0;
     PetscReal ucont_max=0.0;
+    PetscReal umin=0.0;
     // ==============================================================================
     // --- STEP 1: Update the INTERIOR of the domain ---
     // ==============================================================================
@@ -1285,7 +1322,7 @@ PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartSte
             ierr = SetInitialInteriorField(user, "Ucont"); CHKERRQ(ierr);
 
 	    ierr = VecNorm(user->Ucont, NORM_INFINITY, &ucont_max); CHKERRQ(ierr);
-	    LOG_ALLOW(GLOBAL,LOG_INFO,"[DEBUG] max(|Ucont|) aftee SetInitialInteriorField = %.6e\n", ucont_max);
+	    LOG_ALLOW(GLOBAL,LOG_INFO,"[DEBUG] max(|Ucont|) after SetInitialInteriorField = %.6e\n", ucont_max);
 	    ucont_max=0.0;
 	    
 	         } else { // Advancing the simulation (step > StartStep)
@@ -1320,7 +1357,7 @@ PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartSte
         // ==============================================================================
         // With Ucont fully defined (interior + boundaries), compute the Cartesian velocity.
         LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Converting Ucont to Ucat.\n", time, step);
-	ierr = VecZeroEntries(user->Ucat); CHKERRQ(ierr);
+	//	ierr = VecZeroEntries(user->Ucat); CHKERRQ(ierr);
         ierr = Contra2Cart(user); CHKERRQ(ierr);
 
 
@@ -1328,6 +1365,8 @@ PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartSte
 	LOG_ALLOW(GLOBAL,LOG_INFO,"[DEBUG] max(|Ucat|) after Contra2Cart = %.6e\n", umax);
 	umax = 0.0;
 
+	ierr = VecMin(user->Ucat, NULL, &umin);
+	LOG_ALLOW(GLOBAL,LOG_DEBUG, "[DEBUG] min(Ucat) after Contra2Cart = %.6e\n", umin);
 	// ==============================================================================
         // --- STEP 5: SYNCHRONIZE Ucat AFTER CONVERSION ---
         // ==============================================================================
@@ -1706,9 +1745,9 @@ PetscErrorCode Contra2Cart(UserCtx *user)
                                 mat[0][1] * (mat[1][0] * mat[2][2] - mat[1][2] * mat[2][0]) +
                                 mat[0][2] * (mat[1][0] * mat[2][1] - mat[1][1] * mat[2][0]);
 
-                if (PetscAbsReal(det) < 1.0e-12) {
-                    SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FLOP_COUNT, "Transformation matrix determinant is near zero at cell (%d,%d,%d) \n", i_cell, j_cell, k_cell);
-                }
+		  if (PetscAbsReal(det) < 1.0e-18) {
+		      SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FLOP_COUNT, "Transformation matrix determinant is near zero at cell (%d,%d,%d) \n", i_cell, j_cell, k_cell);
+		                }
 
                 PetscReal det_inv = 1.0 / det;
 

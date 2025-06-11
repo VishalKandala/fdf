@@ -432,3 +432,152 @@ PetscErrorCode Create_InletConstantVelocity(BoundaryCondition *bc)
     
     PetscFunctionReturn(0);
 }
+
+/*****************************************************************************
+ *  NOGRAD – copy-ghost handler
+ *
+ *  Behaviour
+ *  ---------
+ *    • Works only on the face(s) where it is prescribed in bcs.dat.
+ *    • Copies the entire *first interior* node/face layer onto the ghost
+ *      layer for both Cartesian velocity  Ucat  and contravariant velocity
+ *      Ucont (normal component only – i.e. the one that lives on that face).
+ *    • No Initialise() or PreStep() are required.
+ *
+ *  Integration
+ *  -----------
+ *    Called by BoundarySystem_ExecuteStep() after contra2cart().
+ *****************************************************************************/
+
+/* --- no private data is needed, keep an empty struct for future growth --- */
+typedef struct { int dummy; } NgData;
+
+/* ------------------------------------------------------------------------- */
+static PetscErrorCode Apply_NogradCopyGhost(BoundaryCondition *self,
+                                            BCContext         *ctx)
+{
+    PetscErrorCode ierr;
+    UserCtx       *u   = ctx->user;
+    DMDALocalInfo *inf = &u->info;
+
+    /* Arrays */
+    Cmpnts ***ucat, ***ucont;
+    ierr = DMDAVecGetArray(u->fda, u->lUcat , &ucat ); CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(u->fda, u->lUcont, &ucont); CHKERRQ(ierr);
+
+    const PetscInt xs = inf->xs, xe = inf->xs + inf->xm;
+    const PetscInt ys = inf->ys, ye = inf->ys + inf->ym;
+    const PetscInt zs = inf->zs, ze = inf->zs + inf->zm;
+    const PetscInt mx = inf->mx, my = inf->my, mz = inf->mz;
+
+    PetscInt i,j,k;
+
+    switch (ctx->face_id)
+    {
+    /* ------------------------------------------------------------------ */
+    case BC_FACE_NEG_X:   /* i = 0 copies from i = 1 */
+        if (xs == 0)
+        {
+            i = 0;
+            for (k=zs;k<ze;k++)
+              for (j=ys;j<ye;j++)
+              {
+                  ucat [k][j][i]   = ucat [k][j][i+1];
+                  ucont[k][j][i].x = ucont[k][j][i+1].x;    /* flux normal to face */
+              }
+        }
+        break;
+
+    case BC_FACE_POS_X:   /* i = mx-1 copies from i = mx-2 */
+        if (xe == mx)
+        {
+            i = mx-1;
+            for (k=zs;k<ze;k++)
+              for (j=ys;j<ye;j++)
+              {
+                  ucat [k][j][i]     = ucat [k][j][i-1];
+                  ucont[k][j][i-1].x = ucont[k][j][i-2].x; /* Ucont.x lives at i-1 */
+              }
+        }
+        break;
+
+    /* ------------------------------------------------------------------ */
+    case BC_FACE_NEG_Y:   /* j = 0 from j = 1 */
+        if (ys == 0)
+        {
+            j = 0;
+            for (k=zs;k<ze;k++)
+              for (i=xs;i<xe;i++)
+              {
+                  ucat [k][j][i]   = ucat [k][j+1][i];
+                  ucont[k][j][i].y = ucont[k][j+1][i].y;
+              }
+        }
+        break;
+
+    case BC_FACE_POS_Y:   /* j = my-1 from j = my-2 */
+        if (ye == my)
+        {
+            j = my-1;
+            for (k=zs;k<ze;k++)
+              for (i=xs;i<xe;i++)
+              {
+                  ucat [k][j][i]     = ucat [k][j-1][i];
+                  ucont[k][j-1][i].y = ucont[k][j-2][i].y;
+              }
+        }
+        break;
+
+    /* ------------------------------------------------------------------ */
+    case BC_FACE_NEG_Z:   /* k = 0 from k = 1 */
+        if (zs == 0)
+        {
+            k = 0;
+            for (j=ys;j<ye;j++)
+              for (i=xs;i<xe;i++)
+              {
+                  ucat [k][j][i]   = ucat [k+1][j][i];
+                  ucont[k][j][i].z = ucont[k+1][j][i].z;
+              }
+        }
+        break;
+
+    case BC_FACE_POS_Z:   /* k = mz-1 from k = mz-2 */
+        if (ze == mz)
+        {
+            k = mz-1;
+            for (j=ys;j<ye;j++)
+              for (i=xs;i<xe;i++)
+              {
+                  ucat [k][j][i]     = ucat [k-1][j][i];
+                  ucont[k-1][j][i].z = ucont[k-2][j][i].z;
+              }
+        }
+        break;
+    }
+
+    ierr = DMDAVecRestoreArray(u->fda, u->lUcat , &ucat ); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArray(u->fda, u->lUcont, &ucont); CHKERRQ(ierr);
+    return 0;
+}
+
+/* ------------------------------------------------------------------------- */
+static PetscErrorCode Destroy_NogradCopyGhost(BoundaryCondition *self)
+{
+    PetscFree(self->data);      /* nothing in it yet, but keep it symmetric  */
+    self->data = NULL;
+    return 0;
+}
+
+/* ------------------------------------------------------------------------- */
+PetscErrorCode Create_NogradCopyGhost(BoundaryCondition *bc)
+{
+    PetscErrorCode ierr;
+    ierr = PetscMalloc1(1,&bc->data); CHKERRQ(ierr);   /* allocate empty struct */
+
+    bc->Initialize = NULL;       /* no parameters to parse */
+    bc->PreStep    = NULL;       /* no flux bookkeeping    */
+    bc->Apply      = Apply_NogradCopyGhost;
+    bc->Destroy    = Destroy_NogradCopyGhost;
+    return 0;
+}

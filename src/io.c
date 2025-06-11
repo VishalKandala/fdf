@@ -451,6 +451,12 @@ PetscErrorCode WriteFieldData(UserCtx *user, const char *field_name, Vec field_v
     // Open the file for writing
     ierr = PetscViewerBinaryOpen(PETSC_COMM_WORLD, filen, FILE_MODE_WRITE, &viewer); CHKERRQ(ierr);
 
+    PetscReal vmin, vmax;
+    ierr = VecMin(field_vec, NULL, &vmin); CHKERRQ(ierr);
+    ierr = VecMax(field_vec, NULL, &vmax); CHKERRQ(ierr);
+    LOG_ALLOW(GLOBAL,LOG_DEBUG,"% s step %d  min=%.6e  max=%.6e\n",field_name, ti, (double)vmin, (double)vmax);
+
+    
     // Write data from the vector
     ierr = VecView(field_vec, viewer); CHKERRQ(ierr);
 
@@ -2029,6 +2035,7 @@ PetscErrorCode StringToBCType(const char* str, BCType* type_out) {
     else if (strcasecmp(str, "SYMMETRY")  == 0) *type_out = SYMMETRY;
     else if (strcasecmp(str, "INLET")     == 0) *type_out = INLET;
     else if (strcasecmp(str, "OUTLET")    == 0) *type_out = OUTLET;
+    else if (strcasecmp(str, "NOGRAD")    == 0) *type_out = NOGRAD;
     // ... add other BCTypes here ...
     else SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_UNKNOWN_TYPE, "Unknown BC Type string: %s", str);
     return 0;
@@ -2044,6 +2051,7 @@ PetscErrorCode StringToBCHandlerType(const char* str, BCHandlerType* handler_out
     if      (strcasecmp(str, "noslip")              == 0) *handler_out = BC_HANDLER_WALL_NOSLIP;
     else if (strcasecmp(str, "constant_velocity")   == 0) *handler_out = BC_HANDLER_INLET_CONSTANT_VELOCITY;
     else if (strcasecmp(str, "conservation")        == 0) *handler_out = BC_HANDLER_OUTLET_CONSERVATION;
+    else if (strcasecmp(str, "allcopy")             == 0) *handler_out = BC_HANDLER_NOGRAD_COPY_GHOST;
     // ... add other BCHandlerTypes here ...
     else SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_UNKNOWN_TYPE, "Unknown BC Handler string: %s", str);
     return 0;
@@ -2057,6 +2065,9 @@ PetscErrorCode StringToBCHandlerType(const char* str, BCHandlerType* handler_out
  */
 PetscErrorCode ValidateBCHandlerForBCType(BCType type, BCHandlerType handler) {
     switch (type) {
+        case NOGRAD:
+	    if(handler != BC_HANDLER_NOGRAD_COPY_GHOST) return PETSC_ERR_ARG_WRONG;
+	    break;
         case WALL:
             if (handler != BC_HANDLER_WALL_NOSLIP && handler != BC_HANDLER_WALL_MOVING) return PETSC_ERR_ARG_WRONG;
             break;

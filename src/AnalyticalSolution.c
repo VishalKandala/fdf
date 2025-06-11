@@ -1043,7 +1043,7 @@ PetscErrorCode SetInitialInteriorField(UserCtx *user, const char *fieldName)
 
     LOG_ALLOW(GLOBAL,LOG_DEBUG,"InitialConstantContra = (%.3f, %.3f, %.3f)\n",(double)uin.x, (double)uin.y, (double)uin.z);
     
-    const PetscReal flow_direction_sign = (user->identifiedInletBCFace % 2 == 0) ? -1.0 : 1.0;
+    const PetscReal flow_direction_sign = (user->identifiedInletBCFace % 2 == 0) ? 1.0 : -1.0;
         
     for (k = zs; k < ze; k++) {
         for (j = ys; j < ye; j++) {
@@ -1107,28 +1107,28 @@ PetscErrorCode SetInitialInteriorField(UserCtx *user, const char *fieldName)
                     // Step B: Apply direction sign and set the correct contravariant component.
                     // The contravariant component U^n = v_n * Area_n, where v_n is the physical normal velocity.
                     if (normal_velocity_mag != 0.0) {
-                        const PetscReal signed_normal_vel = normal_velocity_mag * flow_direction_sign;
+		       const PetscReal signed_normal_vel = normal_velocity_mag * flow_direction_sign*user->GridOrientation;
                         
                         if (user->identifiedInletBCFace == BC_FACE_NEG_X || user->identifiedInletBCFace == BC_FACE_POS_X) {
                             const PetscReal area_i = sqrt(csi_arr[k][j][i].x * csi_arr[k][j][i].x + csi_arr[k][j][i].y * csi_arr[k][j][i].y + csi_arr[k][j][i].z * csi_arr[k][j][i].z);
 			    
                             ucont_val.x = signed_normal_vel * area_i;
 
-			    LOG_LOOP_ALLOW(GLOBAL,LOG_DEBUG,k*j,500," ucont_val.x = %.6f (signed_normal_vel=%.3f × area=%.4f)\n",ucont_val.x, signed_normal_vel, area_i);
+			    LOG_LOOP_ALLOW(GLOBAL,LOG_DEBUG,k,50," ucont_val.x = %.6f (signed_normal_vel=%.3f × area=%.4f)\n",ucont_val.x, signed_normal_vel, area_i);
                         } 
                         else if (user->identifiedInletBCFace == BC_FACE_NEG_Y || user->identifiedInletBCFace == BC_FACE_POS_Y) {
                             const PetscReal area_j = sqrt(eta_arr[k][j][i].x * eta_arr[k][j][i].x + eta_arr[k][j][i].y * eta_arr[k][j][i].y + eta_arr[k][j][i].z * eta_arr[k][j][i].z);
 			     
                             ucont_val.y = signed_normal_vel * area_j;
 
-			    LOG_LOOP_ALLOW(GLOBAL,LOG_DEBUG,k*i,500," ucont_val.y = %.6f (signed_normal_vel=%.3f × area=%.4f)\n",ucont_val.y, signed_normal_vel, area_j);
+			    LOG_LOOP_ALLOW(GLOBAL,LOG_DEBUG,k,50," ucont_val.y = %.6f (signed_normal_vel=%.3f × area=%.4f)\n",ucont_val.y, signed_normal_vel, area_j);
                         } 
                         else { // Z-inlet
                             const PetscReal area_k = sqrt(zet_arr[k][j][i].x * zet_arr[k][j][i].x + zet_arr[k][j][i].y * zet_arr[k][j][i].y + zet_arr[k][j][i].z * zet_arr[k][j][i].z);
 
                             ucont_val.z = signed_normal_vel * area_k;
 
-			    LOG_LOOP_ALLOW(GLOBAL,LOG_DEBUG,i*j,500," i,j,k,ucont_val.z = %d, %d, %d, %.6f (signed_normal_vel=%.3f × area=%.4f)\n",i,j,k,ucont_val.z, signed_normal_vel, area_k);
+			    LOG_LOOP_ALLOW(GLOBAL,LOG_DEBUG,k,50," i,j,k,ucont_val.z = %d, %d, %d, %.6f (signed_normal_vel=%.3f × area=%.4f)\n",i,j,k,ucont_val.z, signed_normal_vel, area_k);
                         }
                     }
                     ucont_arr[k][j][i] = ucont_val;

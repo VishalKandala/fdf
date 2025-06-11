@@ -162,6 +162,105 @@ PetscErrorCode MetricVelocityContravariant(const PetscReal J[3][3], PetscReal de
   PetscFunctionReturn(0);
 }
 
+
+/* -------------------------------------------------------------------------- */
+/**
+ * @brief Ensure a **right-handed** metric basis (`Csi`, `Eta`, `Zet`) and a
+ *        **positive Jacobian** (`Aj`) over the whole domain.
+ *
+ * The metric-generation kernels are completely algebraic, so they will happily
+ * deliver a *left-handed* basis if the mesh file enumerates nodes in the
+ * opposite ζ-direction.  
+ * This routine makes the orientation explicit and—if needed—repairs it
+ * **once per run**:
+ *
+ * | Step | Action |
+ * |------|--------|
+ * | 1 | Compute global `Aj_min`, `Aj_max`.                          |
+ * | 2 | **Mixed signs** (`Aj_min < 0 && Aj_max > 0`) &rarr; abort: the mesh is topologically inconsistent. |
+ * | 3 | **All negative** (`Aj_max < 0`) &rarr; flip <br>`Csi`, `Eta`, `Zet`, `Aj` & update local ghosts. |
+ * | 4 | Store `user->orientation = ±1` so BC / IC routines can apply sign-aware logic if they care about inlet direction. |
+ *
+ * @param[in,out] user  Fully initialised #UserCtx that already contains  
+ *                      `Csi`, `Eta`, `Zet`, `Aj`, their **local** ghosts, and
+ *                      valid distributed DMs.
+ *
+ * @return `0` on success or a PETSc error code on failure.
+ *
+ * @note  Call **immediately after** `ComputeCellCenteredJacobianInverse()` and
+ *        before any routine that differentiates or applies BCs.
+ *
+ * @author vishal kandala
+ */
+PetscErrorCode CheckAndFixGridOrientation(UserCtx *user)
+{
+    PetscErrorCode ierr;
+    PetscReal      aj_min, aj_max;
+    PetscMPIInt    rank;
+
+    PetscFunctionBeginUser;
+
+    /* ---------------- step 1: global extrema of Aj ---------------- */
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD,&rank); CHKERRQ(ierr);
+
+    ierr = VecMin(user->Aj, NULL, &aj_min); CHKERRQ(ierr);  /* already global */
+    ierr = VecMax(user->Aj, NULL, &aj_max); CHKERRQ(ierr);
+
+    LOG_ALLOW(GLOBAL, LOG_INFO,
+        "[orientation] Global Aj range: [%.3e , %.3e]\n",
+        (double)aj_min, (double)aj_max);
+
+    /* ---------------- step 2: detect malformed mesh ---------------- */
+    if (aj_min < 0.0 && aj_max > 0.0)
+        SETERRABORT(PETSC_COMM_WORLD, PETSC_ERR_USER,
+            "Mixed Jacobian signs detected – grid is topologically inconsistent.");
+
+    /* Default: grid is right-handed unless proven otherwise */
+    PetscInt orientation = +1;
+
+    /* ---------------- step 3: repair left-handed mesh -------------- */
+    if (aj_max < 0.0) {                  /* entire domain has Aj < 0   */
+        orientation = -1;
+
+        if (!rank)
+            LOG_ALLOW(LOCAL, LOG_INFO,
+                "[orientation] Detected left-handed grid – flipping metric vectors\n");
+
+        /* Flip sign of *all* metric vectors and Aj                     */
+        ierr = VecScale(user->Csi, -1.0); CHKERRQ(ierr);
+        ierr = VecScale(user->Eta, -1.0); CHKERRQ(ierr);
+        ierr = VecScale(user->Zet, -1.0); CHKERRQ(ierr);
+        ierr = VecScale(user->Aj , -1.0); CHKERRQ(ierr);
+
+        /* Local ghost regions now stale – refresh                      */
+        ierr = UpdateLocalGhosts(user, "Csi"); CHKERRQ(ierr);
+        ierr = UpdateLocalGhosts(user, "Eta"); CHKERRQ(ierr);
+        ierr = UpdateLocalGhosts(user, "Zet"); CHKERRQ(ierr);
+        ierr = UpdateLocalGhosts(user, "Aj");  CHKERRQ(ierr);
+
+        /* Sanity print: Aj must be > 0 now                             */
+        ierr = VecMin(user->Aj, NULL, &aj_min); CHKERRQ(ierr);
+        ierr = VecMax(user->Aj, NULL, &aj_max); CHKERRQ(ierr);
+
+        if (aj_min <= 0.0)
+            SETERRABORT(PETSC_COMM_WORLD, PETSC_ERR_USER,
+                "Failed to flip grid orientation – Aj still non-positive.");
+	else if (aj_min && aj_max > 0.0)
+	  orientation = +1;
+    }
+
+    /* ---------------- step 4: store result in UserCtx -------------- */
+    user->GridOrientation = orientation;
+
+    if (!rank)
+        LOG_ALLOW(LOCAL, LOG_INFO,
+            "[orientation] Grid confirmed %s-handed after flip (orientation=%+d)\n",
+            (orientation>0) ? "right" : "left", orientation);
+
+    PetscFunctionReturn(0);
+}
+
+
 /**
  * @brief Computes the primary face metric components (Csi, Eta, Zet), including
  *        boundary extrapolation, and stores them in the corresponding global Vec
@@ -351,6 +450,11 @@ PetscErrorCode ComputeFaceMetrics(UserCtx *user)
         }
     }
 
+    if (info.xs==0 && info.ys==0 && info.zs==0) {
+      PetscReal dot = zet_arr[0][0][0].z;  /* dot with global +z */
+      LOG_ALLOW(GLOBAL,LOG_DEBUG,"Zet(k=0)·ez = %.3f   (should be >0 for right-handed grid)\n", dot);
+    }
+    
     // --- 5. Restore all arrays ---
     ierr = DMDAVecRestoreArrayRead(user->fda, localCoords_from_dm, &nodal_coords_arr); CHKERRQ(ierr);
     ierr = DMDAVecRestoreArray(user->fda, user->Csi, &csi_arr); CHKERRQ(ierr);
@@ -372,6 +476,8 @@ PetscErrorCode ComputeFaceMetrics(UserCtx *user)
     LOG_ALLOW(GLOBAL, LOG_INFO, "Completed calculation, extrapolation, and update for Csi, Eta, Zet.\n");
     PetscFunctionReturn(0);
 }
+
+
 
 /**
  * @brief Calculates the cell-centered inverse Jacobian determinant (1/J), including

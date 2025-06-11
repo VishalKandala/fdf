@@ -421,6 +421,12 @@ static PetscErrorCode BoundaryCondition_Create(BCHandlerType handler_type, Bound
     LOG_ALLOW(LOCAL, LOG_DEBUG, "Allocated generic handler object at address %p.\n", (void*)bc);
 
     switch (handler_type) {
+
+        case BC_HANDLER_NOGRAD_COPY_GHOST:
+	     LOG_ALLOW(LOCAL, LOG_DEBUG, "Dispatching to Create_UniformFlowCopyGhost().\n");
+             ierr = Create_NogradCopyGhost(bc); CHKERRQ(ierr);
+             break;
+	     
         case BC_HANDLER_WALL_NOSLIP:
             LOG_ALLOW(LOCAL, LOG_DEBUG, "Dispatching to Create_WallNoSlip().\n");
             ierr = Create_WallNoSlip(bc); CHKERRQ(ierr);

@@ -65,5 +65,33 @@ PetscErrorCode ComputeFaceMetrics(UserCtx *user);
  */
 PetscErrorCode ComputeCellCenteredJacobianInverse(UserCtx *user);
 
-
+/**
+ * @brief Ensure a **right-handed** metric basis (`Csi`, `Eta`, `Zet`) and a
+ *        **positive Jacobian** (`Aj`) over the whole domain.
+ *
+ * The metric-generation kernels are completely algebraic, so they will happily
+ * deliver a *left-handed* basis if the mesh file enumerates nodes in the
+ * opposite ζ-direction.  
+ * This routine makes the orientation explicit and—if needed—repairs it
+ * **once per run**:
+ *
+ * | Step | Action |
+ * |------|--------|
+ * | 1 | Compute global `Aj_min`, `Aj_max`.                          |
+ * | 2 | **Mixed signs** (`Aj_min < 0 && Aj_max > 0`) &rarr; abort: the mesh is topologically inconsistent. |
+ * | 3 | **All negative** (`Aj_max < 0`) &rarr; flip <br>`Csi`, `Eta`, `Zet`, `Aj` & update local ghosts. |
+ * | 4 | Store `user->orientation = ±1` so BC / IC routines can apply sign-aware logic if they care about inlet direction. |
+ *
+ * @param[in,out] user  Fully initialised #UserCtx that already contains  
+ *                      `Csi`, `Eta`, `Zet`, `Aj`, their **local** ghosts, and
+ *                      valid distributed DMs.
+ *
+ * @return `0` on success or a PETSc error code on failure.
+ *
+ * @note  Call **immediately after** `ComputeCellCenteredJacobianInverse()` and
+ *        before any routine that differentiates or applies BCs.
+ *
+ * @author <your name>
+ */
+PetscErrorCode CheckAndFixGridOrientation(UserCtx *user);
 #endif /* METRIC_H */

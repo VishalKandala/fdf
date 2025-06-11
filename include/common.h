@@ -100,13 +100,13 @@ typedef enum {
 
 /** @brief Defines the general mathematical/physical category of a boundary. */
 typedef enum {
-    UNDEFINED = 0, WALL, SYMMETRY, INLET,
+    UNDEFINED = 0, NOGRAD, WALL, SYMMETRY, INLET,
     OUTLET, FARFIELD, PERIODIC, INTERFACE
 } BCType;
 
 /** @brief Defines the specific computational "strategy" for a boundary handler. */
 typedef enum {
-    BC_HANDLER_UNDEFINED = 0,
+    BC_HANDLER_UNDEFINED = 0,BC_HANDLER_NOGRAD_COPY_GHOST,
     BC_HANDLER_WALL_NOSLIP, BC_HANDLER_WALL_MOVING,
     BC_HANDLER_SYMMETRY_PLANE,
     BC_HANDLER_INLET_CONSTANT_VELOCITY, BC_HANDLER_INLET_PULSANTILE_FLUX, BC_HANDLER_INLET_DEVELOPED_PROFILE,
@@ -181,7 +181,7 @@ struct UserCtx_s {
     BoundingBox bbox;           ///< Bounding box for the local processor's grid domain.
     BoundingBox global_domain_bbox; ///< Bounding box for the entire global domain.
     RankNeighbors neighbors;    ///< MPI ranks of neighboring subdomains.
-
+    PetscInt GridOrientation; ///< Integerer that determines Whether grid is right-handed (+1) or left-handed (-1) i.e normals are facing outward or inward.
     // --- Boundary Condition System ---
     BoundaryFaceConfig boundary_faces[6]; ///< The new, primary BC configuration array.
     BCType    face_bc_types[6];
