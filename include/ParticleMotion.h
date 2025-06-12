@@ -53,12 +53,15 @@
  * @param user    Pointer to the UserCtx structure.
  * @param[out] removedCountLocal Pointer to store the number of particles removed *on this rank*.
  * @param[out] removedCountGlobal Pointer to store the total number of particles removed *across all ranks*.
+ * @param[in]      bboxlist       An array of BoundingBox structures for ALL MPI ranks, indexed 0 to (size-1).
+ *                                This array must be up-to-date and available on all ranks.
  *
  * @return PetscErrorCode 0 on success, non-zero on failure.
  */
 PetscErrorCode CheckAndRemoveOutOfBoundsParticles(UserCtx *user,
                                               PetscInt *removedCountLocal,
-					      PetscInt *removedCountGlobal);
+					      PetscInt *removedCountGlobal,
+					      const BoundingBox *bboxlist);
 
 /**
  * @brief Defines the basic migration pattern for particles within the swarm.

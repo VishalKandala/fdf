@@ -5,7 +5,7 @@
  * Initializes a particle swarm, reads velocity fields, and performs particle-grid interpolation.
  */
 
-#include "setup.h"
+#include "simulation.h"
 
 #undef _FUNCT_
 #define __FUNCT__ "main"

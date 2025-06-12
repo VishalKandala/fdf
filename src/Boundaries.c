@@ -585,6 +585,25 @@ PetscErrorCode BoundarySystem_ExecuteStep(UserCtx *user)
         }
     }
     LOG_ALLOW(LOCAL, LOG_DEBUG, "Apply phase complete. \n");
+
+    // =========================================================================
+    // --- NEW PHASE 4: COMMIT LOCAL CHANGES TO GLOBAL VECTORS ---
+    // =========================================================================
+    // This is the crucial new step. It takes the changes made to the local
+    // vectors during the Apply phase and inserts them into the global vectors.
+
+    //  LOG_ALLOW(GLOBAL, LOG_DEBUG, "Committing local boundary changes to global vectors.\n");
+
+    // Commit changes from lUcat to Ucat
+    // ierr = DMLocalToGlobalBegin(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
+    // ierr = DMLocalToGlobalEnd(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
+    
+    // Commit changes from lUcont to Ucont
+    // ierr = DMLocalToGlobalBegin(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
+    //ierr = DMLocalToGlobalEnd(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
+
+    // LOG_ALLOW(GLOBAL, LOG_INFO, "BoundarySystem: Local changes for Ucat and Ucont committed to global state.\n");
+    // =========================================================================
     
     PetscFunctionReturn(0);
 }

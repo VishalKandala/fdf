@@ -58,12 +58,12 @@ static PetscErrorCode Apply_WallNoSlip(BoundaryCondition *self, BCContext *ctx)
     LOG_ALLOW(LOCAL, LOG_DEBUG, "Apply_WallNoSlip: Rank %d applying condition to Face %d (%s).\n",rank, face_id, face_name);
 
     // Step 2: Get safe access to the local PETSc vector arrays.
-    // We get the local vectors (lUcat, lUcont) because ghost cell data is only
+    // We get the local vectors (Ucat, Ucont) because ghost cell data is only
     // guaranteed to be correct on the local representation after a ghost update.
     DMDALocalInfo  *info = &user->info;
-    Cmpnts       ***l_ucat, ***l_ucont;
-    ierr = DMDAVecGetArray(user->fda, user->lUcat, &l_ucat); CHKERRQ(ierr);
-    ierr = DMDAVecGetArray(user->fda, user->lUcont, &l_ucont); CHKERRQ(ierr);
+    Cmpnts       ***ucat, ***ucont;
+    ierr = DMDAVecGetArray(user->fda, user->Ucat, &ucat); CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(user->fda, user->Ucont, &ucont); CHKERRQ(ierr);
 
     // Step 3: Apply the no-slip condition based on which face is being processed.
     // The loop bounds are for the *owned* nodes on this rank (xs to xe, etc.).
@@ -79,11 +79,11 @@ static PetscErrorCode Apply_WallNoSlip(BoundaryCondition *self, BCContext *ctx)
             i = 0;
             for (k = zs; k < ze; k++) {
                 for (j = ys; j < ye; j++) {
-                    l_ucont[k][j][i].x = 0.0; // Set normal contravariant flux to zero.
+                    ucont[k][j][i].x = 0.0; // Set normal contravariant flux to zero.
                     // Set Cartesian ghost cell velocity for no-slip: u_ghost(i) = -u_interior(i+1)
-                    l_ucat[k][j][i].x = -l_ucat[k][j][i+1].x;
-                    l_ucat[k][j][i].y = -l_ucat[k][j][i+1].y;
-                    l_ucat[k][j][i].z = -l_ucat[k][j][i+1].z;
+                    ucat[k][j][i].x = -ucat[k][j][i+1].x;
+                    ucat[k][j][i].y = -ucat[k][j][i+1].y;
+                    ucat[k][j][i].z = -ucat[k][j][i+1].z;
                 }
             }
             break;
@@ -92,11 +92,11 @@ static PetscErrorCode Apply_WallNoSlip(BoundaryCondition *self, BCContext *ctx)
             i = mx - 1;
             for (k = zs; k < ze; k++) {
                 for (j = ys; j < ye; j++) {
-                    l_ucont[k][j][i-1].x = 0.0;
+                    ucont[k][j][i-1].x = 0.0;
                     // u_ghost(i) = -u_interior(i-1)
-                    l_ucat[k][j][i].x = -l_ucat[k][j][i-1].x;
-                    l_ucat[k][j][i].y = -l_ucat[k][j][i-1].y;
-                    l_ucat[k][j][i].z = -l_ucat[k][j][i-1].z;
+                    ucat[k][j][i].x = -ucat[k][j][i-1].x;
+                    ucat[k][j][i].y = -ucat[k][j][i-1].y;
+                    ucat[k][j][i].z = -ucat[k][j][i-1].z;
                 }
             }
             break;
@@ -105,10 +105,10 @@ static PetscErrorCode Apply_WallNoSlip(BoundaryCondition *self, BCContext *ctx)
             j = 0;
             for (k = zs; k < ze; k++) {
                 for (i = xs; i < xe; i++) {
-                    l_ucont[k][j][i].y = 0.0;
-                    l_ucat[k][j][i].x = -l_ucat[k][j+1][i].x;
-                    l_ucat[k][j][i].y = -l_ucat[k][j+1][i].y;
-                    l_ucat[k][j][i].z = -l_ucat[k][j+1][i].z;
+                    ucont[k][j][i].y = 0.0;
+                    ucat[k][j][i].x = -ucat[k][j+1][i].x;
+                    ucat[k][j][i].y = -ucat[k][j+1][i].y;
+                    ucat[k][j][i].z = -ucat[k][j+1][i].z;
                 }
             }
             break;
@@ -117,10 +117,10 @@ static PetscErrorCode Apply_WallNoSlip(BoundaryCondition *self, BCContext *ctx)
             j = my - 1;
             for (k = zs; k < ze; k++) {
                 for (i = xs; i < xe; i++) {
-                    l_ucont[k][j-1][i].y = 0.0;
-                    l_ucat[k][j][i].x = -l_ucat[k][j-1][i].x;
-                    l_ucat[k][j][i].y = -l_ucat[k][j-1][i].y;
-                    l_ucat[k][j][i].z = -l_ucat[k][j-1][i].z;
+                    ucont[k][j-1][i].y = 0.0;
+                    ucat[k][j][i].x = -ucat[k][j-1][i].x;
+                    ucat[k][j][i].y = -ucat[k][j-1][i].y;
+                    ucat[k][j][i].z = -ucat[k][j-1][i].z;
                 }
             }
             break;
@@ -129,10 +129,10 @@ static PetscErrorCode Apply_WallNoSlip(BoundaryCondition *self, BCContext *ctx)
             k = 0;
             for (j = ys; j < ye; j++) {
                 for (i = xs; i < xe; i++) {
-                    l_ucont[k][j][i].z = 0.0;
-                    l_ucat[k][j][i].x = -l_ucat[k+1][j][i].x;
-                    l_ucat[k][j][i].y = -l_ucat[k+1][j][i].y;
-                    l_ucat[k][j][i].z = -l_ucat[k+1][j][i].z;
+                    ucont[k][j][i].z = 0.0;
+                    ucat[k][j][i].x = -ucat[k+1][j][i].x;
+                    ucat[k][j][i].y = -ucat[k+1][j][i].y;
+                    ucat[k][j][i].z = -ucat[k+1][j][i].z;
                 }
             }
             break;
@@ -141,18 +141,18 @@ static PetscErrorCode Apply_WallNoSlip(BoundaryCondition *self, BCContext *ctx)
             k = mz - 1;
             for (j = ys; j < ye; j++) {
                 for (i = xs; i < xe; i++) {
-                    l_ucont[k-1][j][i].z = 0.0;
-                    l_ucat[k][j][i].x = -l_ucat[k-1][j][i].x;
-                    l_ucat[k][j][i].y = -l_ucat[k-1][j][i].y;
-                    l_ucat[k][j][i].z = -l_ucat[k-1][j][i].z;
+                    ucont[k-1][j][i].z = 0.0;
+                    ucat[k][j][i].x = -ucat[k-1][j][i].x;
+                    ucat[k][j][i].y = -ucat[k-1][j][i].y;
+                    ucat[k][j][i].z = -ucat[k-1][j][i].z;
                 }
             }
             break;
     }
 
     // Step 4: Restore safe access to the PETSc vector arrays.
-    ierr = DMDAVecRestoreArray(user->fda, user->lUcat, &l_ucat); CHKERRQ(ierr);
-    ierr = DMDAVecRestoreArray(user->fda, user->lUcont, &l_ucont); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArray(user->fda, user->Ucat, &ucat); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArray(user->fda, user->Ucont, &ucont); CHKERRQ(ierr);
 
     PetscFunctionReturn(0);
 }
@@ -334,10 +334,10 @@ static PetscErrorCode Apply_InletConstantVelocity(BoundaryCondition *self, BCCon
 
     // Step 2: Get access to the necessary PETSc vector arrays.
     DMDALocalInfo  *info = &user->info;
-    Cmpnts       ***l_ucat, ***l_ucont;
+    Cmpnts       ***ucat, ***ucont;
     Cmpnts       ***l_csi, ***l_eta, ***l_zet;
-    ierr = DMDAVecGetArray(user->fda, user->lUcat, &l_ucat); CHKERRQ(ierr);
-    ierr = DMDAVecGetArray(user->fda, user->lUcont, &l_ucont); CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(user->fda, user->Ucat, &ucat); CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(user->fda, user->Ucont, &ucont); CHKERRQ(ierr);
     ierr = DMDAVecGetArrayRead(user->fda, user->lCsi, &l_csi); CHKERRQ(ierr);
     ierr = DMDAVecGetArrayRead(user->fda, user->lEta, &l_eta); CHKERRQ(ierr);
     ierr = DMDAVecGetArrayRead(user->fda, user->lZet, &l_zet); CHKERRQ(ierr);
@@ -358,37 +358,37 @@ static PetscErrorCode Apply_InletConstantVelocity(BoundaryCondition *self, BCCon
             for (i = xs; i < xe; i++) {
 
                 if (i == 0 && face_id == BC_FACE_NEG_X) {
-                    l_ucat[k][j][i] = *v_spec;
-                    l_ucont[k][j][i].x = v_spec->x * l_csi[k][j][i].x + v_spec->y * l_csi[k][j][i].y + v_spec->z * l_csi[k][j][i].z;
+                    ucat[k][j][i] = *v_spec;
+                    ucont[k][j][i].x = v_spec->x * l_csi[k][j][i].x + v_spec->y * l_csi[k][j][i].y + v_spec->z * l_csi[k][j][i].z;
                 }
                 else if (i == mx - 1 && face_id == BC_FACE_POS_X) {
-                    l_ucat[k][j][i] = *v_spec;
+                    ucat[k][j][i] = *v_spec;
                     // Note: Ucont.x is on the i-face, so for the max face, it's at index i-1
-                    l_ucont[k][j][i-1].x = v_spec->x * l_csi[k][j][i-1].x + v_spec->y * l_csi[k][j][i-1].y + v_spec->z * l_csi[k][j][i-1].z;
+                    ucont[k][j][i-1].x = v_spec->x * l_csi[k][j][i-1].x + v_spec->y * l_csi[k][j][i-1].y + v_spec->z * l_csi[k][j][i-1].z;
                 }
                 else if (j == 0 && face_id == BC_FACE_NEG_Y) {
-                    l_ucat[k][j][i] = *v_spec;
-                    l_ucont[k][j][i].y = v_spec->x * l_eta[k][j][i].x + v_spec->y * l_eta[k][j][i].y + v_spec->z * l_eta[k][j][i].z;
+                    ucat[k][j][i] = *v_spec;
+                    ucont[k][j][i].y = v_spec->x * l_eta[k][j][i].x + v_spec->y * l_eta[k][j][i].y + v_spec->z * l_eta[k][j][i].z;
                 }
                 else if (j == my - 1 && face_id == BC_FACE_POS_Y) {
-                    l_ucat[k][j][i] = *v_spec;
-                    l_ucont[k][j-1][i].y = v_spec->x * l_eta[k][j-1][i].x + v_spec->y * l_eta[k][j-1][i].y + v_spec->z * l_eta[k][j-1][i].z;
+                    ucat[k][j][i] = *v_spec;
+                    ucont[k][j-1][i].y = v_spec->x * l_eta[k][j-1][i].x + v_spec->y * l_eta[k][j-1][i].y + v_spec->z * l_eta[k][j-1][i].z;
                 }
                 else if (k == 0 && face_id == BC_FACE_NEG_Z) {
-                    l_ucat[k][j][i] = *v_spec;
-                    l_ucont[k][j][i].z = v_spec->x * l_zet[k][j][i].x + v_spec->y * l_zet[k][j][i].y + v_spec->z * l_zet[k][j][i].z;
+                    ucat[k][j][i] = *v_spec;
+                    ucont[k][j][i].z = v_spec->x * l_zet[k][j][i].x + v_spec->y * l_zet[k][j][i].y + v_spec->z * l_zet[k][j][i].z;
                 }
                 else if (k == mz - 1 && face_id == BC_FACE_POS_Z) {
-                    l_ucat[k][j][i] = *v_spec;
-                    l_ucont[k-1][j][i].z = v_spec->x * l_zet[k-1][j][i].x + v_spec->y * l_zet[k-1][j][i].y + v_spec->z * l_zet[k-1][j][i].z;
+                    ucat[k][j][i] = *v_spec;
+                    ucont[k-1][j][i].z = v_spec->x * l_zet[k-1][j][i].x + v_spec->y * l_zet[k-1][j][i].y + v_spec->z * l_zet[k-1][j][i].z;
                 }
             }
         }
     }
     
     // Step 4: Restore safe access to the PETSc vector arrays.
-    ierr = DMDAVecRestoreArray(user->fda, user->lUcat, &l_ucat); CHKERRQ(ierr);
-    ierr = DMDAVecRestoreArray(user->fda, user->lUcont, &l_ucont); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArray(user->fda, user->Ucat, &ucat); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArray(user->fda, user->Ucont, &ucont); CHKERRQ(ierr);
     ierr = DMDAVecRestoreArrayRead(user->fda, user->lCsi, &l_csi); CHKERRQ(ierr);
     ierr = DMDAVecRestoreArrayRead(user->fda, user->lEta, &l_eta); CHKERRQ(ierr);
     ierr = DMDAVecRestoreArrayRead(user->fda, user->lZet, &l_zet); CHKERRQ(ierr);
@@ -462,8 +462,8 @@ static PetscErrorCode Apply_NogradCopyGhost(BoundaryCondition *self,
 
     /* Arrays */
     Cmpnts ***ucat, ***ucont;
-    ierr = DMDAVecGetArray(u->fda, u->lUcat , &ucat ); CHKERRQ(ierr);
-    ierr = DMDAVecGetArray(u->fda, u->lUcont, &ucont); CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(u->fda, u->Ucat , &ucat ); CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(u->fda, u->Ucont, &ucont); CHKERRQ(ierr);
 
     const PetscInt xs = inf->xs, xe = inf->xs + inf->xm;
     const PetscInt ys = inf->ys, ye = inf->ys + inf->ym;
@@ -472,6 +472,16 @@ static PetscErrorCode Apply_NogradCopyGhost(BoundaryCondition *self,
 
     PetscInt i,j,k;
 
+    PetscInt lxs  = (xs == 0) ? xs + 1 : xs;
+    PetscInt lxe   = (xe == mx) ? xe - 1 : xe;
+
+    PetscInt lys  = (ys == 0) ? ys + 1 : ys;
+    PetscInt lye   = (ye == my) ? ye - 1 : ye;
+
+    PetscInt lzs  = (zs == 0) ? zs + 1 : zs;
+    PetscInt lze   = (ze == mz) ? ze - 1 : ze;
+
+    
     switch (ctx->face_id)
     {
     /* ------------------------------------------------------------------ */
@@ -479,8 +489,8 @@ static PetscErrorCode Apply_NogradCopyGhost(BoundaryCondition *self,
         if (xs == 0)
         {
             i = 0;
-            for (k=zs;k<ze;k++)
-              for (j=ys;j<ye;j++)
+            for (k=lzs;k<lze;k++)
+              for (j=lys;j<lye;j++)
               {
                   ucat [k][j][i]   = ucat [k][j][i+1];
                   ucont[k][j][i].x = ucont[k][j][i+1].x;    /* flux normal to face */
@@ -492,11 +502,14 @@ static PetscErrorCode Apply_NogradCopyGhost(BoundaryCondition *self,
         if (xe == mx)
         {
             i = mx-1;
-            for (k=zs;k<ze;k++)
-              for (j=ys;j<ye;j++)
+            for (k=lzs;k<lze;k++)
+              for (j=lys;j<lye;j++)
               {
                   ucat [k][j][i]     = ucat [k][j][i-1];
-                  ucont[k][j][i-1].x = ucont[k][j][i-2].x; /* Ucont.x lives at i-1 */
+		  // Add a guard to prevent out-of-bounds read on thin domains
+		  if (mx >= 3) {
+		    ucont[k][j][i].x = ucont[k][j][i-1].x;
+		  }
               }
         }
         break;
@@ -506,8 +519,8 @@ static PetscErrorCode Apply_NogradCopyGhost(BoundaryCondition *self,
         if (ys == 0)
         {
             j = 0;
-            for (k=zs;k<ze;k++)
-              for (i=xs;i<xe;i++)
+            for (k=lzs;k<lze;k++)
+              for (i=lxs;i<lxe;i++)
               {
                   ucat [k][j][i]   = ucat [k][j+1][i];
                   ucont[k][j][i].y = ucont[k][j+1][i].y;
@@ -523,8 +536,11 @@ static PetscErrorCode Apply_NogradCopyGhost(BoundaryCondition *self,
               for (i=xs;i<xe;i++)
               {
                   ucat [k][j][i]     = ucat [k][j-1][i];
-                  ucont[k][j-1][i].y = ucont[k][j-2][i].y;
-              }
+		  // Add a guard to prevent out-of-bounds read on thin domains
+		  if (my >= 3) {
+		    ucont[k][j][i].y = ucont[k][j-1][i].y;
+		  }
+	      }
         }
         break;
 
@@ -533,8 +549,8 @@ static PetscErrorCode Apply_NogradCopyGhost(BoundaryCondition *self,
         if (zs == 0)
         {
             k = 0;
-            for (j=ys;j<ye;j++)
-              for (i=xs;i<xe;i++)
+            for (j=lys;j<lye;j++)
+              for (i=lxs;i<lxe;i++)
               {
                   ucat [k][j][i]   = ucat [k+1][j][i];
                   ucont[k][j][i].z = ucont[k+1][j][i].z;
@@ -546,18 +562,21 @@ static PetscErrorCode Apply_NogradCopyGhost(BoundaryCondition *self,
         if (ze == mz)
         {
             k = mz-1;
-            for (j=ys;j<ye;j++)
-              for (i=xs;i<xe;i++)
+            for (j=lys;j<lye;j++)
+              for (i=lxs;i<lxe;i++)
               {
                   ucat [k][j][i]     = ucat [k-1][j][i];
-                  ucont[k-1][j][i].z = ucont[k-2][j][i].z;
+		  // Add a guard to prevent out-of-bounds read on thin domains
+		  if (mz >= 3) {
+		    ucont[k][j][i].z = ucont[k-1][j][i].z;
+		  }
               }
         }
         break;
     }
 
-    ierr = DMDAVecRestoreArray(u->fda, u->lUcat , &ucat ); CHKERRQ(ierr);
-    ierr = DMDAVecRestoreArray(u->fda, u->lUcont, &ucont); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArray(u->fda, u->Ucat , &ucat ); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArray(u->fda, u->Ucont, &ucont); CHKERRQ(ierr);
     return 0;
 }
 
