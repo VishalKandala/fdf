@@ -229,171 +229,6 @@ PetscErrorCode CheckAndRemoveOutOfBoundsParticles(UserCtx *user,
 }
 
 /**
- * @brief Defines the basic migration pattern for particles within the swarm.
- *
- * This function establishes the migration pattern that dictates how particles
- * move between different MPI ranks in the simulation. It initializes a migration
- * list where each particle is assigned a target rank based on predefined conditions.
- * The migration pattern can be customized to implement various migration behaviors.
- *
- * @param[in,out] user    Pointer to the UserCtx structure containing simulation context.
- *
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
- */
-PetscErrorCode DefineBasicMigrationPattern(UserCtx* user) {
-    DM swarm = user->swarm;           // DMSwarm object managing the particle swarm
-    PetscErrorCode ierr;              // Error code for PETSc functions
-    PetscMPIInt *miglist;             // Migration list indicating target MPI ranks for particles
-    PetscInt localNumParticles;       // Number of particles managed by the local MPI process
-    PetscMPIInt rank, size;           // MPI rank of the current process and total number of processes
-
-    // Retrieve the MPI rank of the current process
-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
-    // Retrieve the total number of MPI processes
-    ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"DefineBasicMigrationPattern - Rank %d out of %d processes.\n", rank, size);
-
-    // Get the number of particles managed by the local MPI process
-    ierr = DMSwarmGetLocalSize(swarm, &localNumParticles); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"DefineBasicMigrationPattern - Rank %d handling %d particles.\n", rank, localNumParticles);
-
-    // Allocate memory for the migration list
-    ierr = PetscCalloc1(localNumParticles, &miglist); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"DefineBasicMigrationPattern - Allocated migration list for %d particles.\n", localNumParticles);
-
-    // Initialize the migration list: assign each particle to migrate to the current rank by default
-    for (PetscInt p = 0; p < localNumParticles; p++) {
-        miglist[p] = rank;
-    }
-    LOG_ALLOW(LOG_DEBUG, LOCAL,"DefineBasicMigrationPattern - Initialized migration list with default rank assignments.\n");
-
-    // Define custom migration conditions based on the number of MPI processes
-    if (size > 1) {
-        // Example condition: Assign the first particle in rank 0 to migrate to rank 2
-        if (rank == 0 && localNumParticles > 0) {
-            miglist[0] = 2;
-            LOG_ALLOW(LOG_INFO,LOCAL,"DefineBasicMigrationPattern - Rank 0, Particle 0 assigned to migrate to Rank 2.\n");
-        }
-
-        // Additional custom conditions can be added here for other ranks
-        // Example:
-        // if(rank == 1 && localNumParticles > 1){
-        //     miglist[1] = 3;
-        //     LOG_ALLOW_SYNC(LOG_INFO, "DefineBasicMigrationPattern - Rank 1, Particle 1 assigned to migrate to Rank 3.\n");
-        // }
-
-        // ... add more custom conditions as needed ...
-    }
-
-    // Assign the migration list to the user context for later use
-    user->miglist = miglist;
-    LOG_ALLOW(LOG_DEBUG, LOCAL,"DefineBasicMigrationPattern - Migration list assigned to user context.\n");
-
-    /*
-    // Optional: Debugging output to verify migration assignments
-    for(PetscInt p = 0; p < localNumParticles; p++) {
-        PetscSynchronizedPrintf(PETSC_COMM_WORLD,
-            "DefineBasicMigrationPattern - Rank %d - miglist[%ld] = %ld\n",
-            rank, p, miglist[p]);
-    }
-    PetscSynchronizedPrintf(PETSC_COMM_WORLD, "***********************\n");
-    PetscSynchronizedFlush(PETSC_COMM_WORLD, PETSC_STDOUT);
-    */
-
-    return 0;
-}
-
-
-/**
- * @brief Performs the basic migration of particles based on the defined migration pattern.
- *
- * This function updates the positions of particles within the swarm by migrating them
- * to target MPI ranks as specified in the migration list. It handles the migration process
- * by setting the 'DMSwarm_rank' field for each particle and invokes the DMSwarm migration
- * mechanism to relocate particles across MPI processes. After migration, it cleans up
- * allocated resources and ensures synchronization across all MPI ranks.
- *
- * @param[in,out] user    Pointer to the UserCtx structure containing simulation context.
- *
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
- */
-PetscErrorCode PerformBasicMigration(UserCtx* user) {
-    DM swarm = user->swarm;                // DMSwarm object managing the particle swarm
-    PetscErrorCode ierr;                   // Error code for PETSc functions
-    PetscMPIInt *miglist;                  // Migration list indicating target MPI ranks for particles
-    PetscMPIInt *rankval;                  // Array to store current MPI rank of each particle
-    PetscInt localNumParticles;            // Number of particles managed by the local MPI process
-    PetscMPIInt rank;                      // MPI rank of the current process
-    PetscBool removePoints = PETSC_TRUE;   // Flag indicating whether to remove migrated particles from the local swarm
-
-    // Retrieve the MPI rank of the current process
-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"PerformBasicMigration - Rank %d is initiating migration.\n", rank);
-
-    // Execute the migration pattern to define target ranks for particles
-    ierr = DefineBasicMigrationPattern(user); CHKERRQ(ierr);
-    LOG_ALLOW(LOCAL,LOG_INFO,"PerformBasicMigration - Migration pattern defined.\n");
-
-    // Get the number of particles in the local swarm
-    ierr = DMSwarmGetLocalSize(swarm, &localNumParticles); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"PerformBasicMigration - Rank %d handling %d particles.\n", rank, localNumParticles);
-
-    // Retrieve the migration list from the user context
-    miglist = user->miglist;
-    LOG_ALLOW(LOG_DEBUG,LOCAL,"PerformBasicMigration - Retrieved migration list from user context.\n");
-
-    /*
-    // Optional: Debugging output to verify migration assignments before migration
-    for(PetscInt p = 0; p < localNumParticles; p++) {
-        PetscSynchronizedPrintf(PETSC_COMM_WORLD,
-            "PerformBasicMigration - Rank %d - miglist[%ld] = %d; user->miglist[p] = %d\n",
-            rank, p, miglist[p], user->miglist[p]);
-    }
-    PetscSynchronizedPrintf(PETSC_COMM_WORLD, "***********************\n");
-    PetscSynchronizedFlush(PETSC_COMM_WORLD, PETSC_STDOUT);
-    */
-
-    // Access the 'DMSwarm_rank' field from the DMSwarm to update particle ranks
-    ierr = DMSwarmGetField(swarm, "DMSwarm_rank", NULL, NULL, (void**)&rankval); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC( LOCAL,LOG_DEBUG,"PerformBasicMigration - Retrieved 'DMSwarm_rank' field.\n");
-
-    // Update the 'DMSwarm_rank' field based on the migration list
-    for (PetscInt p = 0; p < localNumParticles; p++) {
-        rankval[p] = miglist[p];
-        LOG_ALLOW_SYNC( LOCAL,LOG_DEBUG,"PerformBasicMigration - Particle %d assigned to Rank %d.\n", p, rankval[p]);
-    }
-
-    /*
-    // Optional: Debugging output to verify migration assignments after rank updates
-    for(PetscInt p = 0; p < localNumParticles; p++) {
-        PetscSynchronizedPrintf(PETSC_COMM_WORLD,
-            "PerformBasicMigration - After change - Rank %ld - rankval[%ld] = %ld; user->miglist[p] = %ld\n",
-            rank, p, rankval[p], user->miglist[p]);
-    }
-    PetscSynchronizedPrintf(PETSC_COMM_WORLD, "***********************\n");
-    PetscSynchronizedFlush(PETSC_COMM_WORLD, PETSC_STDOUT);
-    */
-
-    // Restore the 'DMSwarm_rank' field after modification
-    ierr = DMSwarmRestoreField(swarm, "DMSwarm_rank", NULL, NULL, (void**)&rankval); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC( LOCAL,LOG_DEBUG,"PerformBasicMigration - Restored 'DMSwarm_rank' field.\n");
-
-    // Invoke the DMSwarm migration process to relocate particles based on updated ranks
-    ierr = DMSwarmMigrate(swarm, removePoints); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC( LOCAL,LOG_INFO,"PerformBasicMigration - DMSwarm migration executed.\n");
-
-    // Free the allocated migration list to prevent memory leaks
-    ierr = PetscFree(user->miglist); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC( LOCAL,LOG_DEBUG,"PerformBasicMigration - Freed migration list memory.\n");
-
-    // Synchronize all MPI processes to ensure migration completion before proceeding
-    ierr = PetscBarrier(NULL); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC( LOCAL,LOG_INFO, "PerformBasicMigration - Migration synchronization completed.\n");
-
-    return 0;
-}
-
-/**
  * @brief Checks if a particle position is within the bounds of a given bounding box.
  *
  * @param bbox Pointer to the BoundingBox structure.
@@ -469,9 +304,10 @@ PetscErrorCode IdentifyMigratingParticles(UserCtx *user,
   PetscMPIInt    rank,size;
   BoundingBox    localBBox = user->bbox;
   RankNeighbors  neighbors = user->neighbors; // Use stored neighbors
-  PetscInt       currentMigrationCount = 0;
-  PetscInt       currentListCapacity = *listCapacity;
-  MigrationInfo *currentMigrationList = *migrationList;
+  
+  //PetscInt       currentMigrationCount = 0;
+  //PetscInt       currentListCapacity = *listCapacity;
+  //MigrationInfo *currentMigrationList = *migrationList;
   // Add PID pointer if logging PIDs
   PetscInt64    *pids = NULL;
   PetscFunctionBeginUser;
@@ -492,8 +328,8 @@ PetscErrorCode IdentifyMigratingParticles(UserCtx *user,
   if (nLocal == 0) {
     *migrationCount = 0;
     // Ensure output pointers are consistent even if no allocation happened
-    *migrationList = currentMigrationList;
-    *listCapacity = currentListCapacity;
+    // *migrationList = currentMigrationList;
+    // *listCapacity = currentListCapacity;
     PetscFunctionReturn(0);
   }
   // Get read-only access to position
@@ -507,7 +343,9 @@ PetscErrorCode IdentifyMigratingParticles(UserCtx *user,
     user->neighbors.rank_ym, user->neighbors.rank_yp,
     user->neighbors.rank_zm, user->neighbors.rank_zp, (int)MPI_PROC_NULL);
   */
-  currentMigrationCount = 0; // Reset count for this call
+
+  *migrationCount = 0;
+  //currentMigrationCount = 0; // Reset count for this call
   for (p = 0; p < nLocal; p++) {
     // Check if particle is OUTSIDE the local bounding box
     if (!IsParticleInBox(&localBBox, &pos[p]))
@@ -569,6 +407,8 @@ PetscErrorCode IdentifyMigratingParticles(UserCtx *user,
 	}
 	// 3. ---- Add to migration list if a target rank was found.
 	if (targetRank != MPI_PROC_NULL){
+
+	  /* OLD LOGIC
           // Resize list if needed (using PetscRealloc for safety)
 	  if (currentMigrationCount >= currentListCapacity) {
 	    PetscInt OldCapacity = currentListCapacity;
@@ -591,7 +431,19 @@ PetscErrorCode IdentifyMigratingParticles(UserCtx *user,
 	  currentMigrationList[currentMigrationCount].target_rank = targetRank;
 	  // currentMigrationList[currentMigrationCount].pid = pids[p]; // If storing PID
 	  currentMigrationCount++;
+	  */
+
+	  // NEW LOGIC (TEST)
+
+	  ierr = AddToMigrationList(migrationList,    // Pointer to the list pointer
+				    listCapacity,     // Pointer to the capacity variable
+				    migrationCount,   // Pointer to the count variable
+				    p,                // The particle's local index
+				    targetRank);      // The destination rank
+	  CHKERRQ(ierr);
+	  
 	  LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Particle %d marked for migration to rank %d.\n", rank, p, targetRank);
+	  
 	}
 	  else {
 	  // Particle left local box but was not found in any *checked* neighbor box.
@@ -608,12 +460,15 @@ PetscErrorCode IdentifyMigratingParticles(UserCtx *user,
   } // end particle loop
   ierr = DMSwarmRestoreField(swarm, "position", NULL, NULL, (void **)&pos); CHKERRQ(ierr);
   ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid", NULL, NULL, (void **)&pids); CHKERRQ(ierr);
-  *migrationList = currentMigrationList;
-  *migrationCount = currentMigrationCount;
-  *listCapacity = currentListCapacity;
-  LOG_ALLOW(LOCAL, LOG_INFO, "Rank %d: Identified %d particles for potential migration.\n", rank, currentMigrationCount);
+  //  *migrationList = currentMigrationList;
+  // *migrationCount = currentMigrationCount;
+  //  *listCapacity = currentListCapacity;
+  
+  //LOG_ALLOW(LOCAL, LOG_INFO, "Rank %d: Identified %d particles for potential migration.\n", rank, currentMigrationCount);
+  LOG_ALLOW(LOCAL, LOG_INFO, "Rank %d: Identified %d particles for potential migration.\n", rank, *migrationCount);
   PetscFunctionReturn(0);
 }
+
 
 /**
  * @brief Sets the target rank field (DMSwarmPICField_rank) for particles scheduled for migration.
@@ -1048,6 +903,31 @@ PetscErrorCode PerformSingleParticleMigrationCycle(UserCtx *user, const Bounding
     PetscFunctionBeginUser;
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
 
+        /******************************************************************/
+    /*                 START OF NEW TEST LOGIC                        */
+    /******************************************************************/
+
+    // --- TEST STEP 1: Take a snapshot of PIDs BEFORE migration ---
+    PetscInt nlocal_before;
+    ierr = DMSwarmGetLocalSize(user->swarm, &nlocal_before); CHKERRQ(ierr);
+    
+    PetscInt64 *pids_before_snapshot = NULL;
+    // We need to get the PID field to pass to our snapshot function
+    PetscInt64 *pid_field_for_snapshot;
+    ierr = DMSwarmGetField(user->swarm, "DMSwarm_pid", NULL, NULL, (void**)&pid_field_for_snapshot); CHKERRQ(ierr);
+    
+    // Call our helper to create the sorted snapshot
+    ierr = GetLocalPIDSnapshot(pid_field_for_snapshot, nlocal_before, &pids_before_snapshot); CHKERRQ(ierr);
+
+    // Restore the field immediately
+    ierr = DMSwarmRestoreField(user->swarm, "DMSwarm_pid", NULL, NULL, (void**)&pid_field_for_snapshot); CHKERRQ(ierr);
+    
+    LOG_ALLOW(LOCAL, LOG_INFO, "[TEST HARNESS - Rank %d] Created pre-migration PID snapshot with %d entries.\n", rank, nlocal_before);
+
+    /******************************************************************/
+    /*                 END OF NEW TEST LOGIC (PART 1)                 */
+    /******************************************************************/
+
     // Step 1: Identify particles that need to migrate from the current rank
     LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] %s Migration: Identifying migrating particles.\n", currentTime, step, migrationCycleName);
     ierr = IdentifyMigratingParticles(user, bboxlist, migrationList_p, migrationCount_p, migrationListCapacity_p); CHKERRQ(ierr);
@@ -1076,6 +956,24 @@ PetscErrorCode PerformSingleParticleMigrationCycle(UserCtx *user, const Bounding
         LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] %s Migration: No particles identified globally for migration.\n", currentTime, step, migrationCycleName);
     }
 
+        /******************************************************************/
+    /*                 START OF NEW TEST LOGIC (PART 2)               */
+    /******************************************************************/
+    
+    // --- TEST STEP 2: Call the function we want to test ---
+    // This happens AFTER the migration is complete.
+    if (*globalMigrationCount_out > 0) {
+        LOG_ALLOW(LOCAL, LOG_INFO, "[TEST HARNESS - Rank %d] Calling FlagNewcomersForLocation to verify identification.\n", rank);
+        ierr = FlagNewcomersForLocation(user->swarm, nlocal_before, pids_before_snapshot); CHKERRQ(ierr);
+    }
+
+    // --- TEST STEP 3: Cleanup ---
+    ierr = PetscFree(pids_before_snapshot); CHKERRQ(ierr);
+
+    /******************************************************************/
+    /*                 END OF NEW TEST LOGIC (PART 2)                 */
+    /******************************************************************/
+    
     // Reset local migration count for the next potential migration cycle by the caller.
     // The migrationList and its capacity persist and are managed by the caller.
     *migrationCount_p = 0;
@@ -1215,3 +1113,381 @@ PetscErrorCode ReinitializeParticlesOnInletSurface(UserCtx *user, PetscReal curr
     PetscFunctionReturn(0);
 }
 
+/**
+ * @brief Creates a sorted snapshot of all Particle IDs (PIDs) from a raw data array.
+ * @ingroup ParticleUtils
+ *
+ * This function is a crucial helper for the migration process. It captures the state of
+ * which particles are on the current MPI rank *before* migration occurs by taking a
+ * pointer to the swarm's raw PID data array. The resulting sorted array can then be used
+ * with an efficient binary search to quickly identify newcomer particles after migration.
+ *
+ * This function does NOT call DMSwarmGetField/RestoreField. It is the caller's
+ * responsibility to acquire the `pid_field` pointer before calling and restore it afterward.
+ *
+ * @param[in]  pid_field         A read-only pointer to the raw array of PIDs for the local swarm.
+ * @param[in]  n_local           The number of particles currently on the local rank.
+ * @param[out] pids_snapshot_out A pointer to a `PetscInt64*` array. This function will
+ *                               allocate memory for this array, and the caller is
+ *                               responsible for freeing it with `PetscFree()` when it
+ *                               is no longer needed.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ */
+PetscErrorCode GetLocalPIDSnapshot(const PetscInt64 pid_field[], 
+                                   PetscInt n_local, 
+                                   PetscInt64 **pids_snapshot_out)
+{
+    PetscErrorCode ierr;
+    PetscMPIInt    rank;
+
+    PetscFunctionBeginUser;
+
+    // --- 1. Input Validation ---
+    if (!pids_snapshot_out) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Output pointer pids_snapshot_out is NULL.");
+    }
+    // If n_local > 0, pid_field must not be NULL.
+    if (n_local > 0 && !pid_field) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Input pid_field pointer is NULL for n_local > 0.");
+    }
+    
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "[Rank %d]: Creating PID snapshot for %d local particles.\n", rank, n_local);
+
+    // If there are no local particles, the snapshot is empty (NULL).
+    if (n_local == 0) {
+        *pids_snapshot_out = NULL;
+        PetscFunctionReturn(0);
+    }
+    
+    // --- 2. Allocate Memory for the Snapshot ---
+    ierr = PetscMalloc1(n_local, pids_snapshot_out); CHKERRQ(ierr);
+
+    // --- 3. Copy Data ---
+    // Perform a fast memory copy from the provided array to our new snapshot array.
+    ierr = PetscMemcpy(*pids_snapshot_out, pid_field, n_local * sizeof(PetscInt64)); CHKERRQ(ierr);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "[Rank %d]: Copied %d PIDs.\n", rank, n_local);
+
+    // --- 4. Sort the Snapshot Array ---
+    // Sorting enables fast binary search lookups later.
+    ierr = PetscSortInt64(n_local, *pids_snapshot_out); CHKERRQ(ierr);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "[Rank %d]: PID snapshot sorted successfully.\n", rank);
+
+    PetscFunctionReturn(0); 
+}
+
+
+/**
+ * @brief Safely adds a new migration task to a dynamically sized list.
+ *
+ * This utility function manages a dynamic array of MigrationInfo structs. It appends
+ * a new entry to the list and automatically doubles the array's capacity using
+ * `PetscRealloc` if the current capacity is exceeded. This prevents buffer overflows
+ * and avoids the need to know the number of migrating particles in advance.
+ *
+ * @param[in,out] migration_list_p  A pointer to the MigrationInfo array pointer. The function
+ *                                  will update this pointer if the array is reallocated.
+ * @param[in,out] capacity_p        A pointer to an integer holding the current allocated
+ *                                  capacity of the list (in number of elements). This will be
+ *                                  updated upon reallocation.
+ * @param[in,out] count_p           A pointer to an integer holding the current number of
+ *                                  items in the list. This will be incremented by one.
+ * @param[in]     particle_local_idx The local index (from 0 to nlocal-1) of the particle
+ *                                  that needs to be migrated.
+ * @param[in]     destination_rank   The target MPI rank for the particle.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure (e.g., from memory allocation).
+ */
+PetscErrorCode AddToMigrationList(MigrationInfo **migration_list_p,
+                                  PetscInt *capacity_p,
+                                  PetscInt *count_p,
+                                  PetscInt particle_local_idx,
+                                  PetscMPIInt destination_rank)
+{
+    PetscErrorCode ierr;
+    PetscMPIInt    rank;
+
+    PetscFunctionBeginUser;
+
+    // --- 1. Input Validation ---
+    if (!migration_list_p || !capacity_p || !count_p) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Null pointer provided to AddToMigrationList for list management.");
+    }
+
+    // --- 2. Check if the list needs to be resized ---
+    if (*count_p >= *capacity_p) {
+        PetscInt old_capacity = *capacity_p;
+        // Start with a reasonable base capacity, then double for subsequent reallocations.
+        PetscInt new_capacity = (old_capacity == 0) ? 16 : old_capacity * 2;
+
+        // Use PetscRealloc for safe memory reallocation.
+        // It handles allocating new memory, copying old data, and freeing the old block.
+        // The first argument to PetscRealloc is the new size in BYTES.
+        ierr = PetscRealloc(new_capacity * sizeof(MigrationInfo), migration_list_p); CHKERRQ(ierr);
+        
+        *capacity_p = new_capacity; // Update the capacity tracker
+
+        ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "AddToMigrationList [Rank %d]: Reallocated migrationList capacity from %d to %d.\n",
+                  rank, old_capacity, new_capacity);
+    }
+
+    // --- 3. Add the new migration data to the list ---
+    // Dereference the pointer-to-a-pointer to get the actual array.
+    MigrationInfo *list = *migration_list_p;
+
+    list[*count_p].local_index = particle_local_idx;
+    list[*count_p].target_rank = destination_rank;
+
+    // --- 4. Increment the count of items in the list ---
+    (*count_p)++;
+    
+    PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Identifies newly arrived particles after migration and flags them for a location search.
+ * @ingroup ParticleMotion
+ *
+ * This function is a critical component of the iterative migration process managed by
+ * the main particle settlement orchestrator (e.g., `SettleParticles`). After a
+ * `DMSwarmMigrate` call, each rank's local particle list is a new mix of resident
+ * particles and newly received ones. This function's job is to efficiently identify
+ * these "newcomers" and set their `DMSwarm_location_status` field to `NEEDS_LOCATION`.
+ *
+ * This ensures that in the subsequent pass of the migration `do-while` loop, only the
+ * newly arrived particles are processed by the expensive location algorithm, preventing
+ * redundant work on particles that are already settled on the current rank.
+ *
+ * The identification is done by comparing the PIDs of particles currently on the rank
+ * against a "snapshot" of PIDs taken *before* the migration occurred.
+ *
+ * @param[in] swarm            The DMSwarm object, which has just completed a migration.
+ * @param[in] n_local_before   The number of particles that were on this rank *before* the
+ *                             migration was performed.
+ * @param[in] pids_before      A pre-sorted array of the PIDs that were on this rank before
+ *                             the migration. This is used for fast lookups.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ *
+ * @note This function assumes the `pids_before` array is sorted in ascending order to
+ *       enable the use of an efficient binary search.
+ */
+PetscErrorCode FlagNewcomersForLocation(DM swarm,
+                                        PetscInt n_local_before,
+                                        const PetscInt64 pids_before[])
+{
+    PetscErrorCode ierr;
+    PetscMPIInt    rank;
+    PetscInt       n_local_after;
+    PetscInt       newcomer_count = 0;
+    
+    // Pointers to the swarm data fields we will read and modify
+    const PetscInt64 *pid_field_after    = NULL;
+    PetscInt         *status_field_after = NULL;
+
+    PetscFunctionBeginUser;
+
+    // --- 1. Input Validation and Basic Setup ---
+    if (!swarm) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONGSTATE, "Input DMSwarm is NULL in FlagNewcomersForLocation.");
+    }
+    // If n_local_before > 0, the corresponding PID array must not be null.
+    if (n_local_before > 0 && !pids_before) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Input pids_before array is NULL for n_local_before > 0.");
+    }
+
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    
+    // Get the number of particles on this rank *after* the migration.
+    ierr = DMSwarmGetLocalSize(swarm, &n_local_after); CHKERRQ(ierr);
+    
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "FlagNewcomersForLocation [Rank %d]: Checking for newcomers. Size before: %d, Size after: %d\n",
+              rank, n_local_before, n_local_after);
+
+    // If there are no particles now, there's nothing to do.
+    if (n_local_after == 0) {
+        PetscFunctionReturn(0);
+    }
+    
+    // --- 2. Access Swarm Data ---
+    // Get read-only access to the PIDs and read-write access to the status field.
+    ierr = DMSwarmGetField(swarm, "DMSwarm_pid",             NULL, NULL, (void**)&pid_field_after); CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "DMSwarm_location_status", NULL, NULL, (void**)&status_field_after); CHKERRQ(ierr);
+    if (!pid_field_after || !status_field_after) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONGSTATE, "Failed to get required swarm fields in FlagNewcomersForLocation.");
+    }
+
+    // --- 3. Identify and Flag Newcomers ---
+    // Loop through all particles currently on this rank.
+    for (PetscInt p_idx = 0; p_idx < n_local_after; ++p_idx) {
+        PetscInt64 current_pid = pid_field_after[p_idx];
+        PetscBool  is_found_in_before_list;
+
+        // Use our custom, efficient helper function for the lookup.
+        ierr = BinarySearchInt64(n_local_before, pids_before, current_pid, &is_found_in_before_list); CHKERRQ(ierr);
+
+        // If the PID was NOT found in the "before" list, it must be a newcomer.
+        if (!is_found_in_before_list) {
+          // Flag it for processing in the next pass of the migration loop.
+          status_field_after[p_idx] = NEEDS_LOCATION;
+            newcomer_count++;
+            
+            LOG_ALLOW(LOCAL, LOG_DEBUG, "[Rank %d]: Flagged newcomer PID %lld at local index %d as NEEDS_LOCATION.\n",
+                      rank, (long long)current_pid, p_idx);
+        }
+    }
+
+    // --- 4. Restore Swarm Fields ---
+    // Release the locks on the swarm data arrays.
+    ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid",             NULL, NULL, (void**)&pid_field_after); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "DMSwarm_location_status", NULL, NULL, (void**)&status_field_after); CHKERRQ(ierr);
+
+    if (newcomer_count > 0) {
+        LOG_ALLOW(LOCAL, LOG_INFO, "[Rank %d]: Identified and flagged %d newcomers.\n", rank, newcomer_count);
+    }
+
+    PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Locates all particles within the grid and calculates their interpolation weights.
+ * @ingroup ParticleLocation
+ *
+ * This function iterates through all particles currently local to this MPI rank.
+ * For each particle, it first checks if the particle is within the rank's
+ * pre-calculated bounding box (`user->bbox`). If it is, it calls the
+ * `LocateParticleInGrid` function to perform the walking search.
+ *
+ * `LocateParticleInGrid` is responsible for finding the containing cell `(i,j,k)`
+ * and calculating the corresponding interpolation weights `(w1,w2,w3)`. It updates
+ * the `particle->cell` and `particle->weights` fields directly upon success.
+ * If the search fails (particle not found within MAX_TRAVERSAL, goes out of bounds,
+ * or gets stuck without resolution), `LocateParticleInGrid` sets the particle's
+ * `cell` to `{-1,-1,-1}` and `weights` to `{0.0, 0.0, 0.0}`.
+ *
+ * After attempting location, this function updates the corresponding entries in the
+ * DMSwarm's "DMSwarm_CellID" and "weight" fields using the potentially modified
+ * data from the `particle` struct.
+ *
+ * @param[in] user Pointer to the UserCtx structure containing grid, swarm, and bounding box info.
+ *
+ * @return PetscErrorCode Returns `0` on success, non-zero on failure (e.g., errors accessing DMSwarm fields).
+ *
+ * @note Assumes `user->bbox` is correctly initialized for the local rank.
+ * @note Assumes `InitializeParticle` correctly populates the temporary `particle` struct.
+ * @note Assumes `UpdateSwarmFields` correctly writes data back to the DMSwarm.
+ */
+PetscErrorCode LocateAllParticlesInGrid(UserCtx *user) {
+    PetscErrorCode ierr;
+    PetscMPIInt rank, size;
+    PetscInt localNumParticles;
+    PetscReal *positions = NULL, *weights = NULL, *velocities = NULL; // Pointers to DMSwarm data arrays
+    PetscInt *cellIndices = NULL;
+    PetscInt *LocStatus = NULL;
+    PetscInt64 *PIDs = NULL;      // Pointers to DMSwarm data arrays
+    DM swarm = user->swarm;                 // Convenience pointer to the swarm DM
+    Particle particle;                      // Reusable temporary Particle struct for processing
+
+    PetscFunctionBeginUser;
+    LOG_FUNC_TIMER_BEGIN_EVENT(EVENT_walkingsearch, LOCAL);
+
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "LocateAllParticlesInGrid - Start on Rank %d/%d.\n", rank, size);
+
+    
+
+    // Optional barrier for debugging synchronization
+    // ierr = MPI_Barrier(PETSC_COMM_WORLD); CHKERRQ(ierr);
+
+    // --- Access DMSwarm Data Arrays ---
+    ierr = DMSwarmGetLocalSize(swarm, &localNumParticles); CHKERRQ(ierr);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "LocateAllParticlesInGrid - Number of local particles: %d.\n", localNumParticles);
+
+    // Get direct pointers to the underlying data arrays for efficiency
+    ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr); // Array to write weights back to
+    ierr = DMSwarmGetField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIndices); CHKERRQ(ierr); // Array to write cell indices back to
+    ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&PIDs); CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "DMSwarm_location_status", NULL, NULL, (void**)&LocStatus); CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "velocity", NULL, NULL, (void**)&velocities); CHKERRQ(ierr);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "LocateAllParticlesInGrid - DMSwarm fields accessed successfully.\n");
+
+    //---  TEST
+    /*
+    PetscInt64 *pid_snapshot = NULL;
+    ierr = GetLocalPIDSnapshot(PIDs,localNumParticles,&pid_snapshot);
+
+    for(PetscInt p = 0; p < localNumParticles;++p){
+      LOG_LOOP_ALLOW(LOCAL,LOG_DEBUG,p,10," S.No = %d | Snapshot PID = %ld | PID = %ld .\n",p,pid_snapshot[p],PIDs[p]); 
+    }
+
+    PetscFree(pid_snapshot);
+    */
+    // ------------
+    
+    // --- Iterate over each local particle ---
+    for (PetscInt i = 0; i < localNumParticles; ++i) {
+        // Load current particle data into the temporary struct
+      ierr = UnpackSwarmFields(i,PIDs, weights, positions, cellIndices, velocities, LocStatus, &particle); CHKERRQ(ierr);
+
+        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "LocateAllParticlesInGrid - Processing Particle [%d]: PID=%lld.\n", i, particle.PID);
+
+        // --- Coarse Check: Is particle within this rank's bounding box? ---
+        // This is a quick check; particle could still be in a ghost cell managed by this rank.
+        PetscBool particle_detected = IsParticleInsideBoundingBox(&(user->bbox), &particle);
+        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "LocateAllParticlesInGrid - Particle [%d] (PID %lld) inside local bbox: %s.\n",
+                       i, particle.PID, particle_detected ? "YES" : "NO");
+
+        if (particle_detected) {
+            // --- Perform Detailed Location Search ---
+            LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "LocateAllParticlesInGrid - Locating Particle [%d] (PID %lld) in grid...\n", i, particle.PID);
+
+            // Call the walking search. This function will update particle.cell and particle.weights
+            // internally if successful, or set them to -1 / 0 if it fails.
+            ierr = LocateParticleInGrid(user, &particle); CHKERRQ(ierr); // Pass only user and particle struct
+
+            // Log the outcome of the search for this particle
+            if (particle.cell[0] >= 0) {
+                 LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10,
+                                "LocateAllParticlesInGrid - Particle [%d] (PID %lld) located/assigned to cell [%d, %d, %d].\n",
+                                i, particle.PID, particle.cell[0], particle.cell[1], particle.cell[2]);
+            } else {
+                 LOG_LOOP_ALLOW(LOCAL, LOG_WARNING, i, 1, // Log all failures
+                                "LocateAllParticlesInGrid - Particle [%d] (PID %lld) FAILED TO LOCATE (CellID = -1).\n",
+                                i, particle.PID);
+            }
+            // --- Weight calculation is now handled inside LocateParticleInGrid ---
+
+        } else {
+            // Particle was outside the local bounding box - mark as invalid for this rank
+            LOG_LOOP_ALLOW(LOCAL, LOG_WARNING, i, 1,
+                           "LocateAllParticlesInGrid - Particle [%d] (PID %lld) outside local bbox. Marking invalid (CellID = -1).\n",
+                           i, particle.PID);
+            particle.cell[0] = -1;
+            particle.cell[1] = -1;
+            particle.cell[2] = -1;
+        } // end if (particle_detected)
+
+        // --- Update DMSwarm Data ---
+        // Write the potentially modified cell index and weights from the 'particle' struct
+        // back into the main DMSwarm data arrays.
+        ierr = UpdateSwarmFields(i, &particle, weights, cellIndices, LocStatus); CHKERRQ(ierr);
+
+    } // --- End particle loop ---
+
+    // --- Restore DMSwarm Data Arrays ---
+    ierr = DMSwarmRestoreField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIndices); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&PIDs); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "DMSwarm_location_status", NULL, NULL, (void**)&LocStatus); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "velocity", NULL, NULL, (void**)&velocities); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(LOCAL, LOG_INFO, "LocateAllParticlesInGrid - DMSwarm fields restored successfully on Rank %d.\n", rank);
+
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "LocateAllParticlesInGrid - Completed function on Rank %d.\n", rank);
+    LOG_FUNC_TIMER_END_EVENT(EVENT_walkingsearch, LOCAL);
+    PetscFunctionReturn(0);
+}

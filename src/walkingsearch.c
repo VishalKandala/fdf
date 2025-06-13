@@ -1257,132 +1257,72 @@ PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle)
     PetscFunctionReturn(0);
 }
 
-
-
 /**
- * @brief Locates the cell within the grid that contains the given particle.
+ * @brief Finds the MPI rank that owns a given global cell index.
+ * @ingroup DomainInfo
  *
- * This function navigates through cells in a 3D grid to find the cell that contains the specified particle.
- * It uses the signed distances from the particle to the cell faces to determine the direction to move.
+ * This function performs a linear search through the pre-computed decomposition map
+ * (`user->RankCellInfoMap`) to determine which process is responsible for the cell
+ * with global indices (i, j, k). It is the definitive method for resolving cell
+ * ownership in the "Walk and Handoff" migration algorithm.
  *
- * @param[in]  user     Pointer to the user-defined context containing grid information (DMDA, etc.).
- * @param[in]  particle Pointer to the Particle structure containing its location and identifiers.
- * @param[in]  d         A pointer to an array of six `PetscReal` values that store the
- *                       signed distances from the particle to each face of the cell.
+ * If the provided indices are outside the range of any rank (e.g., negative or
+ * beyond the global domain), the function will not find an owner and `owner_rank`
+ * will be set to -1.
  *
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ * @param[in]  user       Pointer to the UserCtx structure, which must contain the
+ *                        initialized `RankCellInfoMap` and `num_ranks`.
+ * @param[in]  i          Global i-index of the cell to find.
+ * @param[in]  j          Global j-index of the cell to find.
+ * @param[in]  k          Global k-index of the cell to find.
+ * @param[out] owner_rank Pointer to a `PetscMPIInt` where the resulting owner rank will
+ *                        be stored. It is set to -1 if no owner is found.
  *
- * @note
- * - Ensure that the `user` and `particle` pointers are not `NULL` before calling this function.
- * - The function assumes that the grid is properly partitioned and that each process has access to its local grid.
- * - The `Particle` structure should have its `loc` field accurately set before calling this function.
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
  */
-/*
-PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle, PetscReal *d)
+PetscErrorCode FindOwnerOfCell(UserCtx *user, PetscInt i, PetscInt j, PetscInt k, PetscMPIInt *owner_rank)
 {
     PetscErrorCode ierr;
-    PetscInt idx, idy, idz;
-    PetscInt idx0, idy0,idz0;
-    PetscInt traversal_steps;
-    PetscBool cell_found = PETSC_FALSE;
-    Cmpnts p = particle->loc;
-    Cell current_cell;
-    const PetscReal threshold = DISTANCE_THRESHOLD ;
-    DMDALocalInfo info;
-    PetscInt repeatedIndexCount = 0;
-    PetscInt prevIdx = PETSC_MIN_INT, prevIdy = PETSC_MIN_INT, prevIdz = PETSC_MIN_INT;
-    
-    //   LOG_FUNC_TIMER_BEGIN_EVENT(EVENT_Individualwalkingsearch,LOCAL);    
+    PetscMPIInt size;
 
-    // Retrieve local DMDA info (which holds xs, xm, ys, ym, zs, zm)
-    ierr = DMDAGetLocalInfo(user->da,&info); CHKERRQ(ierr);
-    
-    // Initialize traversal parameters
-    ierr = InitializeTraversalParameters(user, particle, &idx0, &idy0, &idz0, &traversal_steps); CHKERRQ(ierr);
+    PetscFunctionBeginUser;
 
-    // Store initial cell in the counter.
-    *idx = idx0; *idy = idy0; *idz = idz0;
-    
-    // Traverse the grid to locate the particle
-    while (!cell_found && traversal_steps < MAX_TRAVERSAL) {
-        traversal_steps++;
+    ierr = MPI_Comm_size(PETSC_COMM_WORLD,&size); CHKERRQ(ierr);
 
-        // Detect if we haven't changed indices from the last iteration
-        if (idx == prevIdx && idy == prevIdy && idz == prevIdz) {
-            repeatedIndexCount++;
-            if (repeatedIndexCount > 5) {
-                // We toggled or got stuck in the same cell multiple times
-                LOG_ALLOW(LOCAL, LOG_WARNING,
-                "LocateParticleInGrid - Toggling or repeated index detected at cell (%d,%d,%d); breaking.\n",
-                    idx, idy, idz);
-                break;
-            }
-        } else {
-            // We moved to a new cell index, so reset the counter
-            repeatedIndexCount = 0;
-            prevIdx = idx;
-            prevIdy = idy;
-            prevIdz = idz;
+    // --- 1. Input Validation ---
+    if (!user || !user->RankCellInfoMap) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONGSTATE, "UserCtx or RankCellInfoMap is not initialized in FindOwnerOfCell.");
+    }
+    if (!owner_rank) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Output pointer owner_rank is NULL in FindOwnerOfCell.");
+    }
+
+    // --- 2. Linear Search through the Decomposition Map ---
+    // Initialize to a "not found" state.
+    *owner_rank = -1;
+
+    // Loop through the map, which contains the ownership info for every rank 'r'.
+    for (PetscMPIInt r = 0; r < size; ++r) {
+        const RankCellInfo *info = &user->RankCellInfoMap[r];
+
+        // A rank owns a cell if the cell's index is within its start (inclusive)
+        // and end (exclusive) range for all three dimensions.
+        if ((i >= info->xs_cell && i < info->xs_cell + info->xm_cell) &&
+            (j >= info->ys_cell && j < info->ys_cell + info->ym_cell) &&
+            (k >= info->zs_cell && k < info->zs_cell + info->zm_cell))
+        {
+            *owner_rank = r; // We found the owner.
+            break;           // The search is over, exit the loop.
         }
+    }
 
-        // Check if current cell is within the local grid
-        PetscBool is_within;
-        ierr = CheckCellWithinLocalGrid(user, idx, idy, idz, &is_within); CHKERRQ(ierr);
-        if (!is_within) {
-	  LOG_ALLOW(LOCAL, LOG_WARNING,
-                      "LocateParticleInGrid [PID %lld]: Search moved outside local ghosted grid boundaries at cell (%d, %d, %d). Breaking search.\n",
-                      (long long)particle->PID, idx, idy, idz);
-            break;
-        }
+    // --- 3. Logging for Diagnostics ---
+    // This is extremely useful for debugging particle migration issues.
+    if (*owner_rank == -1) {
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "FindOwnerOfCell: No owner found for global cell (%d, %d, %d). It is likely outside the domain.\n", i, j, k);
+    } else {
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "FindOwnerOfCell: Owner of cell (%d, %d, %d) is Rank %d.\n", i, j, k, *owner_rank);
+    }
 
-        // Retrieve the current cell's vertices
-        ierr = RetrieveCurrentCell(user, idx, idy, idz, &current_cell); CHKERRQ(ierr);
-
-        // Evaluate the particle's position relative to the current cell
-        PetscInt position;
-        ierr = EvaluateParticlePosition(&current_cell, d , p, &position, threshold); CHKERRQ(ierr);
-	
-	// Log every 10th iteration of evaluation
-	LOG_LOOP_ALLOW(GLOBAL, LOG_DEBUG, traversal_steps, 10,
-		       "LocateParticleInGrid - At traversal step %d, evaluated particle [PID: %lld] position relative to cell (%d, %d, %d): position=%d.\n",
-		       traversal_steps, (long long)particle->PID,idx, idy, idz, position);
-
-
-        if (position == 0) { // Inside the cell
-            cell_found = PETSC_TRUE;
-            particle->cell[0] = idx;
-            particle->cell[1] = idy;
-            particle->cell[2] = idz;
-            LOG_ALLOW(LOCAL,LOG_INFO, "LocateParticleInGrid - Particle found in cell (%d, %d, %d).\n", idx, idy, idz);
-            break;
-        }
-        else if (position >= 1) {
-	  // On boundary (face,edge or corner) [ can be expanded for specific cases if necessary by having conditions position==1,2 or 3]
-           // Depending on application, decide whether to consider it inside or check neighbors
-           // Here, we treat it as inside (for any time after the first search step)
-	   
-           cell_found = PETSC_TRUE;
-           particle->cell[0] = idx;
-           particle->cell[1] = idy;
-           particle->cell[2] = idz;
-           LOG_ALLOW(LOCAL,LOG_INFO, "LocateParticleInGrid - Particle is on the boundary of cell (%d, %d, %d).\n", idx, idy, idz);
-           break;
-	   }
-        else { // Outside the cell
-            // Update cell indices based on positive distances
-	  ierr = UpdateCellIndicesBasedOnDistances(d, &idx, &idy, &idz,&info); CHKERRQ(ierr);
-        }
-    } // !cell_found 
-
-    // Finalize traversal by reporting the results
-    ierr = FinalizeTraversal(user, particle, traversal_steps, cell_found, idx, idy, idz); CHKERRQ(ierr);
-
-    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO, "LocateParticleInGrid - Finalized particle search across all ranks.\n");
-
-
-    //  LOG_FUNC_TIMER_END_EVENT(EVENT_Individualwalkingsearch,LOCAL);
-
-    return 0;
+    PetscFunctionReturn(0);
 }
-*/
-

@@ -390,4 +390,51 @@ PetscErrorCode Contra2Cart(UserCtx *user);
  */
 PetscErrorCode SetupBoundaryConditions(UserCtx *user);
 
+/**
+ * @brief Creates and distributes a map of the domain's cell decomposition to all ranks.
+ * @ingroup DomainInfo
+ *
+ * This function is a critical part of the simulation setup. It determines the global
+ * cell ownership for each MPI rank and makes this information available to all
+ * other ranks. This "decomposition map" is essential for the robust "Walk and Handoff"
+ * particle migration strategy, allowing any rank to quickly identify the owner of a
+ * target cell.
+ *
+ * The process involves:
+ * 1. Each rank gets its own node ownership information from the DMDA.
+ * 2. It converts this node information into cell ownership ranges using the
+ *    `GetOwnedCellRange` helper function.
+ * 3. It participates in an `MPI_Allgather` collective operation to build a complete
+ *    array (`user->RankCellInfoMap`) containing the ownership information for every rank.
+ *
+ * This function should be called once during initialization after the primary DMDA
+ * (user->da) has been set up.
+ *
+ * @param[in,out] user Pointer to the UserCtx structure. The function will allocate and
+ *                     populate `user->RankCellInfoMap` and set `user->num_ranks`.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ *         Errors can occur if input pointers are NULL or if MPI communication fails.
+ */
+PetscErrorCode SetupDomainCellDecompositionMap(UserCtx *user);
+
+/**
+ * @brief Performs a binary search for a key in a sorted array of PetscInt64.
+ *
+ * This is a standard binary search algorithm implemented as a PETSc-style helper function.
+ * It efficiently determines if a given `key` exists within a `sorted` array.
+ *
+ * @param[in]  n      The number of elements in the array.
+ * @param[in]  arr    A pointer to the sorted array of PetscInt64 values to be searched.
+ * @param[in]  key    The PetscInt64 value to search for.
+ * @param[out] found  A pointer to a PetscBool that will be set to PETSC_TRUE if the key
+ *                    is found, and PETSC_FALSE otherwise.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ *
+ * @note The input array `arr` **must** be sorted in ascending order for the algorithm
+ *       to work correctly.
+ */
+PetscErrorCode BinarySearchInt64(PetscInt n, const PetscInt64 arr[], PetscInt64 key, PetscBool *found);
+
  #endif // SETUP_H

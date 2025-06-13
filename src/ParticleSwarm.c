@@ -68,22 +68,25 @@ PetscErrorCode RegisterParticleFields(DM swarm)
     
     // Register each field using the helper function
     ierr = RegisterSwarmField(swarm, "position", 3 ,PETSC_REAL); CHKERRQ(ierr);
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "RegisterParticleFields - Registered field 'position'.\n");
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "Registered field 'position'.\n");
     
     ierr = RegisterSwarmField(swarm, "velocity", 3, PETSC_REAL); CHKERRQ(ierr);
-    LOG_ALLOW(LOCAL,LOG_DEBUG,"RegisterParticleFields - Registered field 'velocity'.\n");
+    LOG_ALLOW(LOCAL,LOG_DEBUG,"Registered field 'velocity'.\n");
     
     ierr = RegisterSwarmField(swarm, "DMSwarm_CellID", 3, PETSC_INT); CHKERRQ(ierr);
-    LOG_ALLOW(LOCAL,LOG_DEBUG,"RegisterParticleFields - Registered field 'DMSwarm_CellID'.\n");
+    LOG_ALLOW(LOCAL,LOG_DEBUG,"Registered field 'DMSwarm_CellID'.\n");
     
     ierr = RegisterSwarmField(swarm, "weight", 3,PETSC_REAL); CHKERRQ(ierr);
-    LOG_ALLOW(LOCAL,LOG_DEBUG,"RegisterParticleFields - Registered field 'weight'.\n");
+    LOG_ALLOW(LOCAL,LOG_DEBUG,"Registered field 'weight'.\n");
 
     ierr = RegisterSwarmField(swarm,"P", 1,PETSC_REAL); CHKERRQ(ierr);
-    LOG_ALLOW(LOCAL,LOG_DEBUG,"RegisterParticleFields - Registered field 'P' - Pressure.\n");
+    LOG_ALLOW(LOCAL,LOG_DEBUG,"Registered field 'P' - Pressure.\n");
 
     ierr = RegisterSwarmField(swarm,"pos_phy", 3,PETSC_REAL); CHKERRQ(ierr);
-    LOG_ALLOW(LOCAL,LOG_DEBUG,"RegisterParticleFields - Registered field 'pos_phy' - Physical Position.\n");
+    LOG_ALLOW(LOCAL,LOG_DEBUG,"Registered field 'pos_phy' - Physical Position.\n");
+
+    ierr =  RegisterSwarmField(swarm,"DMSwarm_location_status",1,PETSC_INT);CHKERRQ(ierr);
+    LOG_ALLOW(LOCAL,LOG_DEBUG,"Registered field 'DMSwarm_location_status' - Status of Location of Particle(located,lost etc).\n");
     
     // Finalize the field registration after all fields have been added
     ierr = DMSwarmFinalizeFieldRegister(swarm); CHKERRQ(ierr);
@@ -347,6 +350,7 @@ static PetscErrorCode InitializeParticleBasicProperties(UserCtx *user,
     PetscReal      *pos_phy_field = NULL;   // Pointer to swarm field for physical positions (backup/alternative)
     PetscInt64     *particleIDs = NULL;     // Pointer to swarm field for Particle IDs
     PetscInt       *cellIDs_petsc = NULL;   // Pointer to swarm field for DMSwarm_CellID (i,j,k of containing cell)
+    PetscInt       *status_field  = NULL;   // Pointer to swarm field for DMSwarm_location_status(NEEDS_LOCATION etc)
     PetscMPIInt    rank,size;                    // MPI rank of the current process, and total number of ranks.
     const Cmpnts   ***coor_nodes_local_array; // Read-only access to local node coordinates (from user->da)
     Vec            Coor_local;              // Local vector for node coordinates
@@ -392,6 +396,7 @@ static PetscErrorCode InitializeParticleBasicProperties(UserCtx *user,
     ierr = DMSwarmGetField(swarm, "pos_phy",        NULL, NULL, (void**)&pos_phy_field);   CHKERRQ(ierr);
     ierr = DMSwarmGetField(swarm, "DMSwarm_pid",    NULL, NULL, (void**)&particleIDs);    CHKERRQ(ierr);
     ierr = DMSwarmGetField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs_petsc);  CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "DMSwarm_location_status",NULL,NULL,(void**)&status_field); CHKERRQ(ierr);
 
     // --- 4. Determine Starting Global PID for this Rank ---
     PetscInt particles_per_rank_ideal = user->NumberofParticles / size; // Assumes user->size is PETSC_COMM_WORLD size
@@ -448,6 +453,7 @@ static PetscErrorCode InitializeParticleBasicProperties(UserCtx *user,
         pos_phy_field[3*p+2]   = phys_coords.z;
         particleIDs[p]         = (PetscInt64)base_pid_for_rank + p; 
         cellIDs_petsc[3*p+0]   = -1; cellIDs_petsc[3*p+1] = -1; cellIDs_petsc[3*p+2] = -1;
+	status_field[p]        = UNINITIALIZED;
 
         // --- 5.d. Logging for this particle ---
         if (particle_placed_by_this_rank) {
@@ -470,6 +476,7 @@ static PetscErrorCode InitializeParticleBasicProperties(UserCtx *user,
     ierr = DMSwarmRestoreField(swarm, "pos_phy",        NULL, NULL, (void**)&pos_phy_field);   CHKERRQ(ierr);
     ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid",    NULL, NULL, (void**)&particleIDs);    CHKERRQ(ierr);
     ierr = DMSwarmRestoreField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIDs_petsc);  CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "DMSwarm_location_status", NULL, NULL, (void**)&status_field); CHKERRQ(ierr);
     ierr = DMDAVecRestoreArrayRead(user->fda, Coor_local, (void*)&coor_nodes_local_array); CHKERRQ(ierr);
 
     LOG_ALLOW(LOCAL, LOG_INFO, "InitializeParticleBasicProperties - Rank %d: Completed processing for %d particles.\n",
@@ -810,8 +817,7 @@ PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles, PetscIn
     return 0;
 }
 
-// This particle struct implementation is specifically for search and may not be used for later work! but can be extended!
-// -----------------------------------------------------------------------------------------------------------------------
+
 /**
  * @brief Initializes a Particle struct with data from DMSwarm fields.
  *
@@ -822,45 +828,47 @@ PetscErrorCode CreateParticleSwarm(UserCtx *user, PetscInt numParticles, PetscIn
  * @param[in]     weights      Pointer to the array of particle weights.
  * @param[in]     positions    Pointer to the array of particle positions.
  * @param[in]     cellIndices  Pointer to the array of particle cell indices.
+ * @param[in]     velocities   Pointer to the array of particle velocities.
+ * @param[in]     LocStatus    Pointer to the array of cell location status indicators.
  * @param[out]    particle     Pointer to the Particle struct to initialize.
  *
  * @return PetscErrorCode  Returns `0` on success, non-zero on failure.
  */
-PetscErrorCode InitializeParticle(PetscInt i, const PetscInt64 *PIDs, const PetscReal *weights,
-                                         const PetscReal *positions, const PetscInt *cellIndices,
-                                         Particle *particle) {
+PetscErrorCode UnpackSwarmFields(PetscInt i, const PetscInt64 *PIDs, const PetscReal *weights,
+				 const PetscReal *positions, const PetscInt *cellIndices,
+				 PetscReal *velocities,PetscInt *LocStatus,Particle *particle) {
     PetscFunctionBeginUser;
     
     if (particle == NULL) {
-        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "InitializeParticle - Output Particle pointer is NULL. \n");
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Output Particle pointer is NULL. \n");
     }
     
     // logging the start of particle initialization
-    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO, "InitializeParticle - Initializing Particle [%d] with PID: %ld.\n", i, PIDs[i]);
+    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO, "Unpacking Particle [%d] with PID: %ld.\n", i, PIDs[i]);
     
     // Initialize PID
     particle->PID = PIDs[i];
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG, "InitializeParticle - Particle [%d] PID set to: %ld.\n", i, particle->PID);
+    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG, "Particle [%d] PID set to: %ld.\n", i, particle->PID);
     
     // Initialize weights
     particle->weights.x = weights[3 * i];
     particle->weights.y = weights[3 * i + 1];
     particle->weights.z = weights[3 * i + 2];
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "InitializeParticle - Particle [%d] weights set to: (%.6f, %.6f, %.6f).\n", 
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "Particle [%d] weights set to: (%.6f, %.6f, %.6f).\n", 
         i, particle->weights.x, particle->weights.y, particle->weights.z);
     
     // Initialize locations
     particle->loc.x = positions[3 * i];
     particle->loc.y = positions[3 * i + 1];
     particle->loc.z = positions[3 * i + 2];
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG, "InitializeParticle - Particle [%d] location set to: (%.6f, %.6f, %.6f).\n", 
+    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG, "Particle [%d] location set to: (%.6f, %.6f, %.6f).\n", 
         i, particle->loc.x, particle->loc.y, particle->loc.z);
     
     // Initialize velocities (assuming default zero; modify if necessary)
-    particle->vel.x = 0.0;
-    particle->vel.y = 0.0;
-    particle->vel.z = 0.0;
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"InitializeParticle - Particle [%d] velocities initialized to zero.\n", i);
+    particle->vel.x = velocities[3 * i];
+    particle->vel.y = velocities[3 * i + 1];
+    particle->vel.z = velocities[3 * i + 2];
+    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"Particle [%d] velocities unpacked to: [%.6f,%.6f,%.6f].\n", i,particle->vel.x,particle->vel.y,particle->vel.z);
     
     // Initialize cell indices
     particle->cell[0] = cellIndices[3 * i];
@@ -868,6 +876,13 @@ PetscErrorCode InitializeParticle(PetscInt i, const PetscInt64 *PIDs, const Pets
     particle->cell[2] = cellIndices[3 * i + 2];
     LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"InitializeParticle - Particle [%d] cell indices set to: [%d, %d, %d].\n", 
         i, particle->cell[0], particle->cell[1], particle->cell[2]);
+
+    particle->location_status = (ParticleLocationStatus)LocStatus[i];
+    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG, "Particle [%d] Status set to: %d.\n", i, particle->location_status);
+
+    // The destination_rank is only set by the location search, not read from the swarm,
+    // so we initialize it to a known invalid state.
+    particle->destination_rank = MPI_PROC_NULL;
     
     // logging the completion of particle initialization
     LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"InitializeParticle - Completed initialization of Particle [%d]. \n", i);
@@ -884,15 +899,16 @@ PetscErrorCode InitializeParticle(PetscInt i, const PetscInt64 *PIDs, const Pets
  * @param[in] particle     Pointer to the Particle struct containing updated data.
  * @param[in,out] weights  Pointer to the array of particle weights.
  * @param[in,out] cellIndices Pointer to the array of particle cell indices.
+ * @param[in,out] LocStatus   Pointer to the array of cell location status indicators.
  *
  * @return PetscErrorCode  Returns `0` on success, non-zero on failure.
  */
 PetscErrorCode UpdateSwarmFields(PetscInt i, const Particle *particle,
-                                        PetscReal *weights, PetscInt *cellIndices) {
+				 PetscReal *weights, PetscInt *cellIndices, PetscInt *status_field) {
     PetscFunctionBeginUser;
     
     if (particle == NULL) {
-        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UpdateSwarmFields - Input Particle pointer is NULL.\n");
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Input Particle pointer is NULL.\n");
     }
     
     // logging the start of swarm fields update
@@ -902,143 +918,25 @@ PetscErrorCode UpdateSwarmFields(PetscInt i, const Particle *particle,
     weights[3 * i]     = particle->weights.x;
     weights[3 * i + 1] = particle->weights.y;
     weights[3 * i + 2] = particle->weights.z;
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"UpdateSwarmFields - Updated weights for Particle [%d]: (%.6f, %.6f, %.6f).\n", 
+    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"Updated weights for Particle [%d]: (%.6f, %.6f, %.6f).\n", 
         i, weights[3 * i], weights[3 * i + 1], weights[3 * i + 2]);
     
     // Update cell indices
     cellIndices[3 * i]     = particle->cell[0];
     cellIndices[3 * i + 1] = particle->cell[1];
     cellIndices[3 * i + 2] = particle->cell[2];
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG, "UpdateSwarmFields -  Updated cell indices for Particle [%d]: [%d, %d, %d].\n", 
+    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG, "Updated cell indices for Particle [%d]: [%d, %d, %d].\n", 
         i, cellIndices[3 * i], cellIndices[3 * i + 1], cellIndices[3 * i + 2]);
+
+    status_field[i] = particle->location_status;
+    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG, "Updated location status for Particle [%d]: [%d].\n", 
+        i, status_field[i]);
     
     // logging the completion of swarm fields update
-    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"UpdateSwarmFields  - Completed updating DMSwarm fields for Particle [%d].\n", i);
+    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"Completed updating DMSwarm fields for Particle [%d].\n", i);
     
     PetscFunctionReturn(0);
 }
-
-/**
- * @brief Locates all particles within the grid and calculates their interpolation weights.
- * @ingroup ParticleLocation
- *
- * This function iterates through all particles currently local to this MPI rank.
- * For each particle, it first checks if the particle is within the rank's
- * pre-calculated bounding box (`user->bbox`). If it is, it calls the
- * `LocateParticleInGrid` function to perform the walking search.
- *
- * `LocateParticleInGrid` is responsible for finding the containing cell `(i,j,k)`
- * and calculating the corresponding interpolation weights `(w1,w2,w3)`. It updates
- * the `particle->cell` and `particle->weights` fields directly upon success.
- * If the search fails (particle not found within MAX_TRAVERSAL, goes out of bounds,
- * or gets stuck without resolution), `LocateParticleInGrid` sets the particle's
- * `cell` to `{-1,-1,-1}` and `weights` to `{0.0, 0.0, 0.0}`.
- *
- * After attempting location, this function updates the corresponding entries in the
- * DMSwarm's "DMSwarm_CellID" and "weight" fields using the potentially modified
- * data from the `particle` struct.
- *
- * @param[in] user Pointer to the UserCtx structure containing grid, swarm, and bounding box info.
- *
- * @return PetscErrorCode Returns `0` on success, non-zero on failure (e.g., errors accessing DMSwarm fields).
- *
- * @note Assumes `user->bbox` is correctly initialized for the local rank.
- * @note Assumes `InitializeParticle` correctly populates the temporary `particle` struct.
- * @note Assumes `UpdateSwarmFields` correctly writes data back to the DMSwarm.
- */
-PetscErrorCode LocateAllParticlesInGrid(UserCtx *user) {
-    PetscErrorCode ierr;
-    PetscMPIInt rank, size;
-    PetscInt localNumParticles;
-    PetscReal *positions = NULL, *weights = NULL; // Pointers to DMSwarm data arrays
-    PetscInt *cellIndices = NULL;
-    PetscInt64 *PIDs = NULL;      // Pointers to DMSwarm data arrays
-    DM swarm = user->swarm;                 // Convenience pointer to the swarm DM
-    Particle particle;                      // Reusable temporary Particle struct for processing
-
-    PetscFunctionBeginUser;
-    LOG_FUNC_TIMER_BEGIN_EVENT(EVENT_walkingsearch, LOCAL);
-
-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
-    ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL, LOG_INFO, "LocateAllParticlesInGrid - Start on Rank %d/%d.\n", rank, size);
-
-    // Optional barrier for debugging synchronization
-    // ierr = MPI_Barrier(PETSC_COMM_WORLD); CHKERRQ(ierr);
-
-    // --- Access DMSwarm Data Arrays ---
-    ierr = DMSwarmGetLocalSize(swarm, &localNumParticles); CHKERRQ(ierr);
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "LocateAllParticlesInGrid - Number of local particles: %d.\n", localNumParticles);
-
-    // Get direct pointers to the underlying data arrays for efficiency
-    ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
-    ierr = DMSwarmGetField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr); // Array to write weights back to
-    ierr = DMSwarmGetField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIndices); CHKERRQ(ierr); // Array to write cell indices back to
-    ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&PIDs); CHKERRQ(ierr);
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "LocateAllParticlesInGrid - DMSwarm fields accessed successfully.\n");
-
-    // --- Iterate over each local particle ---
-    for (PetscInt i = 0; i < localNumParticles; ++i) {
-        // Load current particle data into the temporary struct
-      ierr = InitializeParticle(i,PIDs, weights, positions, cellIndices, &particle); CHKERRQ(ierr);
-
-        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "LocateAllParticlesInGrid - Processing Particle [%d]: PID=%lld.\n", i, particle.PID);
-
-        // --- Coarse Check: Is particle within this rank's bounding box? ---
-        // This is a quick check; particle could still be in a ghost cell managed by this rank.
-        PetscBool particle_detected = IsParticleInsideBoundingBox(&(user->bbox), &particle);
-        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "LocateAllParticlesInGrid - Particle [%d] (PID %lld) inside local bbox: %s.\n",
-                       i, particle.PID, particle_detected ? "YES" : "NO");
-
-        if (particle_detected) {
-            // --- Perform Detailed Location Search ---
-            LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "LocateAllParticlesInGrid - Locating Particle [%d] (PID %lld) in grid...\n", i, particle.PID);
-
-            // Call the walking search. This function will update particle.cell and particle.weights
-            // internally if successful, or set them to -1 / 0 if it fails.
-            ierr = LocateParticleInGrid(user, &particle); CHKERRQ(ierr); // Pass only user and particle struct
-
-            // Log the outcome of the search for this particle
-            if (particle.cell[0] >= 0) {
-                 LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10,
-                                "LocateAllParticlesInGrid - Particle [%d] (PID %lld) located/assigned to cell [%d, %d, %d].\n",
-                                i, particle.PID, particle.cell[0], particle.cell[1], particle.cell[2]);
-            } else {
-                 LOG_LOOP_ALLOW(LOCAL, LOG_WARNING, i, 1, // Log all failures
-                                "LocateAllParticlesInGrid - Particle [%d] (PID %lld) FAILED TO LOCATE (CellID = -1).\n",
-                                i, particle.PID);
-            }
-            // --- Weight calculation is now handled inside LocateParticleInGrid ---
-
-        } else {
-            // Particle was outside the local bounding box - mark as invalid for this rank
-            LOG_LOOP_ALLOW(LOCAL, LOG_WARNING, i, 1,
-                           "LocateAllParticlesInGrid - Particle [%d] (PID %lld) outside local bbox. Marking invalid (CellID = -1).\n",
-                           i, particle.PID);
-            particle.cell[0] = -1;
-            particle.cell[1] = -1;
-            particle.cell[2] = -1;
-        } // end if (particle_detected)
-
-        // --- Update DMSwarm Data ---
-        // Write the potentially modified cell index and weights from the 'particle' struct
-        // back into the main DMSwarm data arrays.
-        ierr = UpdateSwarmFields(i, &particle, weights, cellIndices); CHKERRQ(ierr);
-
-    } // --- End particle loop ---
-
-    // --- Restore DMSwarm Data Arrays ---
-    ierr = DMSwarmRestoreField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
-    ierr = DMSwarmRestoreField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr);
-    ierr = DMSwarmRestoreField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIndices); CHKERRQ(ierr);
-    ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&PIDs); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC(LOCAL, LOG_INFO, "LocateAllParticlesInGrid - DMSwarm fields restored successfully on Rank %d.\n", rank);
-
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "LocateAllParticlesInGrid - Completed function on Rank %d.\n", rank);
-    LOG_FUNC_TIMER_END_EVENT(EVENT_walkingsearch, LOCAL);
-    PetscFunctionReturn(0);
-}
-
 
 /**
  * @brief Checks if a particle's location is within a specified bounding box.

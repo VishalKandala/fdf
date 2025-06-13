@@ -1746,3 +1746,170 @@ static PetscErrorCode DetermineSurfaceInitializationParameters(
     }
     PetscFunctionReturn(0);
 }
+
+/////////////////////////////////////////////////////////////////////////////
+
+/**
+ * @brief Defines the basic migration pattern for particles within the swarm.
+ *
+ * This function establishes the migration pattern that dictates how particles
+ * move between different MPI ranks in the simulation. It initializes a migration
+ * list where each particle is assigned a target rank based on predefined conditions.
+ * The migration pattern can be customized to implement various migration behaviors.
+ *
+ * @param[in,out] user    Pointer to the UserCtx structure containing simulation context.
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ */
+PetscErrorCode DefineBasicMigrationPattern(UserCtx* user) {
+    DM swarm = user->swarm;           // DMSwarm object managing the particle swarm
+    PetscErrorCode ierr;              // Error code for PETSc functions
+    PetscMPIInt *miglist;             // Migration list indicating target MPI ranks for particles
+    PetscInt localNumParticles;       // Number of particles managed by the local MPI process
+    PetscMPIInt rank, size;           // MPI rank of the current process and total number of processes
+
+    // Retrieve the MPI rank of the current process
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    // Retrieve the total number of MPI processes
+    ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"DefineBasicMigrationPattern - Rank %d out of %d processes.\n", rank, size);
+
+    // Get the number of particles managed by the local MPI process
+    ierr = DMSwarmGetLocalSize(swarm, &localNumParticles); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"DefineBasicMigrationPattern - Rank %d handling %d particles.\n", rank, localNumParticles);
+
+    // Allocate memory for the migration list
+    ierr = PetscCalloc1(localNumParticles, &miglist); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"DefineBasicMigrationPattern - Allocated migration list for %d particles.\n", localNumParticles);
+
+    // Initialize the migration list: assign each particle to migrate to the current rank by default
+    for (PetscInt p = 0; p < localNumParticles; p++) {
+        miglist[p] = rank;
+    }
+    LOG_ALLOW(LOG_DEBUG, LOCAL,"DefineBasicMigrationPattern - Initialized migration list with default rank assignments.\n");
+
+    // Define custom migration conditions based on the number of MPI processes
+    if (size > 1) {
+        // Example condition: Assign the first particle in rank 0 to migrate to rank 2
+        if (rank == 0 && localNumParticles > 0) {
+            miglist[0] = 2;
+            LOG_ALLOW(LOG_INFO,LOCAL,"DefineBasicMigrationPattern - Rank 0, Particle 0 assigned to migrate to Rank 2.\n");
+        }
+
+        // Additional custom conditions can be added here for other ranks
+        // Example:
+        // if(rank == 1 && localNumParticles > 1){
+        //     miglist[1] = 3;
+        //     LOG_ALLOW_SYNC(LOG_INFO, "DefineBasicMigrationPattern - Rank 1, Particle 1 assigned to migrate to Rank 3.\n");
+        // }
+
+        // ... add more custom conditions as needed ...
+    }
+
+    // Assign the migration list to the user context for later use
+    user->miglist = miglist;
+    LOG_ALLOW(LOG_DEBUG, LOCAL,"DefineBasicMigrationPattern - Migration list assigned to user context.\n");
+
+    /*
+    // Optional: Debugging output to verify migration assignments
+    for(PetscInt p = 0; p < localNumParticles; p++) {
+        PetscSynchronizedPrintf(PETSC_COMM_WORLD,
+            "DefineBasicMigrationPattern - Rank %d - miglist[%ld] = %ld\n",
+            rank, p, miglist[p]);
+    }
+    PetscSynchronizedPrintf(PETSC_COMM_WORLD, "***********************\n");
+    PetscSynchronizedFlush(PETSC_COMM_WORLD, PETSC_STDOUT);
+    */
+
+    return 0;
+}
+
+
+/**
+ * @brief Performs the basic migration of particles based on the defined migration pattern.
+ *
+ * This function updates the positions of particles within the swarm by migrating them
+ * to target MPI ranks as specified in the migration list. It handles the migration process
+ * by setting the 'DMSwarm_rank' field for each particle and invokes the DMSwarm migration
+ * mechanism to relocate particles across MPI processes. After migration, it cleans up
+ * allocated resources and ensures synchronization across all MPI ranks.
+ *
+ * @param[in,out] user    Pointer to the UserCtx structure containing simulation context.
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ */
+PetscErrorCode PerformBasicMigration(UserCtx* user) {
+    DM swarm = user->swarm;                // DMSwarm object managing the particle swarm
+    PetscErrorCode ierr;                   // Error code for PETSc functions
+    PetscMPIInt *miglist;                  // Migration list indicating target MPI ranks for particles
+    PetscMPIInt *rankval;                  // Array to store current MPI rank of each particle
+    PetscInt localNumParticles;            // Number of particles managed by the local MPI process
+    PetscMPIInt rank;                      // MPI rank of the current process
+    PetscBool removePoints = PETSC_TRUE;   // Flag indicating whether to remove migrated particles from the local swarm
+
+    // Retrieve the MPI rank of the current process
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"PerformBasicMigration - Rank %d is initiating migration.\n", rank);
+
+    // Execute the migration pattern to define target ranks for particles
+    ierr = DefineBasicMigrationPattern(user); CHKERRQ(ierr);
+    LOG_ALLOW(LOCAL,LOG_INFO,"PerformBasicMigration - Migration pattern defined.\n");
+
+    // Get the number of particles in the local swarm
+    ierr = DMSwarmGetLocalSize(swarm, &localNumParticles); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"PerformBasicMigration - Rank %d handling %d particles.\n", rank, localNumParticles);
+
+    // Retrieve the migration list from the user context
+    miglist = user->miglist;
+    LOG_ALLOW(LOG_DEBUG,LOCAL,"PerformBasicMigration - Retrieved migration list from user context.\n");
+
+    /*
+    // Optional: Debugging output to verify migration assignments before migration
+    for(PetscInt p = 0; p < localNumParticles; p++) {
+        PetscSynchronizedPrintf(PETSC_COMM_WORLD,
+            "PerformBasicMigration - Rank %d - miglist[%ld] = %d; user->miglist[p] = %d\n",
+            rank, p, miglist[p], user->miglist[p]);
+    }
+    PetscSynchronizedPrintf(PETSC_COMM_WORLD, "***********************\n");
+    PetscSynchronizedFlush(PETSC_COMM_WORLD, PETSC_STDOUT);
+    */
+
+    // Access the 'DMSwarm_rank' field from the DMSwarm to update particle ranks
+    ierr = DMSwarmGetField(swarm, "DMSwarm_rank", NULL, NULL, (void**)&rankval); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC( LOCAL,LOG_DEBUG,"PerformBasicMigration - Retrieved 'DMSwarm_rank' field.\n");
+
+    // Update the 'DMSwarm_rank' field based on the migration list
+    for (PetscInt p = 0; p < localNumParticles; p++) {
+        rankval[p] = miglist[p];
+        LOG_ALLOW_SYNC( LOCAL,LOG_DEBUG,"PerformBasicMigration - Particle %d assigned to Rank %d.\n", p, rankval[p]);
+    }
+
+    /*
+    // Optional: Debugging output to verify migration assignments after rank updates
+    for(PetscInt p = 0; p < localNumParticles; p++) {
+        PetscSynchronizedPrintf(PETSC_COMM_WORLD,
+            "PerformBasicMigration - After change - Rank %ld - rankval[%ld] = %ld; user->miglist[p] = %ld\n",
+            rank, p, rankval[p], user->miglist[p]);
+    }
+    PetscSynchronizedPrintf(PETSC_COMM_WORLD, "***********************\n");
+    PetscSynchronizedFlush(PETSC_COMM_WORLD, PETSC_STDOUT);
+    */
+
+    // Restore the 'DMSwarm_rank' field after modification
+    ierr = DMSwarmRestoreField(swarm, "DMSwarm_rank", NULL, NULL, (void**)&rankval); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC( LOCAL,LOG_DEBUG,"PerformBasicMigration - Restored 'DMSwarm_rank' field.\n");
+
+    // Invoke the DMSwarm migration process to relocate particles based on updated ranks
+    ierr = DMSwarmMigrate(swarm, removePoints); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC( LOCAL,LOG_INFO,"PerformBasicMigration - DMSwarm migration executed.\n");
+
+    // Free the allocated migration list to prevent memory leaks
+    ierr = PetscFree(user->miglist); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC( LOCAL,LOG_DEBUG,"PerformBasicMigration - Freed migration list memory.\n");
+
+    // Synchronize all MPI processes to ensure migration completion before proceeding
+    ierr = PetscBarrier(NULL); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC( LOCAL,LOG_INFO, "PerformBasicMigration - Migration synchronization completed.\n");
+
+    return 0;
+}

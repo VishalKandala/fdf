@@ -301,4 +301,30 @@ PetscErrorCode UpdateCellIndicesBasedOnDistances( PetscReal d[NUM_FACES], PetscI
  */
 PetscErrorCode FinalizeTraversal(UserCtx *user, Particle *particle, PetscInt traversal_steps, PetscBool cell_found, PetscInt idx, PetscInt idy, PetscInt idz);
 
+
+/**
+ * @brief Finds the MPI rank that owns a given global cell index.
+ * @ingroup DomainInfo
+ *
+ * This function performs a linear search through the pre-computed decomposition map
+ * (`user->RankCellInfoMap`) to determine which process is responsible for the cell
+ * with global indices (i, j, k). It is the definitive method for resolving cell
+ * ownership in the "Walk and Handoff" migration algorithm.
+ *
+ * If the provided indices are outside the range of any rank (e.g., negative or
+ * beyond the global domain), the function will not find an owner and `owner_rank`
+ * will be set to -1.
+ *
+ * @param[in]  user       Pointer to the UserCtx structure, which must contain the
+ *                        initialized `RankCellInfoMap` and `num_ranks`.
+ * @param[in]  i          Global i-index of the cell to find.
+ * @param[in]  j          Global j-index of the cell to find.
+ * @param[in]  k          Global k-index of the cell to find.
+ * @param[out] owner_rank Pointer to a `PetscMPIInt` where the resulting owner rank will
+ *                        be stored. It is set to -1 if no owner is found.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ */
+PetscErrorCode FindOwnerOfCell(UserCtx *user, PetscInt i, PetscInt j, PetscInt k, PetscMPIInt *owner_rank);
+
 #endif // WALKINGSEARCH_H
