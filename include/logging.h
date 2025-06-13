@@ -49,7 +49,8 @@ typedef enum {
 
 extern PetscLogEvent EVENT_Individualwalkingsearch;
 extern PetscLogEvent EVENT_walkingsearch;
-
+extern PetscLogEvent EVENT_GlobalParticleLocation;
+extern PetscLogEvent EVENT_IndividualLocation;
 
 // --------------------- Logging Macros ---------------------
 

@@ -102,8 +102,9 @@ int main(int argc, char **argv) {
       ActualStepsToRun = 0; // This will trigger the setup-only path in AdvanceSimulation
     }
     // Advance the Lagrangian Particle Simulation
-    ierr = AdvanceSimulation(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,readFields,bboxlist);
- 
+    //  ierr = AdvanceSimulation(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,readFields,bboxlist);
+    ierr = AdvanceSimulation_TEST(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,readFields,bboxlist);
+    
     // Finalize simulation
     ierr = FinalizeSimulation(user, block_number, bboxlist,allowedFuncs,nAllowed,&logviewer); CHKERRQ(ierr);
  

@@ -1352,6 +1352,114 @@ PetscErrorCode FlagNewcomersForLocation(DM swarm,
 }
 
 /**
+ * @brief Provides a fast, heuristic-based guess for a particle's owner rank using bounding boxes.
+ * @ingroup ParticleLocation
+ *
+ * This function is part of the "Guess and Verify" strategy, called only for "lost"
+ * particles. It attempts to find a candidate owner by checking which rank's bounding box
+ * contains the particle's physical position.
+ *
+ * To optimize the search, it uses the particle's position relative to the local
+ * bounding box to intelligently check the most likely neighboring ranks first.
+ * For example, if a particle's x-coordinate is less than the local minimum x, it
+ * will check the -X neighbor first. If no owner is found in the immediate neighbors,
+ * it performs a full search of all other ranks as a fallback.
+ *
+ * @param[in]  user             Pointer to the UserCtx, which must contain the pre-computed
+ *                              `bbox` (local), `neighbors` struct, and the global `bboxlist`.
+ * @param[in]  particle         A pointer to the particle whose owner is being guessed.
+ * @param[in]  bboxlist       An array of BoundingBox structures for ALL MPI ranks, indexed 0 to (size-1).
+ *                                This array must be up-to-date and available on all ranks.
+ * @param[out] guess_rank_out   A pointer to a PetscMPIInt. Set to the candidate owner's rank
+ *                              if found, otherwise set to -1 (or MPI_PROC_NULL).
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ */
+PetscErrorCode GuessParticleOwnerWithBBox(UserCtx *user, 
+                                          const Particle *particle,
+					  const BoundingBox *bboxlist,
+                                          PetscMPIInt *guess_rank_out)
+{
+    PetscErrorCode  ierr;
+    PetscMPIInt     rank, size;
+    const RankNeighbors *neighbors = &user->neighbors; // Use a direct pointer for clarity
+    const BoundingBox   *localBBox = &user->bbox;
+
+    PetscFunctionBeginUser;
+
+    // --- 1. Input Validation and Setup ---
+    if (!user || !particle || !guess_rank_out || !bboxlist) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Null pointer provided to GuessParticleOwnerWithBBox.");
+    }
+    if (!localBBox|| !neighbors) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONGSTATE, "Required user->bboxl or user->neighbors is not initialized.");
+    }
+
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
+    
+    *guess_rank_out = MPI_PROC_NULL; // Default to "not found"
+
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld]: Starting guess for lost particle at (%.3f, %.3f, %.3f).\n",
+              (long long)particle->PID, particle->loc.x, particle->loc.y, particle->loc.z);
+
+    // --- 2. Fast Path: Check Immediate Neighbors Based on Exit Direction ---
+    // This is the logic repurposed directly from your IdentifyMigratingParticles.
+
+    // Determine likely exit direction(s) to prioritize neighbor check
+    PetscBool exit_xm = particle->loc.x < localBBox->min_coords.x;
+    PetscBool exit_xp = particle->loc.x > localBBox->max_coords.x;
+    PetscBool exit_ym = particle->loc.y < localBBox->min_coords.y;
+    PetscBool exit_yp = particle->loc.y > localBBox->max_coords.y;
+    PetscBool exit_zm = particle->loc.z < localBBox->min_coords.z;
+    PetscBool exit_zp = particle->loc.z > localBBox->max_coords.z;
+    
+    if (exit_xm && neighbors->rank_xm != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors->rank_xm], &particle->loc)) {
+        *guess_rank_out = neighbors->rank_xm;
+    } else if (exit_xp&& neighbors->rank_xp != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors->rank_xp], &particle->loc)) {
+        *guess_rank_out = neighbors->rank_xp;
+    } else if (exit_ym && neighbors->rank_ym != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors->rank_ym], &particle->loc)) {
+        *guess_rank_out = neighbors->rank_ym;
+    } else if (exit_yp && neighbors->rank_yp != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors->rank_yp], &particle->loc)) {
+        *guess_rank_out = neighbors->rank_yp;
+    } else if (exit_zm && neighbors->rank_zm != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors->rank_zm], &particle->loc)) {
+        *guess_rank_out = neighbors->rank_zm;
+    } else if (exit_zp && neighbors->rank_zp != MPI_PROC_NULL && IsParticleInBox(&bboxlist[neighbors->rank_zp], &particle->loc)) {
+        *guess_rank_out = neighbors->rank_zp;
+    }
+    // Note: This does not handle corner/edge neighbors, which is why the fallback is essential.
+
+    if (*guess_rank_out != -1) {
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld]: Fast path guess SUCCESS. Found in immediate neighbor Rank %d.\n",
+                  (long long)particle->PID, *guess_rank_out);
+        PetscFunctionReturn(0); // Found it, we're done.
+    }
+
+    // --- 3. Robust Fallback: Check All Other Ranks ---
+    // If we get here, the particle was not in any of the immediate face neighbors' boxes.
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld]: Not in immediate face neighbors. Starting global fallback search.\n",
+              (long long)particle->PID);
+    
+    for (PetscMPIInt r = 0; r < size; ++r) {
+        if (r == rank) continue; // Don't check ourselves.
+
+        if (IsParticleInBox(&bboxlist[r], &particle->loc)) {
+            *guess_rank_out = r;
+            LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld]: Fallback search SUCCESS. Found in Rank %d.\n",
+                      (long long)particle->PID, *guess_rank_out);
+            PetscFunctionReturn(0); // Found it, we're done.
+        }
+    }
+
+    // If the code reaches here, the particle was not found in any rank's bounding box.
+    LOG_ALLOW(LOCAL, LOG_WARNING, "[PID %lld]: Guess FAILED. Particle not found in any rank's bounding box.\n",
+              (long long)particle->PID);
+    
+    // The guess_rank_out will remain -1, signaling failure to the caller.
+    PetscFunctionReturn(0);
+}
+
+/**
  * @brief Locates all particles within the grid and calculates their interpolation weights.
  * @ingroup ParticleLocation
  *
@@ -1489,5 +1597,211 @@ PetscErrorCode LocateAllParticlesInGrid(UserCtx *user) {
 
     LOG_ALLOW(LOCAL, LOG_DEBUG, "LocateAllParticlesInGrid - Completed function on Rank %d.\n", rank);
     LOG_FUNC_TIMER_END_EVENT(EVENT_walkingsearch, LOCAL);
+    PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Orchestrates the complete particle location and migration process for one timestep.
+ * @ingroup ParticleLocation
+ *
+ * This function is the master orchestrator for ensuring every particle is on its correct
+ * MPI rank and has a valid host cell index. It is designed to be called once per
+ * timestep after particle positions have been updated.
+ *
+ * The function uses a robust, iterative "Guess and Verify" strategy within a
+ * do-while loop to handle complex particle motion across processor boundaries,
+ * especially on curvilinear grids.
+ *
+ * 1.  **State Snapshot:** At the start of each pass, it captures a list of all Particle IDs (PIDs)
+ *     on the current rank.
+ * 2.  **"Guess" (Heuristic):** For particles that are "lost" (no valid host cell),
+ *     it first attempts a fast, bounding-box-based guess to find a potential new owner rank.
+ * 3.  **"Verify" (Robust Walk):** For all other particles, or if the guess fails,
+ *     it uses a robust cell-walking algorithm (`LocateParticleOrFindMigrationTarget`)
+ *     that determines the particle's status: located locally, needs migration, or is lost.
+ * 4.  **Migration:** After identifying all migrating particles on a pass, it performs the
+ *     MPI communication using the `SetMigrationRanks` and `PerformMigration` helpers.
+ * 5.  **Newcomer Flagging:** After migration, it uses the PID snapshot from step 1 to
+ *     efficiently identify newly arrived particles and flag them for location on the next pass.
+ * 6.  **Iteration:** The process repeats in a `do-while` loop until a pass occurs where
+ *     no particles migrate, ensuring the entire swarm is in a stable, consistent state.
+ *
+ * @param[in,out] user Pointer to the UserCtx, containing the swarm and all necessary
+ *                     domain topology information (bboxlist, RankCellInfoMap, etc.).
+ * @param[in] bboxlist  An array of BoundingBox structures for ALL MPI ranks, indexed 0 to (size-1).
+ *                      This array must be up-to-date and available on all ranks.
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ */
+PetscErrorCode LocateAllParticlesInGrid_TEST(UserCtx *user,BoundingBox *bboxlist)
+{
+    PetscErrorCode ierr;
+    PetscInt       passes = 0;
+    const PetscInt MAX_MIGRATION_PASSES = 10; // Safety break for runaway loops
+    PetscInt       global_migrations_this_pass;
+    PetscMPIInt    rank;
+
+    PetscFunctionBeginUser;
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    LOG_FUNC_TIMER_BEGIN_EVENT(EVENT_GlobalParticleLocation, GLOBAL);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "LocateAllParticlesInGrid (Orchestrator) - Beginning particle settlement process.\n");
+
+    // This loop ensures that particles that jump across multiple ranks are
+    // handled correctly in successive, iterative handoffs.
+    do {
+        passes++;
+        LOG_ALLOW(GLOBAL, LOG_INFO, "[Rank %d] Starting migration pass %d.\n", rank, passes);
+
+        // --- STAGE 1: PER-PASS INITIALIZATION ---
+        MigrationInfo  *migrationList = NULL;
+        PetscInt       local_migration_count = 0;
+        PetscInt       migrationListCapacity = 0;
+        PetscInt       nlocal_before;
+        PetscInt64     *pids_before_snapshot = NULL;
+
+        ierr = DMSwarmGetLocalSize(user->swarm, &nlocal_before); CHKERRQ(ierr);
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "[Rank %d] Pass %d begins with %d local particles.\n", rank, passes, nlocal_before);
+
+
+        // --- STAGE 2: PRE-MIGRATION SNAPSHOT & MAIN PROCESSING LOOP ---
+        if (nlocal_before > 0) {
+            // Get pointers to all fields needed for this pass
+            PetscReal  *pos_p, *weights_p, *vel_p;
+            PetscInt   *cell_p, *status_p;
+            PetscInt64 *pid_p;
+            ierr = DMSwarmGetField(user->swarm, "position",                NULL, NULL, (void**)&pos_p);    CHKERRQ(ierr);
+            ierr = DMSwarmGetField(user->swarm, "velocity",                NULL, NULL, (void**)&vel_p);    CHKERRQ(ierr);
+            ierr = DMSwarmGetField(user->swarm, "weight",                  NULL, NULL, (void**)&weights_p);  CHKERRQ(ierr);
+            ierr = DMSwarmGetField(user->swarm, "DMSwarm_CellID",          NULL, NULL, (void**)&cell_p);     CHKERRQ(ierr);
+            ierr = DMSwarmGetField(user->swarm, "DMSwarm_pid",             NULL, NULL, (void**)&pid_p);      CHKERRQ(ierr);
+            ierr = DMSwarmGetField(user->swarm, "DMSwarm_location_status", NULL, NULL, (void**)&status_p);   CHKERRQ(ierr);
+
+            // Create a sorted snapshot of current PIDs to identify newcomers after migration.
+            // This helper requires a raw pointer, which we just acquired.
+            ierr = GetLocalPIDSnapshot(pid_p, nlocal_before, &pids_before_snapshot); CHKERRQ(ierr);
+
+            for (PetscInt p_idx = 0; p_idx < nlocal_before; p_idx++) {
+
+                // OPTIMIZATION: Skip particles already settled in a previous pass of this do-while loop.
+                if (status_p[p_idx] == ACTIVE_AND_LOCATED) {
+                    continue;
+                }
+
+                // UNPACK: Create a temporary C struct for easier processing using our helper.
+                Particle current_particle;
+                ierr = UnpackSwarmFields(p_idx, pid_p, weights_p, pos_p, cell_p, vel_p, status_p, &current_particle); CHKERRQ(ierr);
+
+		// ParticleLocationStatus final_status = NEEDS_LOCATION;
+		ParticleLocationStatus final_status = (ParticleLocationStatus)status_p[p_idx];
+                PetscMPIInt            destination_rank = MPI_PROC_NULL;
+
+                // --- "GUESS" FAST PATH for lost particles ---
+                if (current_particle.cell[0] < 0) {
+                    LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] Is lost (cell=%d), attempting fast guess.\n", (long long)current_particle.PID, current_particle.cell[0]);
+                    ierr = GuessParticleOwnerWithBBox(user, &current_particle, bboxlist, &destination_rank); CHKERRQ(ierr);
+                    if (destination_rank != MPI_PROC_NULL && destination_rank != rank) {
+                        final_status = MIGRATING_OUT;
+                        // The particle struct's destination rank must be updated for consistency
+                        current_particle.destination_rank = destination_rank;
+                    }
+                }
+
+                // --- "VERIFY" ROBUST WALK if guess didn't resolve it ---
+                if (final_status == NEEDS_LOCATION) {
+                    LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] Not resolved by guess, starting robust walk.\n", (long long)current_particle.PID);
+                    // This function will update the particle's status and destination rank internally.
+		     ierr = LocateParticleOrFindMigrationTarget_TEST(user, &current_particle, &final_status); CHKERRQ(ierr);
+                    destination_rank = current_particle.destination_rank; // Retrieve the result
+                }
+
+                // --- PROCESS THE FINAL STATUS AND TAKE ACTION ---
+                if (final_status == MIGRATING_OUT) {
+                    status_p[p_idx] = MIGRATING_OUT; // Mark for removal by DMSwarm
+                    ierr = AddToMigrationList(&migrationList, &migrationListCapacity, &local_migration_count, p_idx, destination_rank); CHKERRQ(ierr);
+                    LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] at local index %d marked for migration to rank %d.\n", (long long)current_particle.PID, p_idx, destination_rank);
+                } else {
+                     // Particle's final status is either LOCATED or LOST; update its state in the swarm arrays.
+                     current_particle.location_status = final_status;
+                     // PACK: Use the helper to write results back to the swarm arrays.
+                     ierr = UpdateSwarmFields(p_idx, &current_particle, weights_p, cell_p, status_p); CHKERRQ(ierr);
+                }
+            } // End of main particle processing loop
+
+            // Restore all the fields acquired for this pass.
+            ierr = DMSwarmRestoreField(user->swarm, "position",                NULL, NULL, (void**)&pos_p);    CHKERRQ(ierr);
+            ierr = DMSwarmRestoreField(user->swarm, "velocity",                NULL, NULL, (void**)&vel_p);    CHKERRQ(ierr);
+            ierr = DMSwarmRestoreField(user->swarm, "weight",                  NULL, NULL, (void**)&weights_p);  CHKERRQ(ierr);
+            ierr = DMSwarmRestoreField(user->swarm, "DMSwarm_CellID",          NULL, NULL, (void**)&cell_p);     CHKERRQ(ierr);
+            ierr = DMSwarmRestoreField(user->swarm, "DMSwarm_pid",             NULL, NULL, (void**)&pid_p);      CHKERRQ(ierr);
+            ierr = DMSwarmRestoreField(user->swarm, "DMSwarm_location_status", NULL, NULL, (void**)&status_p);   CHKERRQ(ierr);
+        }
+
+        // --- STAGE 3: ACTION & MPI COMMUNICATION ---
+        LOG_ALLOW(LOCAL, LOG_INFO, "[Rank %d] Pass %d: Identified %d particles to migrate out.\n", rank, passes, local_migration_count);
+        ierr = SetMigrationRanks(user, migrationList, local_migration_count); CHKERRQ(ierr);
+        ierr = PerformMigration(user); CHKERRQ(ierr);
+
+        // --- STAGE 4: POST-MIGRATION RESET ---
+        // Identify newly arrived particles and flag them with NEEDS_LOCATION so they are
+        // processed in the next pass. This uses the snapshot taken in STAGE 2.
+        ierr = FlagNewcomersForLocation(user->swarm, nlocal_before, pids_before_snapshot); CHKERRQ(ierr);
+
+        // --- STAGE 5: LOOP SYNCHRONIZATION AND CLEANUP ---
+        ierr = MPI_Allreduce(&local_migration_count, &global_migrations_this_pass, 1, MPIU_INT, MPI_SUM, PETSC_COMM_WORLD); CHKERRQ(ierr);
+
+        ierr = PetscFree(pids_before_snapshot);
+        ierr = PetscFree(migrationList);
+
+        LOG_ALLOW(GLOBAL, LOG_INFO, "End of LocateAllParticlesInGrid pass %d. Total particles migrated globally: %d.\n", passes, global_migrations_this_pass);
+
+    } while (global_migrations_this_pass > 0 && passes < MAX_MIGRATION_PASSES);
+
+    // --- FINAL CHECKS ---
+    if (passes >= MAX_MIGRATION_PASSES) {
+        SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_CONV_FAILED, "Particle migration failed to converge after %d passes. Check for particles oscillating between ranks.", MAX_MIGRATION_PASSES);
+    }
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Particle Location completed in %d passes.\n", passes);
+    LOG_FUNC_TIMER_END_EVENT(EVENT_GlobalParticleLocation, GLOBAL);
+    PetscFunctionReturn(0);
+}
+
+/**
+ * This function is designed to be called at the end of a full timestep, after all
+ * particle-based calculations are complete. It prepares the swarm for the next
+ * timestep by ensuring that after the next position update, every particle will be
+ * re-evaluated by the LocateAllParticlesInGrid orchestrator.
+ *
+ * It iterates through all locally owned particles and sets their
+ * `DMSwarm_location_status` field to `NEEDS_LOCATION`.
+ *
+ * @param[in,out] user Pointer to the UserCtx containing the swarm.
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ */
+PetscErrorCode ResetAllParticleStatuses(UserCtx *user)
+{
+    PetscErrorCode ierr;
+    PetscInt       n_local;
+    PetscInt      *status_p;
+
+    PetscFunctionBeginUser;
+
+    ierr = DMSwarmGetLocalSize(user->swarm, &n_local); CHKERRQ(ierr);
+
+    if (n_local > 0) {
+        // Get write access to the status field
+        ierr = DMSwarmGetField(user->swarm, "DMSwarm_location_status", NULL, NULL, (void**)&status_p); CHKERRQ(ierr);
+        
+        for (PetscInt p = 0; p < n_local; ++p) {
+            // Only reset particles that are considered settled. This is a small optimization
+            // to avoid changing the status of a LOST particle, though resetting all would also be fine.
+            if (status_p[p] == ACTIVE_AND_LOCATED) {
+                status_p[p] = NEEDS_LOCATION;
+            }
+        }
+        
+        // Restore the field
+        ierr = DMSwarmRestoreField(user->swarm, "DMSwarm_location_status", NULL, NULL, (void**)&status_p); CHKERRQ(ierr);
+    }
+
     PetscFunctionReturn(0);
 }

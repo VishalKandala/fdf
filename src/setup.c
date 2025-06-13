@@ -17,6 +17,8 @@
     // Register the event with a descriptive name
     ierr = PetscLogEventRegister("walkingsearch", PETSC_OBJECT_CLASSID, &EVENT_walkingsearch);
     ierr = PetscLogEventRegister("Individualwalkingsearch", PETSC_OBJECT_CLASSID, &EVENT_Individualwalkingsearch);
+    ierr = PetscLogEventRegister("GlobalParticleLocation", PETSC_OBJECT_CLASSID, &EVENT_GlobalParticleLocation);
+    ierr = PetscLogEventRegister("IndividualLocation", PETSC_OBJECT_CLASSID, &EVENT_IndividualLocation);
     CHKERRQ(ierr);
     return 0;
 }

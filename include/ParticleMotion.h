@@ -331,4 +331,52 @@ PetscErrorCode FlagNewcomersForLocation(DM swarm,
  */
 PetscErrorCode LocateAllParticlesInGrid(UserCtx *user);
 
+/**
+ * @brief Orchestrates the complete particle location and migration process for one timestep.
+ * @ingroup ParticleLocation
+ *
+ * This function is the master orchestrator for ensuring every particle is on its correct
+ * MPI rank and has a valid host cell index. It is designed to be called once per
+ * timestep after particle positions have been updated.
+ *
+ * The function uses a robust, iterative "Guess and Verify" strategy within a
+ * do-while loop to handle complex particle motion across processor boundaries,
+ * especially on curvilinear grids.
+ *
+ * 1.  **State Snapshot:** At the start of each pass, it captures a list of all Particle IDs (PIDs)
+ *     on the current rank.
+ * 2.  **"Guess" (Heuristic):** For particles that are "lost" (no valid host cell),
+ *     it first attempts a fast, bounding-box-based guess to find a potential new owner rank.
+ * 3.  **"Verify" (Robust Walk):** For all other particles, or if the guess fails,
+ *     it uses a robust cell-walking algorithm (`LocateParticleOrFindMigrationTarget`)
+ *     that determines the particle's status: located locally, needs migration, or is lost.
+ * 4.  **Migration:** After identifying all migrating particles on a pass, it performs the
+ *     MPI communication using the `SetMigrationRanks` and `PerformMigration` helpers.
+ * 5.  **Newcomer Flagging:** After migration, it uses the PID snapshot from step 1 to
+ *     efficiently identify newly arrived particles and flag them for location on the next pass.
+ * 6.  **Iteration:** The process repeats in a `do-while` loop until a pass occurs where
+ *     no particles migrate, ensuring the entire swarm is in a stable, consistent state.
+ *
+ * @param[in,out] user Pointer to the UserCtx, containing the swarm and all necessary
+ *                     domain topology information (bboxlist, RankCellInfoMap, etc.).
+ * @param[in] bboxlist  An array of BoundingBox structures for ALL MPI ranks, indexed 0 to (size-1).
+ *                      This array must be up-to-date and available on all ranks.
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ */
+PetscErrorCode LocateAllParticlesInGrid_TEST(UserCtx *user,BoundingBox *bboxlist);
+
+/**
+ * This function is designed to be called at the end of a full timestep, after all
+ * particle-based calculations are complete. It prepares the swarm for the next
+ * timestep by ensuring that after the next position update, every particle will be
+ * re-evaluated by the LocateAllParticlesInGrid orchestrator.
+ *
+ * It iterates through all locally owned particles and sets their
+ * `DMSwarm_location_status` field to `NEEDS_LOCATION`.
+ *
+ * @param[in,out] user Pointer to the UserCtx containing the swarm.
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ */
+PetscErrorCode ResetAllParticleStatuses(UserCtx *user);
+
  #endif // PARTICLE_MOTION_H

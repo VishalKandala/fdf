@@ -410,6 +410,9 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
       // This is for particles now on the current rank after migration, using their P(currentTime) positions.
       LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Locating particles at new positions (Rank: %d).\n", currentTime, step_loop_counter, rank);
       ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
+      // After migration,since the cellID is from previous rank, first locate fails(sets CellIDs to -1)
+      // Second locate will successfully locate the particles in new rank.
+      ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
 
       // Step 10: Interpolate Eulerian Field to New Particle Positions
       // Eulerian field Ucat is typically from the beginning of the current step (time effectively currentTime - dt).
@@ -461,5 +464,175 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
     // --- Cleanup migration list used in the main loop ---
     ierr = PetscFree(migrationList_main_loop); CHKERRQ(ierr);
 
+    PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Performs the complete initial setup for the particle simulation at time t=0. [TEST VERSION]
+ *
+ * This version uses the new, integrated `LocateAllParticlesInGrid_TEST` orchestrator,
+ * which handles both location and migration in a single, robust, iterative process.
+ *
+ * Its sequential operations are:
+ * 1. A single, comprehensive call to `LocateAllParticlesInGrid_TEST` to sort all particles
+ *    to their correct owner ranks and find their initial host cells.
+ * 2. If `user->ParticleInitialization == 0` (Surface Init), it re-initializes particles on the
+ *    designated inlet surface, now that they are on the correct MPI ranks.
+ * 3. A second call to `LocateAllParticlesInGrid_TEST` is needed after re-initialization to
+ *    find the new, correct host cells for the surface-placed particles.
+ * 4. Interpolates initial Eulerian fields to the settled particles.
+ * 5. Scatters particle data to Eulerian fields (if applicable).
+ * 6. Outputs initial data if requested.
+ *
+ * @param user Pointer to the UserCtx structure.
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode PerformInitialSetup_TEST(UserCtx *user, PetscReal currentTime, PetscInt step,
+                                        PetscBool readFields, PetscInt OutputFreq,
+                                        PetscInt StepsToRun, PetscInt StartStep,
+					BoundingBox *bboxlist)
+{
+    PetscErrorCode ierr;
+
+    PetscFunctionBeginUser;
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Performing initial particle setup procedures [TEST].\n", currentTime, step);
+
+    // --- 1. Initial Particle Settlement (Location and Migration) ---
+    // This single call replaces the old sequence of Locate -> Migrate. The new
+    // orchestrator handles the iterative process internally until all particles are settled.
+    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Initial Settlement: Locating and migrating all particles to their correct ranks and cells.\n", currentTime, step);
+    ierr = LocateAllParticlesInGrid_TEST(user,bboxlist); CHKERRQ(ierr);
+
+    // --- 2. Re-initialize Particles on Inlet Surface (if applicable) ---
+    if (user->ParticleInitialization == 0 && user->inletFaceDefined) {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Re-initializing particles on inlet surface now that they are on correct ranks.\n", currentTime, step);
+        ierr = ReinitializeParticlesOnInletSurface(user, currentTime, step); CHKERRQ(ierr);
+
+        // --- CRITICAL: After re-placing particles, we MUST locate them again. ---
+        LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Post-Reinitialization Settlement: Finding host cells for newly placed inlet particles.\n", currentTime, step);
+        ierr = LocateAllParticlesInGrid_TEST(user,bboxlist); CHKERRQ(ierr);
+    }
+    
+    // --- 3. Finalize State for t=0 ---
+    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Interpolating initial fields to settled particles.\n", currentTime, step);
+    ierr = InterpolateAllFieldsToSwarm(user); CHKERRQ(ierr);
+    ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
+
+    // --- 4. Initial Output ---
+    if (OutputFreq > 0 || (StepsToRun == 0 && StartStep == 0)) {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Writing initial simulation data.\n", currentTime, step);
+        ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency); CHKERRQ(ierr);
+        ierr = WriteSwarmField(user, "position", step, "dat"); CHKERRQ(ierr);
+        ierr = WriteSwarmField(user, "velocity", step, "dat"); CHKERRQ(ierr);
+        if (!readFields) {
+            ierr = WriteSimulationFields(user); CHKERRQ(ierr);
+        }
+    }
+
+    PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Executes the main time-marching loop for the particle simulation. [TEST VERSION]
+ *
+ * This version uses the new, integrated `LocateAllParticlesInGrid_TEST` orchestrator
+ * and the `ResetAllParticleStatuses` helper for a clean, robust, and understandable workflow.
+ *
+ * For each timestep, it performs:
+ * 1. Sets the background fluid velocity field (Ucat) for the current step.
+ * 2. Updates particle positions using velocity from the *previous* step's interpolation.
+ * 3. Removes any particles that have left the global domain.
+ * 4. **A single call to `LocateAllParticlesInGrid_TEST`**, which robustly handles all
+ *    particle location and migration until the swarm is fully settled for the current timestep.
+ * 5. Interpolates the current fluid velocity to the newly settled particle locations.
+ * 6. Scatters particle data back to Eulerian fields.
+ * 7. **Resets particle statuses to `NEEDS_LOCATION`** to prepare for the next timestep.
+ * 8. Outputs data at specified intervals.
+ *
+ * @param user Pointer to the UserCtx structure.
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode AdvanceSimulation_TEST(UserCtx *user, PetscInt StartStep, PetscReal StartTime,
+                                      PetscInt StepsToRun, PetscInt OutputFreq, PetscBool readFields, BoundingBox *bboxlist)
+{
+    PetscErrorCode ierr;
+    PetscReal      dt = user->dt;
+    PetscReal      currentTime = StartTime;
+    PetscInt       removed_local, removed_global;
+
+    PetscFunctionBeginUser;
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Starting simulation run [TEST]: %d steps from step %d (t=%.4f), dt=%.4f\n",
+              StepsToRun, StartStep, StartTime, dt);
+
+    // --- Handle Initial Setup (t=0) ---
+    if (StartStep == 0) {
+        ierr = SetEulerianFields(user, StartStep, StartStep, currentTime, readFields); CHKERRQ(ierr);
+        ierr = PerformInitialSetup_TEST(user, currentTime, StartStep, readFields, OutputFreq, StepsToRun, StartStep, bboxlist); CHKERRQ(ierr);
+
+        if (StepsToRun == 0) {
+            LOG_ALLOW(GLOBAL, LOG_INFO, "Initial setup completed. Exiting AdvanceSimulation_TEST.\n");
+            PetscFunctionReturn(0);
+        }
+    }
+    
+    // --- Time Marching Loop ---
+    for (PetscInt step = StartStep; step < StartStep + StepsToRun; ++step)
+    {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "--- Starting Step %d, Time: %.4f ---\n", step, currentTime);
+
+        // --- Step 1: Set/Update Eulerian Fields for the current time ---
+        // This is done at the beginning of the step.
+        if (step > StartStep || (step == StartStep && StartStep > 0)) {
+           ierr = SetEulerianFields(user, step, StartStep, currentTime, readFields); CHKERRQ(ierr);
+        }
+
+        // --- Step 2: Update Particle Positions ---
+        // Advects particles from P(t) to P(t+dt) using velocity interpolated at time t.
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f] Updating particle positions to target time T=%.4f.\n", currentTime, currentTime + dt);
+        ierr = UpdateAllParticlePositions(user); CHKERRQ(ierr);
+
+        // --- Step 3: Remove Out-Of-Bounds Particles ---
+        // This should use the global bounding box list if available, or just the domain limits.
+        ierr = CheckAndRemoveOutOfBoundsParticles(user, &removed_local, &removed_global, bboxlist); CHKERRQ(ierr);
+        if (removed_global > 0) {
+            LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f] Removed %d out-of-bounds particles globally.\n", currentTime + dt, removed_global);
+        }
+
+        // --- Step 4: Settle All Particles (Location and Migration) ---
+        // This is the main event. It takes particles at P(t+dt) and ensures they are on
+        // the correct rank with a valid cell ID. This single call replaces the old,
+        // separate migration and location steps.
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f] Settling all particles (location and migration).\n", currentTime + dt);
+        ierr = LocateAllParticlesInGrid_TEST(user,bboxlist); CHKERRQ(ierr);
+
+        // --- Step 5: Interpolate and Scatter ---
+        // Now that particles are settled at P(t+dt), we can do work with them.
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f] Interpolating fields to settled particles.\n", currentTime + dt);
+        ierr = InterpolateAllFieldsToSwarm(user); CHKERRQ(ierr);
+        ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
+
+        // --- Step 6: Advance Time and Update Step Counter ---
+        currentTime += dt;
+        user->step = step + 1; // The step just completed is 'step', so the new step number is 'step + 1'.
+
+        // --- Step 7: Output Data ---
+        if (OutputFreq > 0 && (user->step % OutputFreq == 0) ) {
+            LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f] Writing output for completed step %d.\n", currentTime, user->step);
+            ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency); CHKERRQ(ierr);
+            ierr = WriteSwarmField(user, "position", user->step, "dat"); CHKERRQ(ierr);
+            ierr = WriteSwarmField(user, "velocity", user->step, "dat"); CHKERRQ(ierr);
+            ierr = WriteSimulationFields(user); CHKERRQ(ierr);
+        }
+
+        // --- Step 8: Prepare for Next Timestep ---
+        // This is the crucial reset you identified.
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "Resetting particle statuses to prepare for next timestep.\n");
+        ierr = ResetAllParticleStatuses(user); CHKERRQ(ierr);
+
+        LOG_ALLOW(GLOBAL, LOG_INFO, "--- Finished Step %d, Current Time: %.4f ---\n\n", step, currentTime);
+    } 
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Time marching completed. Final time t=%.4f.\n", currentTime);
     PetscFunctionReturn(0);
 }

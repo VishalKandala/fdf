@@ -82,6 +82,10 @@ typedef enum {
      */
     NEEDS_LOCATION,
 
+
+
+
+    
     /**
      * @brief The particle has been successfully located in a cell owned by the current rank.
      *

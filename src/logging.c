@@ -32,6 +32,8 @@ static int gNumAllowed = 0;
 
 PetscLogEvent EVENT_Individualwalkingsearch = 0 ; //Individual walking search in (walkingsearch.c/LocateParticleInGrid()
 PetscLogEvent EVENT_walkingsearch = 0 ; // Total walking search in (ParticleSwarm.c/LocateAllParticlesInGrid()
+PetscLogEvent EVENT_GlobalParticleLocation = 0; // Global Particle Location routine (Search + Hand-Off)
+PetscLogEvent EVENT_IndividualLocation = 0;
 
 // --------------------- Function Implementations ---------------------
 

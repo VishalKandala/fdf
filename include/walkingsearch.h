@@ -327,4 +327,59 @@ PetscErrorCode FinalizeTraversal(UserCtx *user, Particle *particle, PetscInt tra
  */
 PetscErrorCode FindOwnerOfCell(UserCtx *user, PetscInt i, PetscInt j, PetscInt k, PetscMPIInt *owner_rank);
 
+/**
+ * @brief Locates a particle's host cell or identifies its migration target using a robust walk search.
+ * @ingroup ParticleLocation
+ *
+ * This is the core search engine. It starts from a guess cell and walks through
+ * the grid. It returns a definitive, actionable status indicating the outcome:
+ * - `ACTIVE_AND_LOCATED`: The particle was found in a cell on the current rank.
+ * - `MIGRATING_OUT`: The particle was found to belong to another rank. `particle->destination_rank` is set.
+ * - `LOST`: The search failed to find the particle within the global domain.
+ *
+ * This function is globally aware and can walk across MPI rank boundaries. It contains
+ * robust checks for global domain boundaries and a tie-breaker for numerically "stuck"
+ * particles on cell faces.
+ *
+ * @param[in]     user         Pointer to the UserCtx containing all grid and domain info.
+ * @param[in,out] particle     Pointer to the Particle struct. Its fields are updated based
+ *                             on the search outcome.
+ * @param[out]    status_out   The final, actionable status of the particle after the search.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ */
+PetscErrorCode LocateParticleOrFindMigrationTarget_TEST(UserCtx *user,
+                                                        Particle *particle,
+                                                        ParticleLocationStatus *status_out);
+
+/**
+ * @brief Logs the final outcome of the particle location search.
+ */
+PetscErrorCode ReportSearchOutcome(const Particle *particle,
+                                          ParticleLocationStatus status,
+				   PetscInt traversal_steps);
+
+/**
+ * @brief Updates the cell indices based on the signed distances to each face.
+ *
+ * This function modifies the cell indices (`idx`, `idy`, `idz`) to move towards the direction
+ * where the particle is likely to be located, based on positive distances indicating
+ * that the particle is outside in that particular direction.
+ *
+ * @param[in]  d    An array of six `PetscReal` values representing the signed distances to each face:
+ *                  - d[LEFT]: Left Face
+ *                  - d[RIGHT]: Right Face
+ *                  - d[BOTTOM]: Bottom Face
+ *                  - d[TOP]: Top Face
+ *                  - d[FRONT]: Front Face
+ *                  - d[BACK]: Back Face
+ * @param[out] idx  Pointer to the i-index of the cell to be updated.
+ * @param[out] idy  Pointer to the j-index of the cell to be updated.
+ * @param[out] idz  Pointer to the k-index of the cell to be updated.
+ * @param[in]  info DMDALocalInfo structure that holds local & global domain bounds.
+ *
+ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+ */
+PetscErrorCode UpdateCellIndicesBasedOnDistancesTEST( PetscReal d[NUM_FACES], PetscInt *idx, PetscInt *idy, PetscInt *idz);
+
 #endif // WALKINGSEARCH_H
