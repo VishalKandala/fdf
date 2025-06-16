@@ -3,6 +3,8 @@
 
 #include "grid.h"
 
+#define BBOX_TOLERANCE 1e-9
+
 //extern PetscInt block_number;
 
 // DM da;  // For DOF=1, cell-centered scalars (Pressure, Nvert)
@@ -837,10 +839,23 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
         }
     }
 
-    // Log the computed min and max coordinates
-    LOG_ALLOW(LOCAL, LOG_INFO, "ComputeLocalBoundingBox: Rank - %d - Computed bounding box - minCoords=(%.6f, %.6f, %.6f), maxCoords=(%.6f, %.6f, %.6f).\n",
-        rank,minCoords.x, minCoords.y, minCoords.z, maxCoords.x, maxCoords.y, maxCoords.z);
 
+    // Add tolerance to bboxes.
+    minCoords.x =  minCoords.x - BBOX_TOLERANCE;
+    minCoords.y =  minCoords.y - BBOX_TOLERANCE;
+    minCoords.z =  minCoords.z - BBOX_TOLERANCE;
+
+    maxCoords.x =  maxCoords.x + BBOX_TOLERANCE;
+    maxCoords.y =  maxCoords.y + BBOX_TOLERANCE;
+    maxCoords.z =  maxCoords.z + BBOX_TOLERANCE;
+
+    LOG_ALLOW(LOCAL,LOG_INFO," Tolerance added to the limits: %.8e .\n",(PetscReal)BBOX_TOLERANCE);
+       
+    // Log the computed min and max coordinates
+     LOG_ALLOW(LOCAL, LOG_INFO,"Rank - %d - Computed bounding box - minCoords=(%.6f, %.6f, %.6f), maxCoords=(%.6f, %.6f, %.6f).\n",rank,minCoords.x, minCoords.y, minCoords.z, maxCoords.x, maxCoords.y, maxCoords.z);
+
+
+    
     // Restore the coordinate array
     ierr = DMDAVecRestoreArrayRead(user->fda, coordinates, &coordArray);
     if (ierr) {

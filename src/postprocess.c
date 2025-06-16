@@ -575,7 +575,7 @@ int main(int argc, char **argv)
     LOG_ALLOW(LOCAL, LOG_INFO, "Initial Eulerian fields read successfully.\n");
     // --- End Eulerian Read ---
 
-    // Write Eulerian field data to vts files
+    // Write Eulerian field data to vts files.
     ierr =  WriteEulerianVTK(user,pps.startTime, pps.eulerianExt,pps.eulerianPrefix);
     
     // Loop over timesteps for PARTICLE processing
@@ -611,7 +611,7 @@ int main(int argc, char **argv)
             } else {
                  LOG_ALLOW(GLOBAL, LOG_ERROR, "Failed to read swarm fields for timestep %d (Error code: %d). Skipping VTK output for this step.\n", ti, ierr);
             }
-            // Skip processing for this timestep if read failed
+            // Skip processing for this timestep if read failed.
             continue;
         }
         LOG_ALLOW(LOCAL,LOG_INFO, " Particle Fields Read for timestep %d\n", ti);

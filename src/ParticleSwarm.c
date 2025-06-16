@@ -1038,7 +1038,7 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
     // Compute and update the particle's weights
     particle->weights.x = d[LEFT] / (d[LEFT] + d[RIGHT]);
     particle->weights.y = d[BOTTOM] / (d[BOTTOM] + d[TOP]);
-    particle->weights.z = d[FRONT] / (d[FRONT] + d[BACK]);
+    particle->weights.z = d[BACK] / (d[FRONT] + d[BACK]);
 
     // LOG_ALLOW the updated weights
     LOG_ALLOW_SYNC(LOCAL,LOG_DEBUG,
@@ -1073,9 +1073,10 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
     PetscErrorCode ierr;
     PetscInt particlesPerProcess = 0;         // Number of particles assigned to the local MPI process.
     PetscRandom randx,randy,randz;     // Random number generators[x,y,z]. (used if ParticleInitialization==1).
-    PetscRandom rand_logic_i, rand_logic_j,rand_logic_k; // RNGs for Logical space. 
+    PetscRandom rand_logic_i, rand_logic_j,rand_logic_k; // RNGs for Logical space.
+    PetscInt    start_step = 0;
     LOG_ALLOW(GLOBAL, LOG_INFO, "Starting particle swarm Initialization with %d particles.\n", np);
-
+      
     // Step 1: Create and initialize the particle swarm
     // Here we pass in the bboxlist, which will be used by CreateParticleSwarm() and subsequently
     // by AssignInitialProperties() to position particles if ParticleInitialization == 0.
@@ -1083,21 +1084,43 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
     ierr = CreateParticleSwarm(user, np, &particlesPerProcess,bboxlist); CHKERRQ(ierr);
     LOG_ALLOW(GLOBAL, LOG_INFO, "Particle swarm created successfully.\n");
 
-    // Create the RNGs
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "Initializing physical space RNGs.\n");
-    ierr = InitializeRandomGenerators(user, &randx, &randy, &randz); CHKERRQ(ierr);
+    ierr = PetscOptionsGetInt(NULL, NULL, "-rstart", &start_step, NULL); CHKERRQ(ierr);
+
+    if(start_step == 0){
     
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "Initializing logical space RNGs [0,1).\n");
-    ierr = InitializeLogicalSpaceRNGs(&rand_logic_i, &rand_logic_j, &rand_logic_k); CHKERRQ(ierr);
-    // Assign initial properties to particles
-    // The bboxlist array is passed here so that if ParticleInitialization == 0,
-    // particles can be placed at the midpoint of the local bounding box corresponding to this rank.
-    ierr = AssignInitialPropertiesToSwarm(user, particlesPerProcess, &randx, &randy, &randz, &rand_logic_i,&rand_logic_j,&rand_logic_k,bboxlist); CHKERRQ(ierr);
-    // Finalize swarm setup by destroying RNGs if ParticleInitialization == 1
-    ierr = FinalizeSwarmSetup(&randx, &randy, &randz, &rand_logic_i, &rand_logic_j, &rand_logic_k); CHKERRQ(ierr);
+      // Create the RNGs
+      LOG_ALLOW(LOCAL, LOG_DEBUG, "Initializing physical space RNGs.\n");
+      ierr = InitializeRandomGenerators(user, &randx, &randy, &randz); CHKERRQ(ierr);
+    
+      LOG_ALLOW(LOCAL, LOG_DEBUG, "Initializing logical space RNGs [0,1).\n");
+      ierr = InitializeLogicalSpaceRNGs(&rand_logic_i, &rand_logic_j, &rand_logic_k); CHKERRQ(ierr);
+      // Assign initial properties to particles
+      // The bboxlist array is passed here so that if ParticleInitialization == 0,
+      // particles can be placed at the midpoint of the local bounding box corresponding to this rank.
+      ierr = AssignInitialPropertiesToSwarm(user, particlesPerProcess, &randx, &randy, &randz, &rand_logic_i,&rand_logic_j,&rand_logic_k,bboxlist); CHKERRQ(ierr);
+      // Finalize swarm setup by destroying RNGs if ParticleInitialization == 1
+      ierr = FinalizeSwarmSetup(&randx, &randy, &randz, &rand_logic_i, &rand_logic_j, &rand_logic_k); CHKERRQ(ierr);  
 
-    // Ensure all ranks complete before proceeding
-    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, " Particles generated & initialized.\n");
+      // Ensure all ranks complete before proceeding
+      LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, " Particles generated & initialized.\n");
+    }
+    
+    else if (start_step > 0){
+      ierr = PreCheckAndResizeSwarm(user,start_step,"dat");
 
+      // --- Read Particle Data (EVERY timestep) ---
+      // ReadAllSwarmFields should read position and velocity for timestep 'ti'
+      ierr = ReadAllSwarmFields(user, start_step);
+      if (ierr) {
+	// Check if the error was specifically a file open error (missing file)
+	if (ierr == PETSC_ERR_FILE_OPEN) {
+	  LOG_ALLOW(GLOBAL, LOG_WARNING, "Missing particle data file(s) for timestep %d. Skipping VTK output for this step.\n",(PetscInt)user->step );
+	} else {
+	  LOG_ALLOW(GLOBAL, LOG_ERROR, "Failed to read swarm fields for timestep %d (Error code: %d). Skipping VTK output for this step.\n",(PetscInt)user->step  , ierr);
+	   }
+         }
+    }
     return 0;
-}
+ }
+
+ 

@@ -784,6 +784,7 @@ PetscErrorCode ResizeSwarmGlobally(DM swarm, PetscInt N_target)
  *
  * @return PetscErrorCode 0 on success, non-zero on failure (including PETSC_ERR_FILE_OPEN).
  */
+/*
 PetscErrorCode PreCheckAndResizeSwarm(UserCtx *user,
                                       PetscInt ti,
                                       const char *ext)
@@ -862,6 +863,115 @@ PetscErrorCode PreCheckAndResizeSwarm(UserCtx *user,
     }
 
     PetscFunctionReturn(0); // Return 0 only if everything succeeded
+}
+*/
+
+/**
+ * @brief Checks particle count from a saved file and resizes the swarm globally.
+ *
+ * This function uses a robust parallel pattern: only Rank 0 reads the reference
+ * position file to determine the total number of particles saved (`N_file`).
+ * This count is then broadcast to all other ranks. Finally, each rank compares
+ * N_file with the current swarm size and participates in resizing if necessary.
+ *
+ * @param[in,out] user Pointer to the UserCtx structure containing the DMSwarm.
+ * @param[in]     ti   Time index for constructing the file name.
+ * @param[in]     ext  File extension (e.g., "dat").
+ *
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode PreCheckAndResizeSwarm(UserCtx *user,
+                                      PetscInt ti,
+                                      const char *ext)
+{
+    PetscErrorCode ierr;
+    char           filename[PETSC_MAX_PATH_LEN];
+    PetscInt       N_file = 0; // The number of particles determined from the file
+    PetscInt       N_current = 0;
+    MPI_Comm       comm;
+    PetscMPIInt    rank;
+    const char    *refFieldName = "position";
+    const PetscInt bs = 3;
+    
+    // NOTE: Your filename format has a hardcoded "_0" which is typical for
+    // PETSc when writing a parallel object from a single rank.
+    // If you ever write in parallel, PETSc might create one file per rank.
+    // The current logic assumes a single file written by one process.
+    const int      placeholder_int = 0;
+
+    PetscFunctionBeginUser;
+    ierr = PetscObjectGetComm((PetscObject)user->swarm, &comm); CHKERRQ(ierr);
+    ierr = MPI_Comm_rank(comm, &rank); CHKERRQ(ierr);
+
+        // --- Construct filename using the specified format ---
+    // results/%s%05<PetscInt_FMT>_%d.%s
+    ierr = PetscSNPrintf(filename, sizeof(filename), "results/%s%05" PetscInt_FMT "_%d.%s",
+                         refFieldName, ti, placeholder_int, ext); CHKERRQ(ierr);
+    // Note: Make sure the "results" directory exists or handle directory creation elsewhere.
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "PreCheckAndResizeSwarm: Checking particle count for timestep %d using ref file '%s'.\n", ti, filename);
+
+    // --- Rank 0 reads the file to determine the size ---
+    if (rank == 0) {
+        PetscBool fileExists = PETSC_FALSE;
+        ierr = PetscTestFile(filename, 'r', &fileExists); CHKERRQ(ierr);
+
+        if (!fileExists) {
+            // Set a special value to indicate file not found, then broadcast it.
+            N_file = -1;
+            LOG_ALLOW(GLOBAL, LOG_ERROR, "Rank 0: Mandatory reference file '%s' not found for timestep %d.\n", filename, ti);
+        } else {
+            PetscViewer viewer;
+            Vec         tmpVec;
+            PetscInt    vecSize;
+            
+            ierr = VecCreate(PETSC_COMM_SELF, &tmpVec); CHKERRQ(ierr); // Create a SEQUENTIAL vector
+            ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF, filename, FILE_MODE_READ, &viewer); CHKERRQ(ierr);
+            ierr = VecLoad(tmpVec, viewer); CHKERRQ(ierr);
+            ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
+
+            ierr = VecGetSize(tmpVec, &vecSize); CHKERRQ(ierr);
+            ierr = VecDestroy(&tmpVec); CHKERRQ(ierr);
+
+            if (vecSize % bs != 0) {
+                N_file = -2; // Special error code for bad file format
+                LOG_ALLOW(GLOBAL, LOG_ERROR, "Rank 0: Vector size %d from file '%s' is not divisible by block size %d.\n", vecSize, filename, bs);
+            } else {
+                N_file = vecSize / bs;
+                LOG_ALLOW(GLOBAL, LOG_DEBUG, "Rank 0: Found %d particles in file.\n", N_file);
+            }
+        }
+    }
+
+    // --- Broadcast the particle count (or error code) from Rank 0 to all other ranks ---
+    ierr = MPI_Bcast(&N_file, 1, MPIU_INT, 0, comm); CHKERRMPI(ierr);
+
+    // --- All ranks check for errors and abort if necessary ---
+    if (N_file == -1) {
+        SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Mandatory reference file '%s' not found for timestep %d (as determined by Rank 0).", filename, ti);
+    }
+    if (N_file == -2) {
+        SETERRQ(comm, PETSC_ERR_FILE_READ, "Reference file '%s' has incorrect format (as determined by Rank 0).", filename);
+    }
+    if (N_file < 0) {
+         SETERRQ(comm, PETSC_ERR_PLIB, "Received invalid particle count %d from Rank 0.", N_file);
+    }
+
+
+    // --- Now all ranks have the correct N_file, compare and resize if needed ---
+    ierr = DMSwarmGetSize(user->swarm, &N_current); CHKERRQ(ierr);
+
+    if (N_file != N_current) {
+        LOG_ALLOW(GLOBAL, LOG_INFO, "Swarm size %d differs from file size %d. Resizing swarm globally.\n", N_current, N_file);
+        ierr = ResizeSwarmGlobally(user->swarm, N_file); CHKERRQ(ierr);
+    } else {
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "Swarm size (%d) already matches file size. No resize needed.\n", N_current);
+    }
+    
+    // Also update the context
+    user->NumberofParticles = N_file;
+
+    PetscFunctionReturn(0);
 }
 
 
@@ -1400,9 +1510,18 @@ PetscErrorCode GuessParticleOwnerWithBBox(UserCtx *user,
     
     *guess_rank_out = MPI_PROC_NULL; // Default to "not found"
 
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld]: Starting guess for lost particle at (%.3f, %.3f, %.3f).\n",
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld]: Starting guess for particle at (%.3f, %.3f, %.3f).\n",
               (long long)particle->PID, particle->loc.x, particle->loc.y, particle->loc.z);
 
+    // *** THE PRIMARY FIX ***
+    // --- Step 0: Check if the particle is inside the CURRENT rank's bounding box FIRST. ---
+    // This handles the common case of initial placement where a particle is "lost" but physically local.
+    if (IsParticleInBox(localBBox, &particle->loc)) {
+      *guess_rank_out = rank;
+      LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld]: Fast path guess SUCCESS. Particle is within the local (Rank %d) bounding box.\n",
+		(long long)particle->PID, rank);
+      PetscFunctionReturn(0); // Found it, we're done.
+    }
     // --- 2. Fast Path: Check Immediate Neighbors Based on Exit Direction ---
     // This is the logic repurposed directly from your IdentifyMigratingParticles.
 
@@ -1657,6 +1776,7 @@ PetscErrorCode LocateAllParticlesInGrid_TEST(UserCtx *user,BoundingBox *bboxlist
         PetscInt       migrationListCapacity = 0;
         PetscInt       nlocal_before;
         PetscInt64     *pids_before_snapshot = NULL;
+	PetscInt       local_lost_count = 0;
 
         ierr = DMSwarmGetLocalSize(user->swarm, &nlocal_before); CHKERRQ(ierr);
         LOG_ALLOW(LOCAL, LOG_DEBUG, "[Rank %d] Pass %d begins with %d local particles.\n", rank, passes, nlocal_before);
@@ -1690,13 +1810,20 @@ PetscErrorCode LocateAllParticlesInGrid_TEST(UserCtx *user,BoundingBox *bboxlist
                 Particle current_particle;
                 ierr = UnpackSwarmFields(p_idx, pid_p, weights_p, pos_p, cell_p, vel_p, status_p, &current_particle); CHKERRQ(ierr);
 
-		// ParticleLocationStatus final_status = NEEDS_LOCATION;
 		ParticleLocationStatus final_status = (ParticleLocationStatus)status_p[p_idx];
-                PetscMPIInt            destination_rank = MPI_PROC_NULL;
 
+
+		// CASE 1: Particle has a valid prior cell index.
+                // It has moved, so we only need to run the robust walk from its last known location.
+                if (current_particle.cell[0] >= 0) {
+		  LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] has valid prior cell. Strategy: Robust Walk from previous cell.\n", (long long)current_particle.PID);
+		  ierr = LocateParticleOrFindMigrationTarget_TEST(user, &current_particle, &final_status); CHKERRQ(ierr);
+                } 
+
+		/*		
                 // --- "GUESS" FAST PATH for lost particles ---
                 if (current_particle.cell[0] < 0) {
-                    LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] Is lost (cell=%d), attempting fast guess.\n", (long long)current_particle.PID, current_particle.cell[0]);
+                    LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] is lost or uninitialzied (cell=%d), attempting fast guess.\n", (long long)current_particle.PID, current_particle.cell[0]);
                     ierr = GuessParticleOwnerWithBBox(user, &current_particle, bboxlist, &destination_rank); CHKERRQ(ierr);
                     if (destination_rank != MPI_PROC_NULL && destination_rank != rank) {
                         final_status = MIGRATING_OUT;
@@ -1705,8 +1832,10 @@ PetscErrorCode LocateAllParticlesInGrid_TEST(UserCtx *user,BoundingBox *bboxlist
                     }
                 }
 
+		LOG_ALLOW(LOCAL,LOG_DEBUG,"[PID %lld] Particle status after Initial Guess:%d \n",(long long)current_particle.PID,final_status);
+
                 // --- "VERIFY" ROBUST WALK if guess didn't resolve it ---
-                if (final_status == NEEDS_LOCATION) {
+                if (final_status == NEEDS_LOCATION  || UNINITIALIZED) {
                     LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] Not resolved by guess, starting robust walk.\n", (long long)current_particle.PID);
                     // This function will update the particle's status and destination rank internally.
 		     ierr = LocateParticleOrFindMigrationTarget_TEST(user, &current_particle, &final_status); CHKERRQ(ierr);
@@ -1724,6 +1853,44 @@ PetscErrorCode LocateAllParticlesInGrid_TEST(UserCtx *user,BoundingBox *bboxlist
                      // PACK: Use the helper to write results back to the swarm arrays.
                      ierr = UpdateSwarmFields(p_idx, &current_particle, weights_p, cell_p, status_p); CHKERRQ(ierr);
                 }
+		*/
+                // CASE 2: Particle is "lost" (cell = -1). Strategy: Guess -> Verify.
+                else {
+		  LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] has invalid cell. Strategy: Guess Owner -> Find Cell.\n", (long long)current_particle.PID);
+                    
+		  PetscMPIInt guessed_owner_rank = MPI_PROC_NULL;
+		  ierr = GuessParticleOwnerWithBBox(user, &current_particle, bboxlist, &guessed_owner_rank); CHKERRQ(ierr);
+
+		  // If the guess finds a DIFFERENT rank, we can mark for migration and skip the walk.
+		  if (guessed_owner_rank != MPI_PROC_NULL && guessed_owner_rank != rank) {
+		    LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] Guess SUCCESS: Found migration target Rank %d. Finalizing.\n", (long long)current_particle.PID, guessed_owner_rank);
+		    final_status = MIGRATING_OUT;
+		    current_particle.destination_rank = guessed_owner_rank;
+		  } 
+		  else {
+
+		    // This block runs if the guess either failed (rank is NULL) or found the particle is local (rank is self).
+		    // In BOTH cases, the situation is unresolved, and we MUST fall back to the robust walk.
+		    if (guessed_owner_rank == rank) {
+		      LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] Guess determined particle is local. Proceeding to robust walk to find cell.\n", (long long)current_particle.PID);
+		    } else { // guessed_owner_rank == MPI_PROC_NULL
+		      LOG_ALLOW(LOCAL, LOG_WARNING, "[PID %lld] Guess FAILED to find an owner. Proceeding to robust walk for definitive search.\n", (long long)current_particle.PID);
+		    }
+                        
+		    ierr = LocateParticleOrFindMigrationTarget_TEST(user, &current_particle, &final_status); CHKERRQ(ierr);
+		  }
+                }
+		
+                // --- PROCESS THE FINAL, DEFINITIVE STATUS ---
+                current_particle.location_status = final_status;
+                ierr = UpdateSwarmFields(p_idx, &current_particle, weights_p, cell_p, status_p); CHKERRQ(ierr);
+                
+                if (final_status == MIGRATING_OUT) {
+		  ierr = AddToMigrationList(&migrationList, &migrationListCapacity, &local_migration_count, p_idx, current_particle.destination_rank); CHKERRQ(ierr);
+                } else if (final_status == LOST) {
+		  local_lost_count++;
+                }
+	    		
             } // End of main particle processing loop
 
             // Restore all the fields acquired for this pass.

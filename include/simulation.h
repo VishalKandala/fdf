@@ -79,11 +79,9 @@ PetscErrorCode PerformInitialSetup(UserCtx *user, PetscReal currentTime, PetscIn
  * @param step        The current timestep number being processed.
  * @param StartStep   The initial timestep number of the simulation.
  * @param time        The current simulation time.
- * @param readFields  A boolean flag. If true, the simulation attempts to read fields
- *                    from files at the StartStep instead of generating them.
  * @return PetscErrorCode 0 on success.
  */
-PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartStep, PetscReal time, PetscBool readFields);
+PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartStep, PetscReal time);
 
 /**
  * @brief Executes the main time-marching loop for the particle simulation.
@@ -138,7 +136,7 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
  * @return PetscErrorCode 0 on success, non-zero on failure.
  */
 PetscErrorCode AdvanceSimulation_TEST(UserCtx *user, PetscInt StartStep, PetscReal StartTime,
-                                      PetscInt StepsToRun, PetscInt OutputFreq, PetscBool readFields, BoundingBox *bboxlist);
+                                      PetscInt StepsToRun, PetscInt OutputFreq, BoundingBox *bboxlist);
 
 /**
  * @brief Performs the complete initial setup for the particle simulation at time t=0. [TEST VERSION]
@@ -160,8 +158,6 @@ PetscErrorCode AdvanceSimulation_TEST(UserCtx *user, PetscInt StartStep, PetscRe
  * @param user Pointer to the UserCtx structure.
  * @return PetscErrorCode 0 on success, non-zero on failure.
  */
-PetscErrorCode PerformInitialSetup_TEST(UserCtx *user, PetscReal currentTime, PetscInt step,
-                                        PetscBool readFields, PetscInt OutputFreq,
-                                        PetscInt StepsToRun, PetscInt StartStep,
-					BoundingBox *bboxlist);
+PetscErrorCode PerformInitialSetup_TEST(UserCtx *user, PetscReal currentTime, PetscInt step,PetscInt OutputFreq,
+                                        PetscInt StepsToRun, PetscInt StartStep,BoundingBox *bboxlist);
 #endif  // SIMULATION_H

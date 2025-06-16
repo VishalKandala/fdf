@@ -184,11 +184,9 @@ PetscErrorCode PerformInitialSetup(UserCtx *user, PetscReal currentTime, PetscIn
  * @param step        The current timestep number being processed.
  * @param StartStep   The initial timestep number of the simulation.
  * @param time        The current simulation time.
- * @param readFields  A boolean flag. If true, the simulation attempts to read fields
- *                    from files at the StartStep instead of generating them.
  * @return PetscErrorCode 0 on success.
  */
-PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartStep, PetscReal time, PetscBool readFields)
+PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartStep, PetscReal time)
 {
     PetscErrorCode ierr;
     PetscFunctionBeginUser;
@@ -197,6 +195,63 @@ PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartSte
     PetscReal umax=0.0;
     PetscReal ucont_max=0.0;
     PetscReal umin=0.0;
+
+    // ==============================================================================
+    // --- STEP 1: Update the INTERIOR of the domain based on the simulation phase ---
+    // ==============================================================================
+
+    if (step == StartStep && StartStep > 0) {
+        // --- PATH 1: RESTART from file ---
+        // This is the first time this function is called in a restarted run.
+        LOG_ALLOW(GLOBAL, LOG_INFO, "RESTART condition: Reading all grid fields from file for step %d.\n", step);
+        ierr = ReadSimulationFields(user, step); CHKERRQ(ierr); // Assumes this function reads Ucat, Ucont, etc.
+
+        // After loading, we MUST update local ghosts to ensure consistency for any subsequent calculations.
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Updating local ghost regions for all fields after reading.\n", time, step);
+        ierr = UpdateLocalGhosts(user, "Ucont"); CHKERRQ(ierr);
+        ierr = UpdateLocalGhosts(user, "Ucat"); CHKERRQ(ierr);
+
+    } else {
+        // --- PATH 2 & 3: FRESH START or TIME ADVANCEMENT ---
+        // This block handles both generating initial fields and advancing the solver in time.
+
+        if (step == 0) { // Condition is now simply step == 0 for a fresh start
+            // --- PATH 2: Initial Field Setup (t=0) ---
+            LOG_ALLOW(GLOBAL, LOG_INFO, "FRESH START: Generating INTERIOR fields for initial step 0.\n");
+            ierr = SetInitialInteriorField(user, "Ucont"); CHKERRQ(ierr);
+        } else {
+            // --- PATH 3: Advancing the simulation (step > 0) ---
+            LOG_ALLOW(GLOBAL, LOG_DEBUG, "TIME ADVANCE: Updating INTERIOR fields for step %d.\n", step);
+            // This is the hook for the actual fluid dynamics solver.
+            // ierr = YourNavierStokesSolver(user, user->dt); CHKERRQ(ierr);
+        }
+
+        // The following logic is common to both fresh starts and time advancement,
+        // but not to a file-based restart (which loads the final Ucat directly).
+
+        // STEP 2: APPLY BOUNDARY CONDITIONS
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Executing boundary condition system.\n", time, step);
+        ierr = BoundarySystem_ExecuteStep(user); CHKERRQ(ierr);
+
+        // STEP 3: SYNCHRONIZE Ucont BEFORE CONVERSION
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Updating local ghost regions for Ucont.\n", time, step);
+        ierr = UpdateLocalGhosts(user, "Ucont"); CHKERRQ(ierr);
+
+        // STEP 4: CONVERT CONTRAVARIANT TO CARTESIAN
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Converting Ucont to Ucat.\n", time, step);
+        ierr = Contra2Cart(user); CHKERRQ(ierr);
+
+        // STEP 5: Re-apply BCs and SYNCHRONIZE Ucat
+        // It's often necessary to apply BCs again to ensure Ucat is correct at boundaries.
+        ierr = BoundarySystem_ExecuteStep(user); CHKERRQ(ierr);
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Updating local ghost regions for Ucat.\n", time, step);
+        ierr = UpdateLocalGhosts(user, "Ucat"); CHKERRQ(ierr);
+    }
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Complete Eulerian state is now finalized and consistent.\n", time, step);
+    PetscFunctionReturn(0);
+}
+    /*
     // ==============================================================================
     // --- STEP 1: Update the INTERIOR of the domain ---
     // ==============================================================================
@@ -295,6 +350,7 @@ PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartSte
     LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Complete Eulerian state is now finalized and consistent.\n", time, step);
     PetscFunctionReturn(0);
 }
+    */
 
 /**
  * @brief Executes the main time-marching loop for the particle simulation.
@@ -353,7 +409,7 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
     // --- Handle Initial Setup (if StartStep is 0) ---
     if (StartStep == 0) {
         // Set Eulerian fields for t=0 before particle setup
-        ierr = SetEulerianFields(user, StartStep, StartStep, currentTime, readFields); CHKERRQ(ierr);
+        ierr = SetEulerianFields(user, StartStep, StartStep, currentTime); CHKERRQ(ierr);
         // Perform comprehensive initial particle setup
         ierr = PerformInitialSetup(user, currentTime, StartStep, readFields, bboxlist, OutputFreq, StepsToRun, StartStep); CHKERRQ(ierr);
 
@@ -488,7 +544,7 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
  * @return PetscErrorCode 0 on success, non-zero on failure.
  */
 PetscErrorCode PerformInitialSetup_TEST(UserCtx *user, PetscReal currentTime, PetscInt step,
-                                        PetscBool readFields, PetscInt OutputFreq,
+                                        PetscInt OutputFreq,
                                         PetscInt StepsToRun, PetscInt StartStep,
 					BoundingBox *bboxlist)
 {
@@ -525,13 +581,13 @@ PetscErrorCode PerformInitialSetup_TEST(UserCtx *user, PetscReal currentTime, Pe
         ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency); CHKERRQ(ierr);
         ierr = WriteSwarmField(user, "position", step, "dat"); CHKERRQ(ierr);
         ierr = WriteSwarmField(user, "velocity", step, "dat"); CHKERRQ(ierr);
-        if (!readFields) {
-            ierr = WriteSimulationFields(user); CHKERRQ(ierr);
-        }
+	//  if (!readFields) {
+        ierr = WriteSimulationFields(user); CHKERRQ(ierr);
     }
 
     PetscFunctionReturn(0);
 }
+
 
 /**
  * @brief Executes the main time-marching loop for the particle simulation. [TEST VERSION]
@@ -554,12 +610,13 @@ PetscErrorCode PerformInitialSetup_TEST(UserCtx *user, PetscReal currentTime, Pe
  * @return PetscErrorCode 0 on success, non-zero on failure.
  */
 PetscErrorCode AdvanceSimulation_TEST(UserCtx *user, PetscInt StartStep, PetscReal StartTime,
-                                      PetscInt StepsToRun, PetscInt OutputFreq, PetscBool readFields, BoundingBox *bboxlist)
+                                      PetscInt StepsToRun, PetscInt OutputFreq, BoundingBox *bboxlist)
 {
     PetscErrorCode ierr;
     PetscReal      dt = user->dt;
     PetscReal      currentTime = StartTime;
     PetscInt       removed_local, removed_global;
+    PetscInt       output_step;// just for output to be easier to understand.
 
     PetscFunctionBeginUser;
     LOG_ALLOW(GLOBAL, LOG_INFO, "Starting simulation run [TEST]: %d steps from step %d (t=%.4f), dt=%.4f\n",
@@ -567,24 +624,39 @@ PetscErrorCode AdvanceSimulation_TEST(UserCtx *user, PetscInt StartStep, PetscRe
 
     // --- Handle Initial Setup (t=0) ---
     if (StartStep == 0) {
-        ierr = SetEulerianFields(user, StartStep, StartStep, currentTime, readFields); CHKERRQ(ierr);
-        ierr = PerformInitialSetup_TEST(user, currentTime, StartStep, readFields, OutputFreq, StepsToRun, StartStep, bboxlist); CHKERRQ(ierr);
+
+        LOG_ALLOW(GLOBAL, LOG_INFO, "--- Preparing state for initial time t=0.0 (Step 0) ---\n");
+	user->step = 0;
+	
+        ierr = SetEulerianFields(user, StartStep, StartStep, currentTime); CHKERRQ(ierr);
+
+	ierr = PerformInitialSetup_TEST(user, currentTime, StartStep, OutputFreq, StepsToRun, StartStep, bboxlist); CHKERRQ(ierr);
 
         if (StepsToRun == 0) {
             LOG_ALLOW(GLOBAL, LOG_INFO, "Initial setup completed. Exiting AdvanceSimulation_TEST.\n");
             PetscFunctionReturn(0);
         }
-    }
     
+    	currentTime += dt;
+	user->step = 1;
+	LOG_ALLOW(GLOBAL, LOG_INFO, "--- Initial state setup complete. Beginning time marching. ---\n\n");
+    }
+    // For a RESTART, this entire block is skipped. currentTime and user->step are already correct.
     // --- Time Marching Loop ---
-    for (PetscInt step = StartStep; step < StartStep + StepsToRun; ++step)
+    for (PetscInt step = StartStep; step < StartStep + StepsToRun; step++)
     {
-        LOG_ALLOW(GLOBAL, LOG_INFO, "--- Starting Step %d, Time: %.4f ---\n", step, currentTime);
+        output_step = step;
+        LOG_ALLOW(GLOBAL, LOG_INFO, "--- Starting advance to Step %d, Target + Time: %.4f ---\n", output_step, currentTime);
 
+        // --- Step 0: Prepare for Next Timestep ---
+        // This is the crucial reset you identified.
+        LOG_ALLOW(GLOBAL, LOG_DEBUG, "Resetting particle statuses to prepare for next timestep.\n");
+        ierr = ResetAllParticleStatuses(user); CHKERRQ(ierr);
+	
         // --- Step 1: Set/Update Eulerian Fields for the current time ---
         // This is done at the beginning of the step.
         if (step > StartStep || (step == StartStep && StartStep > 0)) {
-           ierr = SetEulerianFields(user, step, StartStep, currentTime, readFields); CHKERRQ(ierr);
+           ierr = SetEulerianFields(user, step, StartStep, currentTime); CHKERRQ(ierr);
         }
 
         // --- Step 2: Update Particle Positions ---
@@ -625,12 +697,9 @@ PetscErrorCode AdvanceSimulation_TEST(UserCtx *user, PetscInt StartStep, PetscRe
             ierr = WriteSimulationFields(user); CHKERRQ(ierr);
         }
 
-        // --- Step 8: Prepare for Next Timestep ---
-        // This is the crucial reset you identified.
-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "Resetting particle statuses to prepare for next timestep.\n");
-        ierr = ResetAllParticleStatuses(user); CHKERRQ(ierr);
 
-        LOG_ALLOW(GLOBAL, LOG_INFO, "--- Finished Step %d, Current Time: %.4f ---\n\n", step, currentTime);
+
+        LOG_ALLOW(GLOBAL, LOG_INFO, "--- Finished Step %d, Current Time: %.4f ---\n\n", output_step, currentTime);
     } 
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "Time marching completed. Final time t=%.4f.\n", currentTime);

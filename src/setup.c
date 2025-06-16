@@ -202,7 +202,7 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
     if (!user) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx pointer is null.");
     // This function assumes it's handling a single block context passed from main.
     if (block_number != 1) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "SetupGridAndVectors is optimized for block_number=1 but was called with %d. The loop will run, but ensure `user` is an array.", block_number);
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "SetupGridAndVectors is optimized for block_number=1 but was called with %d. The loop will run, but ensure `user` is an array.\n", block_number);
     }
 
     // --- 1. Define Grid DMs and Assign Physical Coordinates ---
@@ -221,7 +221,7 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
     }
 
     // --- 3. Create and Initialize All Vectors ---
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Creating and initializing all simulation vectors.");
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Creating and initializing all simulation vectors.\n");
     // Primary Field Vecs
     ierr = DMCreateGlobalVector(user->fda, &user->Ucat); CHKERRQ(ierr);
     ierr = DMCreateGlobalVector(user->fda, &user->Ucont); CHKERRQ(ierr);
@@ -280,7 +280,7 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
     ierr = ComputeCellCenteredJacobianInverse(user); CHKERRQ(ierr);
     ierr = CheckAndFixGridOrientation(user); CHKERRQ(ierr);
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "Primary metrics (Csi, Eta, Zet, Aj) computed and prepared.");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Primary metrics (Csi, Eta, Zet, Aj) computed and prepared.\n");
 
     // --- (Optional) Compute face-centered metrics ---
     // ierr = ComputeFaceCenteredMetrics(user); CHKERRQ(ierr);

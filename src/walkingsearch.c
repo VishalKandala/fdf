@@ -9,7 +9,8 @@
 // Define maximum traversal steps to prevent infinite loops
 #define MAX_TRAVERSAL 1000
 #define DISTANCE_THRESHOLD 1e-14
-#define REPEAT_COUNT_THRESHOLD 5 
+#define REPEAT_COUNT_THRESHOLD 5
+
 
 /**
  * @brief Estimates a characteristic length of the cell for threshold scaling.
@@ -1472,6 +1473,8 @@ PetscErrorCode LocateParticleOrFindMigrationTarget_TEST(UserCtx *user,
     // --- 1. Initialize the Search ---
     ierr = InitializeTraversalParameters(user, particle, &idx, &idy, &idz, &traversal_steps); CHKERRQ(ierr);
 
+    LOG_ALLOW(LOCAL,LOG_DEBUG," [PID %lld]Traversal Initiated at : i = %d, j = %d, k = %d.\n",(long long)particle->PID,idx,idy,idz); 
+    
     // --- 2. Main Walking Search Loop ---
     while (!search_concluded && traversal_steps < MAX_TRAVERSAL) {
         traversal_steps++;
@@ -1544,7 +1547,7 @@ PetscErrorCode LocateParticleOrFindMigrationTarget_TEST(UserCtx *user,
     // --- 3. Finalize and Determine Actionable Status ---
     if (idx == -1 || (!search_concluded && traversal_steps >= MAX_TRAVERSAL)) {
         if (idx != -1) {
-            LOG_ALLOW(LOCAL, LOG_ERROR, "LocateOrMigrate [PID %lld]: Search FAILED, exceeded MAX_TRAVERSAL limit of %d.\n",
+            LOG_ALLOW(LOCAL, LOG_ERROR, "[PID %lld]: Search FAILED, exceeded MAX_TRAVERSAL limit of %d.\n",
                       (long long)particle->PID, MAX_TRAVERSAL);
         }
         *status_out = LOST;
@@ -1568,7 +1571,9 @@ PetscErrorCode LocateParticleOrFindMigrationTarget_TEST(UserCtx *user,
             particle->cell[0] = -1; particle->cell[1] = -1; particle->cell[2] = -1;
         }
     }
-    
+
+     LOG_ALLOW(GLOBAL,LOG_DEBUG,"[PID %lld] Search complete.\n",particle->PID);
+
     // --- 4. Report the Final Outcome ---
     ierr = ReportSearchOutcome(particle, *status_out, traversal_steps); CHKERRQ(ierr);
     

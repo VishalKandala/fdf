@@ -89,11 +89,13 @@ int main(int argc, char **argv) {
     
     LOG_ALLOW(GLOBAL,LOG_INFO," Bounding Boxes setup \n");
 
-    // Display Banner for simulation
-    ierr = DisplayBanner(user, StartTime, StartStep, StepsToRun, size, np, bboxlist); CHKERRQ(ierr);
 
     // Initialize particle swarm with bboxlist knowledge on all ranks
     ierr = InitializeParticleSwarm(user, np, bboxlist); CHKERRQ(ierr);
+
+    // Display Banner for simulation
+    ierr = DisplayBanner(user, StartTime, StartStep, StepsToRun, size, np, bboxlist); CHKERRQ(ierr);
+
 
     // Setup Only Condition
     ActualStepsToRun=StepsToRun;
@@ -103,7 +105,7 @@ int main(int argc, char **argv) {
     }
     // Advance the Lagrangian Particle Simulation
     //  ierr = AdvanceSimulation(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,readFields,bboxlist);
-    ierr = AdvanceSimulation_TEST(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,readFields,bboxlist);
+    ierr = AdvanceSimulation_TEST(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,bboxlist);
     
     // Finalize simulation
     ierr = FinalizeSimulation(user, block_number, bboxlist,allowedFuncs,nAllowed,&logviewer); CHKERRQ(ierr);
