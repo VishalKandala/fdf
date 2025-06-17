@@ -241,6 +241,7 @@ extern PetscLogEvent EVENT_IndividualLocation;
  * LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,  "Synchronized info in %s\n", __func__);
  * \endcode
  */
+/*
 #define LOG_ALLOW_SYNC(scope,level, fmt, ...)                                 \
     do {                                                                       \
         if ((scope != LOCAL && scope != GLOBAL)) {                             \
@@ -250,9 +251,39 @@ extern PetscLogEvent EVENT_IndividualLocation;
                   (int)(level) <= (int)get_log_level()) {                      \
             MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
             PetscSynchronizedPrintf(comm, "[%s] " fmt, __func__, ##__VA_ARGS__); \
-            PetscSynchronizedFlush(comm, PETSC_STDOUT);                        \
-        }                                                                      \
+        }
+	PetscSynchronizedFlush(comm, PETSC_STDOUT); 					\
     } while (0)
+*/
+#define LOG_ALLOW_SYNC(scope, level, fmt, ...)                                     \
+do {                                                                               \
+    /* ------------------------------------------------------------------ */      \
+    /* Validate scope and pick communicator *before* any early exits.     */      \
+    /* ------------------------------------------------------------------ */      \
+    MPI_Comm _comm;                                                                \
+    if      ((scope) == LOCAL)  _comm = MPI_COMM_SELF;                             \
+    else if ((scope) == GLOBAL) _comm = MPI_COMM_WORLD;                            \
+    else {                                                                        \
+        fprintf(stderr, "LOG_ALLOW_SYNC ERROR: invalid scope (%d) at %s:%d\n",     \
+                (scope), __FILE__, __LINE__);                                      \
+        MPI_Abort(MPI_COMM_WORLD, 1);                                              \
+    }                                                                              \
+                                                                                   \
+    /* ------------------------------------------------------------------ */      \
+    /* Decide whether *this* rank should actually print.                   */      \
+    /* ------------------------------------------------------------------ */      \
+    PetscBool _doPrint =                                                          \
+        is_function_allowed(__func__) && ((int)(level) <= (int)get_log_level());   \
+                                                                                   \
+    if (_doPrint) {                                                                \
+        PetscSynchronizedPrintf(_comm, "[%s] " fmt, __func__, ##__VA_ARGS__);      \
+    }                                                                              \
+                                                                                   \
+    /* ------------------------------------------------------------------ */      \
+    /* ALL ranks call the flush, even if they printed nothing.            */      \
+    /* ------------------------------------------------------------------ */      \
+    PetscSynchronizedFlush(_comm, PETSC_STDOUT);                                   \
+} while (0)
 
 /**
  * @brief Logs a message inside a loop, but only every `interval` iterations.

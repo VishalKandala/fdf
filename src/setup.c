@@ -306,9 +306,16 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
 
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr); // Corrected: use &rank
 
+    PetscBool logActive;
+    ierr = PetscLogIsActive(&logActive); CHKERRQ(ierr);
+    if (logActive) {
+      ierr = PetscLogView(*logviewer); CHKERRQ(ierr);
+    }
 
     // Create an ASCII viewer to write log output to file
     ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, "simulationlog.txt", logviewer);
+
+    ierr = PetscViewerDestroy(logviewer); CHKERRQ(ierr);
 
     LOG_ALLOW(GLOBAL,LOG_INFO," PETSC Logs written \n");
     
@@ -1348,8 +1355,13 @@ PetscErrorCode SetupBoundaryConditions(UserCtx *user)
     char           bcs_filename_buffer[PETSC_MAX_PATH_LEN];
     PetscFunctionBeginUser;
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "Starting boundary condition system setup...");
+    ierr = MPI_Barrier(PETSC_COMM_WORLD);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Starting boundary condition system setup...\n");
 
+    // Set all boundary faces to be zero initially
+    PetscMemzero(user->boundary_faces,6 * sizeof(*user->boundary_faces));
+
+    
     // --- Step 1: Determine the BCs configuration file name ---
     // Set a default name first.
     ierr = PetscStrcpy(bcs_filename_buffer, "bcs.dat"); CHKERRQ(ierr);
@@ -1358,16 +1370,16 @@ PetscErrorCode SetupBoundaryConditions(UserCtx *user)
     ierr = PetscOptionsGetString(NULL, NULL, "-bcs_file", bcs_filename_buffer, sizeof(bcs_filename_buffer), &bcsFileOptionFound); CHKERRQ(ierr);
     
     if (bcsFileOptionFound) {
-        LOG_ALLOW(GLOBAL, LOG_INFO, "Using user-specified boundary conditions file: '%s'", bcs_filename_buffer);
+        LOG_ALLOW(GLOBAL, LOG_INFO, "Using user-specified boundary conditions file: '%s'.\n", bcs_filename_buffer);
     } else {
-        LOG_ALLOW(GLOBAL, LOG_INFO, "No -bcs_file option found. Using default: '%s'", bcs_filename_buffer);
+        LOG_ALLOW(GLOBAL, LOG_INFO, "No -bcs_file option found. Using default: '%s'.\n", bcs_filename_buffer);
     }
 
     // --- Step 2: Call the main creator for the boundary system ---
     // This single call will parse the file, create all handlers, and initialize them.
     ierr = BoundarySystem_Create(user, bcs_filename_buffer); CHKERRQ(ierr);
     
-    LOG_ALLOW(GLOBAL, LOG_INFO, "Boundary condition system setup complete.");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Boundary condition system setup complete.\n");
     PetscFunctionReturn(0);
 }
 

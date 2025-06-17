@@ -76,20 +76,20 @@ int main(int argc, char **argv) {
 
     LOG_ALLOW(GLOBAL,LOG_INFO," Simulation Fields %s \n",readFields ? "read":"generated");    
 
-    ierr = SetupBoundaryConditions(user);
-    
-    if(get_log_level() == LOG_INFO && is_function_allowed(__func__)){
-    // Compute and print maximum velocity magnitude
-    ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL,LOG_INFO,"Maximum velocity magnitude:%f \n", umax);
-    }
-
     // Setup the Domain Rank Information.
     ierr = SetupDomainRankInfo(user, &bboxlist);
     
     LOG_ALLOW(GLOBAL,LOG_INFO," Bounding Boxes setup \n");
 
+    ierr = SetupBoundaryConditions(user);
 
+
+     if(get_log_level() == LOG_INFO && is_function_allowed(__func__)){
+       // Compute and print maximum velocity magnitude
+       ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
+       LOG_ALLOW(GLOBAL,LOG_INFO,"Maximum velocity magnitude:%f \n", umax);
+     }
+    
     // Initialize particle swarm with bboxlist knowledge on all ranks
     ierr = InitializeParticleSwarm(user, np, bboxlist); CHKERRQ(ierr);
 

@@ -193,6 +193,7 @@ static PetscErrorCode CheckDataFile(PetscInt ti, const char *fieldName, const ch
     PetscErrorCode ierr;
     PetscMPIInt    rank;
     MPI_Comm       comm = PETSC_COMM_WORLD;
+    PetscInt       placeholder_int = 0;
 
     PetscFunctionBeginUser;
     ierr = MPI_Comm_rank(comm, &rank); CHKERRQ(ierr);
@@ -200,7 +201,8 @@ static PetscErrorCode CheckDataFile(PetscInt ti, const char *fieldName, const ch
     if (rank == 0) {
         char filename[PETSC_MAX_PATH_LEN];
         // Use the same standardized, rank-independent filename format
-        ierr = PetscSNPrintf(filename, sizeof(filename), "output/%s_step%d.%s", fieldName, ti, ext); CHKERRQ(ierr);
+
+        ierr =  PetscSNPrintf(filename, sizeof(filename), "results/%s%05"PetscInt_FMT"_%d.%s", fieldName, ti, placeholder_int, ext); 
         ierr = PetscTestFile(filename, 'r', fileExists); CHKERRQ(ierr);
         if (!(*fileExists)) {
             LOG_ALLOW(GLOBAL, LOG_WARNING, "CheckDataFile (Rank 0) - Optional data file '%s' not found.\n", filename);
@@ -216,180 +218,176 @@ static PetscErrorCode CheckDataFile(PetscInt ti, const char *fieldName, const ch
     PetscFunctionReturn(0);
 }
 
-/**
- * @brief Reads data for a specific field from a file into the provided vector.
- *
- * This function uses the field name to construct the file path and reads the data
- * from the corresponding file into the provided PETSc vector.
- *
- * @param[in]     user        Pointer to the UserCtx structure containing simulation context.
- * @param[in]     field_name  Name of the field (e.g., "ufield", "vfield", "pfield").
- * @param[out]    field_vec   PETSc vector to store the field data.
- * @param[in]     ti          Time index for constructing the file name.
- * @param[in]     ext         File extension (e.g., "dat").
- *
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
- */
-/*
-PetscErrorCode ReadFieldData(UserCtx *user, const char *field_name, Vec field_vec, PetscInt ti, const char *ext)
+/************************************************************************************************
+*  @file   io.c
+*  @brief  Utility for (re-)loading PETSc Vec-based fields written by rank-0 in a previous run
+*          – works in both serial and MPI executions.
+*
+*  The restart files are always written as **one** sequential Vec per field
+*  ( `<results>/<field_name><step>_0.<ext>` ).  In parallel we therefore
+*  have to:
+*
+*     • let rank-0 read that sequential file into a temporary Vec,
+*     • broadcast the raw array to every rank, and
+*     • copy the local slice into the distributed Vec supplied by the caller.
+*
+*  The function purposely avoids `VecScatterCreateToAll()` because PETSc
+*  chooses an even block-cyclic layout that seldom matches an existing
+*  application layout – that mismatch is the root–cause of the previous
+*  “Scatter sizes of ix and iy don’t match” / “incompatible local lengths”
+*  crashes.  A plain `MPI_Bcast` plus a `memcpy()` into the already
+*  allocated local array is bullet-proof and costs one extra buffer only
+*  on the non-root ranks.
+*
+*  Logging helper used below:
+*      LOG_ALLOW(scope,level,fmt,…)     – your existing macro
+*
+*  @param[in]  user        – application context (unused here but part of original API)
+*  @param[in]  field_name  – base name of the field (“position”, “ufield”, …)
+*  @param[out] field_vec   – **distributed** Vec we have to fill
+*  @param[in]  ti          – time-step index encoded in the filename
+*  @param[in]  ext         – file-name extension (“dat”, “bin”, …)
+*
+*  @returns 0 on success or a PETSc error code.
+************************************************************************************************/
+PetscErrorCode ReadFieldData(UserCtx *user,
+                             const char *field_name,
+                             Vec         field_vec,
+                             PetscInt    ti,
+                             const char *ext)
 {
-    PetscErrorCode ierr, ierr_load; // Use a separate variable for VecLoad's potential error
-    PetscViewer    viewer;
-    char           filename[PETSC_MAX_PATH_LEN]; // Use PETSc constant
-    PetscBool      fileExists;
-    PetscMPIInt    rank;
+   PetscErrorCode ierr;
+   char           filename[PETSC_MAX_PATH_LEN];
+   MPI_Comm       comm;
+   PetscMPIInt    rank,size;
 
-    PetscFunctionBeginUser; // Use User version
-    // Validate inputs
-    if (!user || !field_name || !field_vec || !ext) {
-        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "ReadFieldData - Null argument provided.");
-    }
-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr); // Use CHKERRQ for MPI errors
+   PetscFunctionBeginUser;
 
-    // Construct filename
-    // Consider making results directory path configurable
-    ierr = PetscSNPrintf(filename, sizeof(filename), "results/%s%05" PetscInt_FMT "_%d.%s", field_name, ti, 0 //user->_this placeholder, ext); CHKERRQ(ierr);
+   ierr = PetscObjectGetComm((PetscObject)field_vec,&comm);CHKERRQ(ierr);
+   ierr = MPI_Comm_rank(comm,&rank);CHKERRQ(ierr);
+   ierr = MPI_Comm_size(comm,&size);CHKERRQ(ierr);
 
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadFieldData - Attempting to read file: %s\n", filename);
+   /* ---------------------------------------------------------------------
+    * Compose <results>/<field_name><step with 5 digits>_0.<ext>
+    * (all restart files are written by rank-0 with that naming scheme).
+    * ------------------------------------------------------------------ */
+   ierr = PetscSNPrintf(filename,sizeof(filename),
+                        "results/%s%05" PetscInt_FMT "_0.%s",
+                        field_name,ti,ext);CHKERRQ(ierr);
 
-    // Check file existence
-    ierr = PetscTestFile(filename, FILE_MODE_READ, &fileExists); CHKERRQ(ierr);
-    if (!fileExists) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadFieldData - File '%s' does not exist. Skipping field read.\n", filename);
-        // Return a specific error code that the caller (ReadAllSwarmFields) can check
-        PetscFunctionReturn(PETSC_ERR_FILE_OPEN);
-    }
+   LOG_ALLOW(GLOBAL,LOG_DEBUG,
+             "ReadFieldData - Attempting to read <%s> on rank %d/%d\n",
+             filename,(int)rank,(int)size);
 
-    // Open the viewer
-    ierr = PetscViewerBinaryOpen(PETSC_COMM_WORLD, filename, FILE_MODE_READ, &viewer);
-    // Handle viewer open error separately - might be permissions etc.
-    if (ierr) {
-         LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadFieldData - PetscViewerBinaryOpen failed for '%s' (Error code %d). Skipping field read.\n", filename, ierr);
-         // We still want to return PETSC_ERR_FILE_OPEN to the caller
-         PetscFunctionReturn(PETSC_ERR_FILE_OPEN);
-    }
+   /* ======================================================================
+    * 1.  SERIAL JOB  – just hand the Vec to VecLoad()
+    * ==================================================================== */
+   if(size==1)
+   {
+      PetscViewer viewer;
+      PetscBool   found;
 
-    // Attempt to load data, store return code separately
-    ierr_load = VecLoad(field_vec, viewer);
+      ierr = PetscTestFile(filename,'r',&found);CHKERRQ(ierr);
+      if(!found) SETERRQ(comm,PETSC_ERR_FILE_OPEN,
+                         "Restart file not found: %s",filename);
 
-    // Always destroy the viewer
-    ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr); // Use CHKERRQ for critical errors like viewer destroy failure
+      ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF,filename,
+                                   FILE_MODE_READ,&viewer);CHKERRQ(ierr);
+      ierr = VecLoad(field_vec,viewer);CHKERRQ(ierr);
+      ierr = PetscViewerDestroy(&viewer);CHKERRQ(ierr);
 
-    // Check the return code from VecLoad *after* destroying the viewer
-    if (ierr_load) {
-        // An error occurred during VecLoad (e.g., size mismatch, corrupted data)
-        LOG_ALLOW(GLOBAL, LOG_WARNING,"ReadFieldData - VecLoad failed for file '%s' (Error code %d). Vector data may be incorrect/incomplete. Continuing post-processing.\n", filename, ierr_load);
-        // Decide how to proceed. Returning 0 allows post-processing to continue,
-        // but the vector might be in an inconsistent state (e.g., wrong size
-        // if the resize failed internally before erroring).
-        // Returning the error might be safer if subsequent steps rely on valid data.
-        // Let's return 0 for now, assuming the caller checks vector size.
-        PetscFunctionReturn(0);
-         // Alternatively, return the specific error:
-         // PetscFunctionReturn(ierr_load);
-    }
+      LOG_ALLOW(GLOBAL,LOG_INFO,
+                "ReadFieldData - Loaded <%s> (serial path)\n",filename);
+      PetscFunctionReturn(0);
+   }
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadFieldData - Successfully loaded data for field: %s from %s\n", field_name, filename);
+   /* ======================================================================
+    * 2.  PARALLEL JOB
+    * ==================================================================== */
+   PetscInt globalSize;
+   ierr = VecGetSize(field_vec,&globalSize);CHKERRQ(ierr);
 
-    PetscFunctionReturn(0);
+   /* -------------------- rank-0 : read the sequential file -------------- */
+   Vec            seq_vec = NULL;      /* only valid on rank-0            */
+   const PetscScalar *seqArray = NULL; /* borrowed pointer on rank-0 only */
+
+   if(rank==0)
+   {
+      PetscViewer viewer;
+      PetscBool   found;
+
+      ierr = PetscTestFile(filename,'r',&found);CHKERRQ(ierr);
+      if(!found) SETERRQ(PETSC_COMM_SELF,PETSC_ERR_FILE_OPEN,
+                         "Restart file not found: %s",filename);
+
+      /* create EMPTY sequential Vec – VecLoad() will size it correctly   */
+      ierr = VecCreate(PETSC_COMM_SELF,&seq_vec);CHKERRQ(ierr);
+      ierr = VecSetType(seq_vec,VECSEQ);CHKERRQ(ierr);
+
+      ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF,filename,
+                                   FILE_MODE_READ,&viewer);CHKERRQ(ierr);
+      ierr = VecLoad(seq_vec,viewer);CHKERRQ(ierr);
+      ierr = PetscViewerDestroy(&viewer);CHKERRQ(ierr);
+
+      /* size sanity-check */
+      PetscInt loaded;
+      ierr = VecGetSize(seq_vec,&loaded);CHKERRQ(ierr);
+      if(loaded != globalSize)
+         SETERRQ(comm,PETSC_ERR_FILE_UNEXPECTED,
+                 "File %s holds %d entries – expected %d",
+                 filename,loaded,globalSize);
+
+      /* borrow array for later Bcast */
+      ierr = VecGetArrayRead(seq_vec,&seqArray);CHKERRQ(ierr);
+
+      LOG_ALLOW(GLOBAL,LOG_DEBUG,
+                "ReadFieldData - Rank 0 successfully loaded <%s>\n",filename);
+   }
+
+   /* -------------------- everybody : broadcast raw data ----------------- */
+   PetscScalar *buffer = NULL;               /* receives the full field    */
+   if(rank==0)
+   {
+      /* shallow-copy: const-cast is safe, we do not modify the data        */
+      buffer = (PetscScalar *)seqArray;
+   }
+   else
+   { /* non-root ranks allocate a receive buffer                           */
+      ierr = PetscMalloc1(globalSize,&buffer);CHKERRQ(ierr);
+   }
+
+   ierr = MPI_Bcast(buffer, (int)globalSize, MPIU_SCALAR, 0, comm);CHKERRQ(ierr);
+
+   /* -------------------- copy my slice into field_vec ------------------- */
+   PetscInt  rstart,rend,loc;
+   PetscScalar *locArray;
+
+   ierr = VecGetOwnershipRange(field_vec,&rstart,&rend);CHKERRQ(ierr);
+   loc  = rend - rstart;                    /* local length               */
+
+   ierr = VecGetArray(field_vec,&locArray);CHKERRQ(ierr);
+   ierr = PetscMemcpy(locArray,
+                      buffer + rstart,
+                      loc*sizeof(PetscScalar));CHKERRQ(ierr);
+   ierr = VecRestoreArray(field_vec,&locArray);CHKERRQ(ierr);
+
+   /* -------------------- tidy up ---------------------------------------- */
+   if(rank==0)
+   {
+      ierr = VecRestoreArrayRead(seq_vec,&seqArray);CHKERRQ(ierr);
+      ierr = VecDestroy(&seq_vec);CHKERRQ(ierr);
+   }
+   else
+   {
+      ierr = PetscFree(buffer);CHKERRQ(ierr);
+   }
+
+   LOG_ALLOW(GLOBAL,LOG_INFO,
+             "ReadFieldData - Loaded <%s> (parallel path)\n",filename);
+
+   PetscFunctionReturn(0);
 }
-*/
 
-/**
- * @brief Reads data for a specific field from a file into the provided vector.
- *
- * This function is now parallel-safe for reading sequentially-written files.
- * - In PARALLEL: Only Rank 0 reads the file into a temporary sequential vector.
- *   The data is then scattered to the correct local portions of the final parallel vector.
- * - In SERIAL: It performs a direct, simple load.
- *
- * @param[in]     user        Pointer to the UserCtx structure.
- * @param[in]     field_name  Name of the field (e.g., "position", "velocity").
- * @param[out]    field_vec   The parallel PETSc vector to be populated with data.
- * @param[in]     ti          Time index for constructing the file name.
- * @param[in]     ext         File extension (e.g., "dat").
- *
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
- */
-PetscErrorCode ReadFieldData(UserCtx *user, const char *field_name, Vec field_vec, PetscInt ti, const char *ext)
-{
-    PetscErrorCode ierr;
-    char           filename[PETSC_MAX_PATH_LEN];
-    PetscMPIInt    rank, size;
-    MPI_Comm       comm;
-    const int      placeholder_int = 0;
-
-    PetscFunctionBeginUser;
-    ierr = PetscObjectGetComm((PetscObject)field_vec, &comm); CHKERRQ(ierr);
-    ierr = MPI_Comm_rank(comm, &rank); CHKERRQ(ierr);
-    ierr = MPI_Comm_size(comm, &size); CHKERRQ(ierr);
-
-    ierr =  PetscSNPrintf(filename, sizeof(filename), "results/%s%05"PetscInt_FMT"_%d.%s", field_name, ti, placeholder_int, ext);
-    // Construct the filename that was likely written by a single rank.
-
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadFieldData - Attempting to read file: %s\n", filename);
-
-    if (size == 1) {
-        // --- SERIAL CASE: Simple and direct load ---
-        PetscViewer viewer;
-        PetscBool   fileExists;
-        ierr = PetscTestFile(filename, 'r', &fileExists); CHKERRQ(ierr);
-        if (!fileExists) SETERRQ(comm, PETSC_ERR_FILE_OPEN, "File not found in serial run: %s", filename);
-
-        ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF, filename, FILE_MODE_READ, &viewer); CHKERRQ(ierr);
-        ierr = VecLoad(field_vec, viewer); CHKERRQ(ierr);
-        ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
-
-    } else {
-        // --- PARALLEL CASE: Read on Rank 0 and scatter ---
-        Vec         seq_vec = NULL; // A sequential vector on Rank 0
-        PetscInt    global_size;
-
-        ierr = VecGetSize(field_vec, &global_size); CHKERRQ(ierr);
-
-        ierr = VecCreate(PETSC_COMM_SELF, &seq_vec); CHKERRQ(ierr);
-	ierr = VecSetSizes(seq_vec, global_size, global_size); CHKERRQ(ierr);
-	ierr = VecSetFromOptions(seq_vec); CHKERRQ(ierr);
-	
-        if (rank == 0) {
-            PetscViewer viewer;
-            PetscBool   fileExists;
-            ierr = PetscTestFile(filename, 'r', &fileExists); CHKERRQ(ierr);
-            if (!fileExists) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FILE_OPEN, "File not found on Rank 0: %s", filename);
-
-            // Create a sequential vector on Rank 0 to hold the entire file's contents
-	    
-            ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF, filename, FILE_MODE_READ, &viewer); CHKERRQ(ierr);
-            ierr = VecLoad(seq_vec, viewer); CHKERRQ(ierr);
-            ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
-
-            // Sanity check: ensure the file contents match the expected size of the parallel vector
-            PetscInt loaded_size;
-            ierr = VecGetSize(seq_vec, &loaded_size); CHKERRQ(ierr);
-            if (loaded_size != global_size) {
-                SETERRQ(PETSC_COMM_SELF, PETSC_ERR_FILE_UNEXPECTED, "File %s contains data for a vector of size %d, but the parallel vector expects size %d.", filename, loaded_size, global_size);
-            }
-        }
-
-        // Now, scatter the data from Rank 0's seq_vec to all ranks' parallel field_vec.
-        VecScatter scatter_ctx;
-        // Create the scatter context to move data from the sequential vector (on rank 0)
-        // to the parallel vector (distributed across all ranks).
-        ierr = VecScatterCreateToAll(seq_vec, &scatter_ctx, &field_vec); CHKERRQ(ierr);
-
-        // Perform the scatter
-        ierr = VecScatterBegin(scatter_ctx, seq_vec, field_vec, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-        ierr = VecScatterEnd(scatter_ctx, seq_vec, field_vec, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
-
-        // Clean up
-        ierr = VecScatterDestroy(&scatter_ctx); CHKERRQ(ierr);
-        ierr = VecDestroy(&seq_vec); CHKERRQ(ierr);
-        
-    }
-
-    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadFieldData - Successfully loaded data for field: %s\n", field_name);
-    PetscFunctionReturn(0);
-}
 
 /**
  * @brief Reads simulation fields from files into their respective PETSc vectors.
@@ -596,6 +594,123 @@ PetscErrorCode WriteFieldData(UserCtx *user, const char *field_name, Vec field_v
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
+/**
+ * @brief Dump a **distributed** PETSc Vec to the *single* sequential file
+ *        format used by our restart / post-processing tools.
+ *
+ * The companion of ReadFieldData(): it always produces **one** file
+ * (e.g. `results/ufield00006_0.dat`) regardless of how many MPI ranks
+ * are running.
+ *
+ * **Behaviour**
+ *
+ * | # MPI ranks | Strategy                                                                  |
+ * |-------------|---------------------------------------------------------------------------|
+ * |      1      | Direct `VecView()` into the file.                                          |
+ * |    > 1      | `VecScatterCreateToZero()` gathers the distributed Vec onto **rank 0**.    |
+ * |             | Rank 0 writes the sequential Vec; all other ranks allocate no storage.     |
+ *
+ * The routine never alters or destroys the parallel Vec passed in; the
+ * gather buffer is created and freed internally.
+ *
+ * @param[in] user        Simulation context (used only for logging).
+ * @param[in] field_name  Logical field name (forms part of the filename).
+ * @param[in] field_vec   Distributed PETSc Vec to write.
+ * @param[in] ti          Timestep index used in the filename.
+ * @param[in] ext         File extension (`"dat"` in our workflow).
+ *
+ * @return `0` on success or a PETSc error code.
+ */
+PetscErrorCode WriteFieldData(UserCtx *user,
+                              const char *field_name,
+                              Vec field_vec,
+                              PetscInt ti,
+                              const char *ext)
+{
+    PetscErrorCode ierr;
+    MPI_Comm       comm;
+    PetscMPIInt    rank, size;
+
+    const PetscInt placeholder_int = 0;                    /* keep legacy name */
+    char           filename[PETSC_MAX_PATH_LEN];
+
+    PetscFunctionBeginUser;
+
+    /* ------------------------------------------------------------ */
+    /*                  Basic communicator information              */
+    /* ------------------------------------------------------------ */
+    ierr = PetscObjectGetComm((PetscObject)field_vec,&comm);CHKERRQ(ierr);
+    ierr = MPI_Comm_rank(comm,&rank);CHKERRQ(ierr);
+    ierr = MPI_Comm_size(comm,&size);CHKERRQ(ierr);
+
+    ierr = PetscSNPrintf(filename,sizeof(filename),
+                         "results/%s%05" PetscInt_FMT "_%d.%s",
+                         field_name,ti,placeholder_int,ext);CHKERRQ(ierr);
+
+    LOG_ALLOW(GLOBAL,LOG_DEBUG,
+              "WriteFieldData - Preparing to write <%s> on rank %d/%d\n",
+              filename,rank,size);
+
+    /* ------------------------------------------------------------ */
+    /*                       1.  Serial path                        */
+    /* ------------------------------------------------------------ */
+    if (size == 1) {
+        PetscViewer viewer;
+
+        ierr = PetscViewerBinaryOpen(comm,filename,
+                                     FILE_MODE_WRITE,&viewer);CHKERRQ(ierr);
+        ierr = VecView(field_vec,viewer);CHKERRQ(ierr);
+        ierr = PetscViewerDestroy(&viewer);CHKERRQ(ierr);
+
+        LOG_ALLOW(GLOBAL,LOG_INFO,
+                  "WriteFieldData - Wrote <%s> (serial path)\n",filename);
+        PetscFunctionReturn(0);
+    }
+
+    /* ------------------------------------------------------------ */
+    /*                      2.  Parallel path                       */
+    /* ------------------------------------------------------------ */
+    VecScatter scatter;
+    Vec        seq_vec=NULL;               /* created by PETSc, lives only on rank 0 */
+
+    /* 2.1  Create gather context and buffer                        */
+    ierr = VecScatterCreateToZero(field_vec,&scatter,&seq_vec);CHKERRQ(ierr);
+
+    /* 2.2  Gather distributed → sequential (on rank 0)             */
+    ierr = VecScatterBegin(scatter,field_vec,seq_vec,
+                           INSERT_VALUES,SCATTER_FORWARD);CHKERRQ(ierr);
+    ierr = VecScatterEnd  (scatter,field_vec,seq_vec,
+                           INSERT_VALUES,SCATTER_FORWARD);CHKERRQ(ierr);
+
+    /* 2.3  Rank 0 writes the file                                  */
+    if (rank == 0) {
+        PetscViewer viewer;
+
+        /* (optional) value diagnostics */
+        PetscReal vmin,vmax;
+        ierr = VecMin(seq_vec,NULL,&vmin);CHKERRQ(ierr);
+        ierr = VecMax(seq_vec,NULL,&vmax);CHKERRQ(ierr);
+        LOG_ALLOW(GLOBAL,LOG_DEBUG,
+                  "WriteFieldData - <%s> range = [%.4e … %.4e]\n",
+                  field_name,(double)vmin,(double)vmax);
+
+        ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF,filename,
+                                     FILE_MODE_WRITE,&viewer);CHKERRQ(ierr);
+        ierr = VecView(seq_vec,viewer);CHKERRQ(ierr);
+        ierr = PetscViewerDestroy(&viewer);CHKERRQ(ierr);
+
+        LOG_ALLOW(GLOBAL,LOG_INFO,
+                  "WriteFieldData - Wrote <%s> (parallel path)\n",filename);
+    }
+
+    /* 2.4  Cleanup                                                 */
+    ierr = VecScatterDestroy(&scatter);CHKERRQ(ierr);
+    ierr = VecDestroy(&seq_vec);CHKERRQ(ierr);
+
+    PetscFunctionReturn(0);
+}
+
+/*
 PetscErrorCode WriteFieldData(UserCtx *user, const char *field_name, Vec field_vec, PetscInt ti, const char *ext)
 {
     PetscErrorCode ierr;
@@ -657,6 +772,73 @@ PetscErrorCode WriteFieldData(UserCtx *user, const char *field_name, Vec field_v
     LOG_ALLOW(GLOBAL, LOG_INFO, "WriteFieldData - Successfully wrote data for field: %s\n", field_name);
     PetscFunctionReturn(0);
 }
+*/
+/*
+PetscErrorCode WriteFieldData(UserCtx *user, const char *field_name, Vec field_vec, PetscInt ti, const char *ext)
+{
+    PetscErrorCode ierr;
+    PetscMPIInt    rank, size;
+    MPI_Comm       comm;
+
+    PetscFunctionBeginUser;
+    ierr = PetscObjectGetComm((PetscObject)field_vec, &comm); CHKERRQ(ierr);
+    ierr = MPI_Comm_rank(comm, &rank); CHKERRQ(ierr);
+    ierr = MPI_Comm_size(comm, &size); CHKERRQ(ierr);
+
+    if (size == 1) {
+        // SERIAL CASE: This is simple and correct.
+        PetscViewer viewer;
+        char filename[PETSC_MAX_PATH_LEN];
+        ierr = PetscSNPrintf(filename, sizeof(filename), "output/%s_step%d.%s", field_name, ti, ext); CHKERRQ(ierr);
+        ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF, filename, FILE_MODE_WRITE, &viewer); CHKERRQ(ierr);
+        ierr = VecView(field_vec, viewer); CHKERRQ(ierr);
+        ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
+    } else {
+        // PARALLEL CASE: The robust "Gather on 0 and Write" pattern.
+        Vec         seq_vec = NULL;
+        VecScatter  scatter_ctx;
+        IS          is_from, is_to;
+        PetscInt    global_size;
+
+        ierr = VecGetSize(field_vec, &global_size); CHKERRQ(ierr);
+        ierr = ISCreateStride(comm, global_size, 0, 1, &is_from); CHKERRQ(ierr);
+        ierr = ISCreateStride(PETSC_COMM_SELF, global_size, 0, 1, &is_to); CHKERRQ(ierr);
+
+        // Rank 0 creates the destination sequential vector.
+        if (rank == 0) {
+            ierr = VecCreate(PETSC_COMM_SELF, &seq_vec); CHKERRQ(ierr);
+            ierr = VecSetSizes(seq_vec, global_size, global_size); CHKERRQ(ierr);
+            ierr = VecSetFromOptions(seq_vec); CHKERRQ(ierr);
+        }
+
+        // Create the general scatter context.
+        ierr = VecScatterCreate(field_vec, is_from, seq_vec, is_to, &scatter_ctx); CHKERRQ(ierr);
+        ierr = VecScatterBegin(scatter_ctx, field_vec, seq_vec, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+        ierr = VecScatterEnd(scatter_ctx, field_vec, seq_vec, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
+
+        // Only Rank 0 writes the populated sequential vector.
+        if (rank == 0) {
+            PetscViewer viewer;
+            char filename[PETSC_MAX_PATH_LEN];
+            ierr = PetscSNPrintf(filename, sizeof(filename), "output/%s_step%d.%s", field_name, ti, ext); CHKERRQ(ierr);
+            ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF, filename, FILE_MODE_WRITE, &viewer); CHKERRQ(ierr);
+            ierr = VecView(seq_vec, viewer); CHKERRQ(ierr);
+            ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
+        }
+
+        // Clean up.
+        ierr = ISDestroy(&is_from); CHKERRQ(ierr);
+        ierr = ISDestroy(&is_to); CHKERRQ(ierr);
+        ierr = VecScatterDestroy(&scatter_ctx); CHKERRQ(ierr);
+        if (rank == 0) {
+            ierr = VecDestroy(&seq_vec); CHKERRQ(ierr);
+        }
+    }
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "WriteFieldData - Successfully wrote data for field: %s\n", field_name);
+    PetscFunctionReturn(0);
+}
+*/
 
 /**
  * @brief Writes simulation fields to files.
@@ -1722,7 +1904,7 @@ PetscErrorCode ReadSwarmField(UserCtx *user, const char *field_name, PetscInt ti
 
   LOG_ALLOW(GLOBAL,LOG_DEBUG," Vector created from Field \n");
 
-  /* 3) Use the provided ReadFieldData() function to read data into fieldVec. */
+  /* 3) Use the ReadFieldData() function to read data into fieldVec. */
   ierr = ReadFieldData(user, field_name, fieldVec, ti, ext);CHKERRQ(ierr);
 
   /* 4) Destroy the global vector reference. */
@@ -1976,8 +2158,8 @@ PetscErrorCode DisplayBanner(UserCtx *user,
         } else {
             // Fallback or warning if bboxlist is not available for global calculation
             LOG_ALLOW(PETSC_COMM_SELF, LOG_WARNING, "DisplayBanner (Rank 0) - bboxlist not provided or num_mpi_procs <=0; using user->bbox for domain bounds.\n");
-            global_min_coords = user->bbox.min_coords; // Use local bbox of rank 0 as fallback
-            global_max_coords = user->bbox.max_coords;
+	    // global_min_coords = user->bbox.min_coords; // Use local bbox of rank 0 as fallback
+	    // global_max_coords = user->bbox.max_coords;
         }
 
 

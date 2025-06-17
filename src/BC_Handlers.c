@@ -417,14 +417,17 @@ static PetscErrorCode Destroy_InletConstantVelocity(BoundaryCondition *self)
 PetscErrorCode Create_InletConstantVelocity(BoundaryCondition *bc)
 {
     PetscErrorCode ierr;
+    InletConstantData *priv;
+    
     PetscFunctionBeginUser;
     if (!bc) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Input BoundaryCondition object is NULL");
 
     // Allocate the private data structure for this handler
-    ierr = PetscMalloc1(1, &bc->data); CHKERRQ(ierr);
+    ierr = PetscMalloc1(1, &priv); CHKERRQ(ierr);
     LOG_ALLOW(LOCAL, LOG_DEBUG, "Create_InletConstantVelocity: Allocated private data struct.\n");
 
     // Assign the function pointers for this handler type
+    bc->data       = priv;
     bc->Initialize = Initialize_InletConstantVelocity;
     bc->PreStep    = PreStep_InletConstantVelocity;
     bc->Apply      = Apply_InletConstantVelocity;

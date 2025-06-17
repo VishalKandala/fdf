@@ -77,6 +77,7 @@ PetscErrorCode InitializeGridDM(UserCtx *user, PetscInt *generate_grid) {
     // Retrieve the coordinate DM (PETSc creates/associates this)
     // This fda will have DOF=3 and compatible stencil width s=2
     ierr = DMGetCoordinateDM(user->da, &(user->fda)); CHKERRQ(ierr);
+    ierr = DMSetUp(user->fda); CHKERRQ(ierr);
     ierr = PetscObjectSetName((PetscObject)user->fda, "Vector_Coord_DM_Derived"); CHKERRQ(ierr);
     
     if (!file_grid_mode) {

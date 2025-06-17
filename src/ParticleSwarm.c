@@ -718,23 +718,18 @@ PetscErrorCode FinalizeSwarmSetup(PetscRandom *randx, PetscRandom *randy, PetscR
 
     ierr = PetscOptionsGetInt(NULL, NULL, "-pinit", &ParticleInitialization, NULL); CHKERRQ(ierr);
  
-    if(ParticleInitialization==1){
+    // Destroy random number generators to free resources
+    // Physical space
+    ierr = PetscRandomDestroy(randx); CHKERRQ(ierr);
+    ierr = PetscRandomDestroy(randy); CHKERRQ(ierr);
+    ierr = PetscRandomDestroy(randz); CHKERRQ(ierr);
 
-      // Destroy random number generators to free resources
-      // Physical space
-      ierr = PetscRandomDestroy(randx); CHKERRQ(ierr);
-      ierr = PetscRandomDestroy(randy); CHKERRQ(ierr);
-      ierr = PetscRandomDestroy(randz); CHKERRQ(ierr);
-
-      // Logical space
-      ierr = PetscRandomDestroy(rand_logic_i); CHKERRQ(ierr);
-      ierr = PetscRandomDestroy(rand_logic_j); CHKERRQ(ierr);
-      ierr = PetscRandomDestroy(rand_logic_k); CHKERRQ(ierr);      
+    // Logical space
+    ierr = PetscRandomDestroy(rand_logic_i); CHKERRQ(ierr);
+    ierr = PetscRandomDestroy(rand_logic_j); CHKERRQ(ierr);
+    ierr = PetscRandomDestroy(rand_logic_k); CHKERRQ(ierr);      
       
       LOG_ALLOW(LOCAL,LOG_DEBUG,"FinalizeSwarmSetup - Destroyed all random number generators.\n");
-    }else if(ParticleInitialization==0){
-      LOG_ALLOW(LOCAL,LOG_DEBUG,"FinalizeSwarmSetup - Not a Random Initialization of Particles.\n");
-    }
 
     return 0;
 }
@@ -1048,6 +1043,103 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
     return 0;
 }
 
+
+/**
+ * @brief Resets the location-dependent state of a loaded swarm to force relocation.
+ * @ingroup ParticleRestart
+ *
+ * This function is a critical part of the simulation restart procedure. It must be
+ * called immediately after `ReadAllSwarmFields` has populated a swarm from restart
+ * files. Its purpose is to invalidate the "location" state of the loaded particles,
+ * ensuring that the `LocateAllParticlesInGrid_TEST` orchestrator performs a fresh,
+ * comprehensive search for every particle based on its loaded position.
+ *
+ * It does this by performing two actions on every locally-owned particle:
+ * 1.  It resets the `DMSwarm_CellID` field to a sentinel value of `(-1, -1, -1)`.
+ *     This invalidates any cell index that might have been loaded or defaulted to 0.
+ * 2.  It sets the `DMSwarm_location_status` field to `NEEDS_LOCATION`.
+ *
+ * This guarantees that the location logic will not mistakenly use a stale cell index
+ * from a previous run and will instead use the robust "Guess -> Verify" strategy
+ * appropriate for particles with unknown locations.
+ *
+ * @param[in,out] user Pointer to the UserCtx structure which contains the `DMSwarm` object
+ *                     that has just been loaded with data from restart files.
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code if field access fails.
+ */
+PetscErrorCode PrepareLoadedSwarmForRelocation(UserCtx *user)
+{
+    PetscErrorCode ierr;
+    DM             swarm;
+    PetscInt       n_local;
+    PetscInt      *cell_p;    // Pointer to the raw data for the CellID field
+    PetscInt      *status_p;  // Pointer to the raw data for the location_status field
+    PetscInt64    *PIDs;      // Pointer to the raw data for the Particle ID field.
+    PetscMPIInt   rank,size;
+
+    PetscFunctionBeginUser;
+
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD,&rank);  CHKERRQ(ierr);
+    ierr = MPI_Comm_size(PETSC_COMM_WORLD,&size);  CHKERRQ(ierr);
+    
+    // --- 1. Input Validation and Setup ---
+    if (!user || !user->swarm) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx or its DMSwarm is NULL in PrepareLoadedSwarmForRelocation.");
+    }
+    swarm = user->swarm;
+
+    // Get the number of particles on this MPI rank.
+    ierr = DMSwarmGetLocalSize(swarm, &n_local); CHKERRQ(ierr);
+
+    // If there are no local particles, there is nothing to do.
+    if (n_local == 0) {
+        PetscFunctionReturn(0);
+    }
+ 
+    
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Preparing %d loaded particles for relocation by resetting their CellID and Status.\n", n_local);
+
+    // --- 2. Get Writable Access to Swarm Fields ---
+    // This provides direct pointers to the underlying data arrays for the fields.
+    ierr = DMSwarmGetField(swarm, "DMSwarm_CellID",          NULL, NULL, (void**)&cell_p);   CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "DMSwarm_location_status", NULL, NULL, (void**)&status_p); CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&PIDs); CHKERRQ(ierr); CHKERRQ(ierr);
+
+    // --- 3. Determine Starting Global PID for this Rank ---
+    PetscInt particles_per_rank_ideal = user->NumberofParticles / size; // Assumes user->size is PETSC_COMM_WORLD size
+    PetscInt remainder_particles = user->NumberofParticles % size;
+    PetscInt base_pid_for_rank = rank * particles_per_rank_ideal + PetscMin(rank, remainder_particles);
+    // This calculation must match how particlesPerProcess was determined (e.g., in DistributeParticles).
+    
+    // --- 4. Loop Through All Local Particles and Reset State ---
+    for (PetscInt p = 0; p < n_local; ++p) {
+
+        
+        // Reset the 3 components of the cell index vector.
+        cell_p[3*p + 0] = -1;
+        cell_p[3*p + 1] = -1;
+        cell_p[3*p + 2] = -1;
+
+        // Reset the status to ensure it will be processed by the location algorithm.
+        status_p[p] = UNINITIALIZED;
+
+	//set the PID for each particle
+	PIDs[p] =  (PetscInt64)base_pid_for_rank + p;
+    }
+
+    // --- 4. Restore Fields ---
+    // This returns control of the data arrays back to the DMSwarm. It is a mandatory
+    // step to ensure data consistency and prevent memory issues.
+    ierr = DMSwarmRestoreField(swarm, "DMSwarm_CellID",          NULL, NULL, (void**)&cell_p);   CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "DMSwarm_location_status", NULL, NULL, (void**)&status_p); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&PIDs); CHKERRQ(ierr); CHKERRQ(ierr);
+
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Successfully reset location state for all loaded particles.\n");
+
+    PetscFunctionReturn(0);
+}
+
+
 /**
  * @brief Perform particle swarm initialization, particle-grid interaction, and related operations.
  *
@@ -1106,10 +1198,14 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
     }
     
     else if (start_step > 0){
+
+      LOG_ALLOW(LOCAL,LOG_DEBUG," Particle Swarm status being set at restart [Step %d].\n",start_step);
+      
       ierr = PreCheckAndResizeSwarm(user,start_step,"dat");
 
       // --- Read Particle Data (EVERY timestep) ---
       // ReadAllSwarmFields should read position and velocity for timestep 'ti'
+      
       ierr = ReadAllSwarmFields(user, start_step);
       if (ierr) {
 	// Check if the error was specifically a file open error (missing file)
@@ -1118,7 +1214,15 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
 	} else {
 	  LOG_ALLOW(GLOBAL, LOG_ERROR, "Failed to read swarm fields for timestep %d (Error code: %d). Skipping VTK output for this step.\n",(PetscInt)user->step  , ierr);
 	   }
-         }
+      }
+
+      // Ensure  all the swarm fields not read from file are initialized.
+      ierr = PrepareLoadedSwarmForRelocation(user);
+      
+      // Ensure all ranks complete before proceeding
+      LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, " Particles generated & initialized.\n");
+      
+      
     }
     return 0;
  }
