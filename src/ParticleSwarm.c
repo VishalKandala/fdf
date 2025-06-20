@@ -162,7 +162,7 @@ PetscErrorCode InitializeLogicalSpaceRNGs(PetscRandom *rand_logic_i, PetscRandom
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
 
     // --- RNG for i-logical dimension ---
-    ierr = PetscRandomCreate(PETSC_COMM_SELF, rand_logic_i); CHKERRQ(ierr);
+    ierr = PetscRandomCreate(PETSC_COMM_WORLD, rand_logic_i); CHKERRQ(ierr);
     ierr = PetscRandomSetType((*rand_logic_i), PETSCRAND48); CHKERRQ(ierr);
     ierr = PetscRandomSetInterval(*rand_logic_i, 0.0, 1.0); CHKERRQ(ierr); // Key change: [0,1)
     ierr = PetscRandomSetSeed(*rand_logic_i, rank + 202401); CHKERRQ(ierr); // Unique seed
@@ -170,7 +170,7 @@ PetscErrorCode InitializeLogicalSpaceRNGs(PetscRandom *rand_logic_i, PetscRandom
     LOG_ALLOW_SYNC(LOCAL,LOG_DEBUG, "InitializeLogicalSpaceRNGs - Initialized RNG for i-logical dimension [0,1).\n");
 
     // --- RNG for j-logical dimension ---
-    ierr = PetscRandomCreate(PETSC_COMM_SELF, rand_logic_j); CHKERRQ(ierr);
+    ierr = PetscRandomCreate(PETSC_COMM_WORLD, rand_logic_j); CHKERRQ(ierr);
     ierr = PetscRandomSetType((*rand_logic_j), PETSCRAND48); CHKERRQ(ierr);
     ierr = PetscRandomSetInterval(*rand_logic_j, 0.0, 1.0); CHKERRQ(ierr); // Key change: [0,1)
     ierr = PetscRandomSetSeed(*rand_logic_j, rank + 202402); CHKERRQ(ierr);
@@ -178,7 +178,7 @@ PetscErrorCode InitializeLogicalSpaceRNGs(PetscRandom *rand_logic_i, PetscRandom
     LOG_ALLOW_SYNC(LOCAL,LOG_DEBUG, "InitializeLogicalSpaceRNGs - Initialized RNG for j-logical dimension [0,1).\n");
 
     // --- RNG for k-logical dimension ---
-    ierr = PetscRandomCreate(PETSC_COMM_SELF, rand_logic_k); CHKERRQ(ierr);
+    ierr = PetscRandomCreate(PETSC_COMM_WORLD, rand_logic_k); CHKERRQ(ierr);
     ierr = PetscRandomSetType((*rand_logic_k), PETSCRAND48); CHKERRQ(ierr);
     ierr = PetscRandomSetInterval(*rand_logic_k, 0.0, 1.0); CHKERRQ(ierr); // Key change: [0,1)
     ierr = PetscRandomSetSeed(*rand_logic_k, rank + 202403); CHKERRQ(ierr);
@@ -1121,7 +1121,7 @@ PetscErrorCode PrepareLoadedSwarmForRelocation(UserCtx *user)
         cell_p[3*p + 2] = -1;
 
         // Reset the status to ensure it will be processed by the location algorithm.
-        status_p[p] = UNINITIALIZED;
+        status_p[p] = (ParticleLocationStatus)UNINITIALIZED;
 
 	//set the PID for each particle
 	PIDs[p] =  (PetscInt64)base_pid_for_rank + p;
@@ -1217,7 +1217,7 @@ PetscErrorCode PrepareLoadedSwarmForRelocation(UserCtx *user)
       }
 
       // Ensure  all the swarm fields not read from file are initialized.
-      ierr = PrepareLoadedSwarmForRelocation(user);
+      //  ierr = PrepareLoadedSwarmForRelocation(user);
       
       // Ensure all ranks complete before proceeding
       LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, " Particles generated & initialized.\n");

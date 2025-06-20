@@ -65,9 +65,9 @@ int main(int argc, char **argv) {
     
     LOG_ALLOW(GLOBAL,LOG_INFO," Simulation Initialized \n");
 
-    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
-              "readFields = %s, size = %d, rank = %d\n",
-		   readFields ? "true" : "false", size,rank);
+    //  LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
+    //          "readFields = %s, size = %d, rank = %d\n",
+    //           readFields ? "true" : "false", size,rank);
 
     // Setup the computational grid
     ierr = SetupGridAndVectors(user, block_number); CHKERRQ(ierr);

@@ -286,7 +286,7 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
     // ierr = ComputeFaceCenteredMetrics(user); CHKERRQ(ierr);
 
     LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "Grid and vectors setup completed on all ranks.\n");
-    PetscFunctionReturn(0);
+    PetscFunctionReturn(0); 
 }
 
 /**
@@ -307,20 +307,6 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr); // Corrected: use &rank
 
     PetscBool logActive;
-    ierr = PetscLogIsActive(&logActive); CHKERRQ(ierr);
-    if (logActive) {
-      ierr = PetscLogView(*logviewer); CHKERRQ(ierr);
-    }
-
-    // Create an ASCII viewer to write log output to file
-    ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, "simulationlog.txt", logviewer);
-
-    ierr = PetscViewerDestroy(logviewer); CHKERRQ(ierr);
-
-    LOG_ALLOW(GLOBAL,LOG_INFO," PETSC Logs written \n");
-    
-    // Print PETSc logging results at the end
-    ierr = PetscLogView(*logviewer); CHKERRQ(ierr);
     
     // Destroy DM and vectors for each block
     for (PetscInt bi = 0; bi < block_number; bi++) {
@@ -359,6 +345,8 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
 
 	LOG_ALLOW(GLOBAL, LOG_INFO, "Finalizing simulation, destroying boundary system.\n");
 	ierr = BoundarySystem_Destroy(&user[bi]); CHKERRQ(ierr);
+
+	ierr = PetscFree(user[bi].RankCellInfoMap); CHKERRQ(ierr);
 	
         ierr = DMDestroy(&(user[bi].da)); CHKERRQ(ierr);
 	LOG_ALLOW(GLOBAL,LOG_DEBUG," da Destroyed \n");
@@ -366,15 +354,27 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
 	LOG_ALLOW(GLOBAL,LOG_DEBUG," swarm Destroyed \n");
     }
 
-   
-    // Free user context
-    ierr = PetscFree(user); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL,LOG_DEBUG," user Destroyed \n");     
+     // Create an ASCII viewer to write log output to file
+    ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, "simulationlog.txt", logviewer); CHKERRQ(ierr);
+    
+    ierr = PetscLogIsActive(&logActive); CHKERRQ(ierr);
+    if (logActive) {
+      ierr = PetscLogView(*logviewer); CHKERRQ(ierr);
+    }
+    
+    ierr = PetscViewerDestroy(logviewer); CHKERRQ(ierr);
+
+    LOG_ALLOW(GLOBAL,LOG_INFO," PETSC Logs written \n");   
+    
     // Now free bboxlist on all ranks since all allocated their own copy
     if (bboxlist) {
         free(bboxlist);
         bboxlist = NULL;
     }
+    
+    // Free user context
+    ierr = PetscFree(user); CHKERRQ(ierr);
+    LOG_ALLOW(GLOBAL,LOG_DEBUG," user Destroyed \n");     
 
     if (allowedFuncs && nAllowed > 0) {
         ierr = FreeAllowedFunctions(allowedFuncs, nAllowed); CHKERRQ(ierr);
@@ -384,7 +384,7 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
 
     // Ensure all MPI ranks reach this point before finalizing PETSc
     ierr = MPI_Barrier(PETSC_COMM_WORLD); CHKERRQ(ierr);
-
+    
     // Finalize PETSc
     ierr = PetscFinalize(); CHKERRQ(ierr);
     return 0;

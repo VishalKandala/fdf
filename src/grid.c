@@ -993,13 +993,15 @@ PetscErrorCode BroadcastAllBoundingBoxes(UserCtx *user, BoundingBox **bboxlist) 
         if (!*bboxlist) SETERRABORT(PETSC_COMM_WORLD, PETSC_ERR_MEM, "Failed to allocate memory for bboxlist on non-root ranks.");
     }
 
-    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "BroadcastAllBoundingBoxes: Broadcasting bounding box information from rank 0.\n");
+    LOG_ALLOW(LOCAL, LOG_INFO, "BroadcastAllBoundingBoxes: Broadcasting bounding box information from rank 0.\n");
 
     // Broadcast bboxlist from rank 0 to all other ranks
     ierr = MPI_Bcast(*bboxlist, (PetscInt)(size * sizeof(BoundingBox)), MPI_BYTE, 0, PETSC_COMM_WORLD);
     if (ierr != MPI_SUCCESS) {
         SETERRABORT(PETSC_COMM_WORLD, PETSC_ERR_LIB, "MPI_Bcast failed for bboxlist.");
     }
+
+    LOG_ALLOW(LOCAL, LOG_INFO, "BroadcastAllBoundingBoxes: Broadcasted bounding box information from rank 0.\n");    
 
     return 0;
 }
