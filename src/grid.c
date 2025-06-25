@@ -898,36 +898,36 @@ PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
     BoundingBox *bboxArray = NULL;
     BoundingBox localBBox;
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "GatherAllBoundingBoxes: Entering the function. \n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Entering the function. \n");
 
     // Validate input Pointers
     if (!user) {
-        LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Input 'user' Pointer is NULL.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "Input 'user' Pointer is NULL.\n");
         return PETSC_ERR_ARG_NULL;
     }
     if (!allBBoxes) {
-        LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Output 'allBBoxes' Pointer is NULL.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "Output 'allBBoxes' Pointer is NULL.\n");
         return PETSC_ERR_ARG_NULL;
     }
 
     // Get the rank and size of the MPI communicator
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank);
     if (ierr != MPI_SUCCESS) {
-        LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Error getting MPI rank.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "Error getting MPI rank.\n");
         return ierr;
     }
     ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size);
     if (ierr != MPI_SUCCESS) {
-        LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Error getting MPI size.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "Error getting MPI size.\n");
         return ierr;
     }
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "GatherAllBoundingBoxes: MPI rank=%d, size=%d.\n", rank, size);
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "MPI rank=%d, size=%d.\n", rank, size);
 
     // Compute the local bounding box on each process
     ierr = ComputeLocalBoundingBox(user, &localBBox);
     if (ierr) {
-        LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Error computing local bounding box.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "Error computing local bounding box.\n");
         return ierr;
     }
     
@@ -953,15 +953,16 @@ PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
         return ierr;
     }
 
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "[Rank %d] Successfully gathered bounding boxes on rank 0.\n",rank);    
+    
     // On rank 0, assign the gathered bounding boxes to the output Pointer
     if (rank == 0) {
         *allBBoxes = bboxArray;
-        LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "GatherAllBoundingBoxes: Successfully gathered bounding boxes on rank 0.\n");
     } else {
         *allBBoxes = NULL;
     }
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "GatherAllBoundingBoxes: Exiting the function successfully.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Exiting the function successfully.\n");
     return 0;
 }
 
@@ -993,7 +994,7 @@ PetscErrorCode BroadcastAllBoundingBoxes(UserCtx *user, BoundingBox **bboxlist) 
         if (!*bboxlist) SETERRABORT(PETSC_COMM_WORLD, PETSC_ERR_MEM, "Failed to allocate memory for bboxlist on non-root ranks.");
     }
 
-    LOG_ALLOW(LOCAL, LOG_INFO, "BroadcastAllBoundingBoxes: Broadcasting bounding box information from rank 0.\n");
+    LOG_ALLOW(LOCAL, LOG_INFO, "Broadcasting bounding box information from rank 0.\n");
 
     // Broadcast bboxlist from rank 0 to all other ranks
     ierr = MPI_Bcast(*bboxlist, (PetscInt)(size * sizeof(BoundingBox)), MPI_BYTE, 0, PETSC_COMM_WORLD);
@@ -1001,7 +1002,7 @@ PetscErrorCode BroadcastAllBoundingBoxes(UserCtx *user, BoundingBox **bboxlist) 
         SETERRABORT(PETSC_COMM_WORLD, PETSC_ERR_LIB, "MPI_Bcast failed for bboxlist.");
     }
 
-    LOG_ALLOW(LOCAL, LOG_INFO, "BroadcastAllBoundingBoxes: Broadcasted bounding box information from rank 0.\n");    
+    LOG_ALLOW(LOCAL, LOG_INFO, "Broadcasted bounding box information from rank 0.\n");    
 
     return 0;
 }

@@ -46,7 +46,7 @@ int main(int argc, char **argv) {
     PetscInt OutputFreq;
     PetscReal StartTime = 0.0;
     PetscMPIInt rank, size;
-    BoundingBox *bboxlist;    // Array of bounding boxes
+    BoundingBox *bboxlist = NULL;    // Array of bounding boxes
     PetscReal umax;
     PetscBool readFields = PETSC_FALSE;
     static char help[] = " Test for interpolation - swarm-curvIB";
@@ -65,30 +65,34 @@ int main(int argc, char **argv) {
     
     LOG_ALLOW(GLOBAL,LOG_INFO," Simulation Initialized \n");
 
-    //  LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
-    //          "readFields = %s, size = %d, rank = %d\n",
-    //           readFields ? "true" : "false", size,rank);
+    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
+              "readFields = %s, size = %d, rank = %d\n",
+               readFields ? "true" : "false", size,rank);
 
     // Setup the computational grid
     ierr = SetupGridAndVectors(user, block_number); CHKERRQ(ierr);
 
-    LOG_ALLOW(GLOBAL,LOG_INFO," Grid & Fields Setup! \n");
+    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO," Grid & Fields Setup on rank %d! \n",rank);
 
     LOG_ALLOW(GLOBAL,LOG_INFO," Simulation Fields %s \n",readFields ? "read":"generated");    
 
     // Setup the Domain Rank Information.
     ierr = SetupDomainRankInfo(user, &bboxlist);
     
-    LOG_ALLOW(GLOBAL,LOG_INFO," Bounding Boxes setup \n");
+    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"Domain Decomposition Information setup on rank %d! \n",rank);
 
     ierr = SetupBoundaryConditions(user);
 
+    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"Boundary Condition system setup on rank %d! \n",rank);
+    
 
-     if(get_log_level() == LOG_INFO && is_function_allowed(__func__)){
+    //if(get_log_level() == LOG_INFO && is_function_allowed(__func__)){
+    //   print_log_level();
        // Compute and print maximum velocity magnitude
-       ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
-       LOG_ALLOW(GLOBAL,LOG_INFO,"Maximum velocity magnitude:%f \n", umax);
-     }
+       //   ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
+    //   LOG_ALLOW(GLOBAL,LOG_INFO,"Maximum velocity magnitude:%f \n", umax);
+    //  }
+    
     
     // Initialize particle swarm with bboxlist knowledge on all ranks
     ierr = InitializeParticleSwarm(user, np, bboxlist); CHKERRQ(ierr);
@@ -98,14 +102,14 @@ int main(int argc, char **argv) {
 
 
     // Setup Only Condition
-    ActualStepsToRun=StepsToRun;
+     ActualStepsToRun=StepsToRun;
     if (OnlySetup) {
       LOG_ALLOW(GLOBAL, LOG_INFO, "SETUP ONLY MODE: Forcing StepsToRun to 0 for AdvanceSimulation call.\n");
       ActualStepsToRun = 0; // This will trigger the setup-only path in AdvanceSimulation
-    }
+     }
     // Advance the Lagrangian Particle Simulation
     //  ierr = AdvanceSimulation(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,readFields,bboxlist);
-    ierr = AdvanceSimulation_TEST(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,bboxlist);
+    //ierr = AdvanceSimulation_TEST(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,bboxlist);
     
     // Finalize simulation
     ierr = FinalizeSimulation(user, block_number, bboxlist,allowedFuncs,nAllowed,&logviewer); CHKERRQ(ierr);

@@ -91,6 +91,11 @@ LogLevel get_log_level() {
  * @see get_log_level()
  */
 void print_log_level() {
+    PetscMPIInt rank;
+    PetscErrorCode ierr;
+
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD,&rank);
+    
     int level = get_log_level();
     const char *level_name = (level == LOG_ERROR)   ? "ERROR" :
                              (level == LOG_WARNING) ? "WARNING" :
@@ -98,7 +103,7 @@ void print_log_level() {
                              (level == LOG_DEBUG)   ? "DEBUG" :
                              (level == LOG_PROFILE) ? "PROFILE" : "UNKNOWN";
     
-    PetscPrintf(PETSC_COMM_WORLD,"Current log level: %s (%d)\n", level_name, level);
+    PetscPrintf(PETSC_COMM_SELF,"Current log level: %s (%d) | rank: %d \n", level_name, level,rank);
 }
 
 

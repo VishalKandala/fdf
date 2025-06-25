@@ -1,0 +1,3051 @@
+diff --git a/include/ParticleSwarm.h b/include/ParticleSwarm.h
+index 0c34b4c..e1e09ac 100644
+--- a/include/ParticleSwarm.h
++++ b/include/ParticleSwarm.h
+@@ -238,6 +238,31 @@ PetscBool IsParticleInsideBoundingBox(const BoundingBox *bbox, const Particle *p
+  */
+ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle);
+ 
++/**
++ * @brief Resets the location-dependent state of a loaded swarm to force relocation.
++ * @ingroup ParticleRestart
++ *
++ * This function is a critical part of the simulation restart procedure. It must be
++ * called immediately after `ReadAllSwarmFields` has populated a swarm from restart
++ * files. Its purpose is to invalidate the "location" state of the loaded particles,
++ * ensuring that the `LocateAllParticlesInGrid_TEST` orchestrator performs a fresh,
++ * comprehensive search for every particle based on its loaded position.
++ *
++ * It does this by performing two actions on every locally-owned particle:
++ * 1.  It resets the `DMSwarm_CellID` field to a sentinel value of `(-1, -1, -1)`.
++ *     This invalidates any cell index that might have been loaded or defaulted to 0.
++ * 2.  It sets the `DMSwarm_location_status` field to `NEEDS_LOCATION`.
++ *
++ * This guarantees that the location logic will not mistakenly use a stale cell index
++ * from a previous run and will instead use the robust "Guess -> Verify" strategy
++ * appropriate for particles with unknown locations.
++ *
++ * @param[in,out] user Pointer to the UserCtx structure which contains the `DMSwarm` object
++ *                     that has just been loaded with data from restart files.
++ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code if field access fails.
++ */
++PetscErrorCode PrepareLoadedSwarmForRelocation(UserCtx *user);
++
+ /**
+  * @brief Perform particle swarm initialization, particle-grid interaction, and related operations.
+  *
+diff --git a/include/logging.h b/include/logging.h
+index b0d0ee2..daf86b1 100644
+--- a/include/logging.h
++++ b/include/logging.h
+@@ -241,6 +241,7 @@ extern PetscLogEvent EVENT_IndividualLocation;
+  * LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,  "Synchronized info in %s\n", __func__);
+  * \endcode
+  */
++/*
+ #define LOG_ALLOW_SYNC(scope,level, fmt, ...)                                 \
+     do {                                                                       \
+         if ((scope != LOCAL && scope != GLOBAL)) {                             \
+@@ -250,8 +251,38 @@ extern PetscLogEvent EVENT_IndividualLocation;
+                   (int)(level) <= (int)get_log_level()) {                      \
+             MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
+             PetscSynchronizedPrintf(comm, "[%s] " fmt, __func__, ##__VA_ARGS__); \
++        }
+ 	PetscSynchronizedFlush(comm, PETSC_STDOUT); 					\
++    } while (0)
++*/
++#define LOG_ALLOW_SYNC(scope, level, fmt, ...)                                     \
++do {                                                                               \
++    /* ------------------------------------------------------------------ */      \
++    /* Validate scope and pick communicator *before* any early exits.     */      \
++    /* ------------------------------------------------------------------ */      \
++    MPI_Comm _comm;                                                                \
++    if      ((scope) == LOCAL)  _comm = MPI_COMM_SELF;                             \
++    else if ((scope) == GLOBAL) _comm = MPI_COMM_WORLD;                            \
++    else {                                                                        \
++        fprintf(stderr, "LOG_ALLOW_SYNC ERROR: invalid scope (%d) at %s:%d\n",     \
++                (scope), __FILE__, __LINE__);                                      \
++        MPI_Abort(MPI_COMM_WORLD, 1);                                              \
++    }                                                                              \
++                                                                                   \
++    /* ------------------------------------------------------------------ */      \
++    /* Decide whether *this* rank should actually print.                   */      \
++    /* ------------------------------------------------------------------ */      \
++    PetscBool _doPrint =                                                          \
++        is_function_allowed(__func__) && ((int)(level) <= (int)get_log_level());   \
++                                                                                   \
++    if (_doPrint) {                                                                \
++        PetscSynchronizedPrintf(_comm, "[%s] " fmt, __func__, ##__VA_ARGS__);      \
+     }                                                                              \
++                                                                                   \
++    /* ------------------------------------------------------------------ */      \
++    /* ALL ranks call the flush, even if they printed nothing.            */      \
++    /* ------------------------------------------------------------------ */      \
++    PetscSynchronizedFlush(_comm, PETSC_STDOUT);                                   \
+ } while (0)
+ 
+ /**
+diff --git a/include/setup.h b/include/setup.h
+index 567cfa7..fba1fb0 100644
+--- a/include/setup.h
++++ b/include/setup.h
+@@ -205,88 +205,6 @@ PetscErrorCode GetOwnedCellRange(const DMDALocalInfo *info_nodes,
+  */
+ PetscErrorCode UpdateLocalGhosts(UserCtx* user, const char *fieldName);
+ 
+-/**
+- * @brief Initializes or updates all necessary simulation fields for a given timestep.
+- *
+- * This function handles the logic for either:
+- * A) Initializing fields analytically (for the first step or if not reading):
+- *    - Sets interior values using SetAnalyticalCartesianField.
+- *    - Applies boundary conditions using ApplyAnalyticalBC.
+- *    - Updates local vectors with ghosts using UpdateLocalGhosts.
+- *    - Optionally writes the initial fields.
+- * B) Reading fields from a file for a specific timestep index:
+- *    - Reads global vectors using ReadSimulationFields.
+- *    - Updates local vectors with ghosts using UpdateLocalGhosts.
+- * C) Updating fields using a fluid solver (Placeholder for future integration):
+- *    - Calls a placeholder function SolveFluidEquations.
+- *    - Applies boundary conditions using ApplyAnalyticalBC.
+- *    - Updates local vectors with ghosts using UpdateLocalGhosts.
+- *
+- * @param user        Pointer to the UserCtx structure.
+- * @param step        The current timestep number (0 for initial step).
+- * @param time        The current simulation time.
+- * @param readFields  Flag indicating whether to read fields from file.
+- * @param fieldSource Source for field data (e.g., ANALYTICAL, FILE, SOLVER).
+- *                    (Here using readFields bool for simplicity based on original code)
+- *
+- * @return PetscErrorCode 0 on success, non-zero on failure.
+- */
+-PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartStep, PetscReal time, PetscBool readFields);
+-
+-
+-/**
+- * @brief Performs the complete initial setup for the particle simulation at time t=0.
+- *
+- * This includes:
+- * 1. Initial locating of particles (based on their potentially arbitrary initial assignment).
+- * 2. A preliminary migration cycle to ensure particles are on the MPI rank that owns
+- *    their initial physical region.
+- * 3. If `user->ParticleInitialization == 0` (Surface Init), re-initializes particles on the
+- *    designated inlet surface. This ensures particles migrated to an inlet-owning rank
+- *    are correctly distributed on that surface.
+- * 4. A final locating of all particles to get their correct cell indices and interpolation weights.
+- * 5. Interpolation of initial Eulerian fields to the particles.
+- * 6. Scattering of particle data to Eulerian fields (if applicable).
+- * 7. Outputting initial data if requested.
+- *
+- * @param user Pointer to the UserCtx structure.
+- * @param currentTime The current simulation time (should be StartTime, typically 0.0).
+- * @param step The current simulation step (should be StartStep, typically 0).
+- * @param readFields Flag indicating if Eulerian fields were read from file (influences output).
+- * @param bboxlist Array of BoundingBox structures for domain decomposition.
+- * @param OutputFreq Frequency for writing output files.
+- * @param StepsToRun Total number of simulation steps planned (used for output logic on setup-only runs).
+- * @param StartStep The starting step of the simulation (used for output logic).
+- * @return PetscErrorCode 0 on success, non-zero on failure.
+- */
+-PetscErrorCode PerformInitialSetup(UserCtx *user, PetscReal currentTime, PetscInt step,
+-                                   PetscBool readFields, const BoundingBox *bboxlist,
+-                                   PetscInt OutputFreq, PetscInt StepsToRun, PetscInt StartStep);
+-
+-/**
+- * @brief Executes the main time-marching loop for the particle simulation.
+- *
+- * This function performs the following steps repeatedly:
+- * 1. Updates/Sets the background fluid velocity field (Ucat) for the current step.
+- * 2. Updates particle positions using velocity from the *previous* step's interpolation.
+- *    (Note: For the very first step (step=StartStep), the velocity used might be zero
+- *     or an initial guess if not handled carefully).
+- * 3. Locates particles in the grid based on their *new* positions.
+- * 4. Interpolates the fluid velocity (from the *current* Ucat) to the new particle locations.
+- * 5. Logs errors and outputs data at specified intervals.
+- *
+- * @param user         Pointer to the UserCtx structure.
+- * @param StartStep    The initial step number (e.g., 0 for a new run, >0 for restart).
+- * @param StartTime    The simulation time corresponding to StartStep.
+- * @param StepsToRun   The number of steps to execute in this run.
+- * @param OutputFreq   Frequency (in number of steps) at which to output data and log errors.
+- * @param readFields   Flag indicating whether to read initial fields (only at StartStep).
+- * @param bboxlist     A list that contains the bounding boxes of all the ranks.
+- *
+- * @return PetscErrorCode 0 on success, non-zero on failure.
+- */
+-PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal StartTime, PetscInt StepsToRun, PetscInt OutputFreq, PetscBool readFields, const BoundingBox *bboxlist);
+-
+ /**
+  * @brief Computes and stores the Cartesian neighbor ranks for the DMDA decomposition.
+  *
+diff --git a/include/simulation.h b/include/simulation.h
+index c5b592e..f8a9697 100644
+--- a/include/simulation.h
++++ b/include/simulation.h
+@@ -79,11 +79,9 @@ PetscErrorCode PerformInitialSetup(UserCtx *user, PetscReal currentTime, PetscIn
+  * @param step        The current timestep number being processed.
+  * @param StartStep   The initial timestep number of the simulation.
+  * @param time        The current simulation time.
+- * @param readFields  A boolean flag. If true, the simulation attempts to read fields
+- *                    from files at the StartStep instead of generating them.
+  * @return PetscErrorCode 0 on success.
+  */
+-PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartStep, PetscReal time, PetscBool readFields);
++PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartStep, PetscReal time);
+ 
+ /**
+  * @brief Executes the main time-marching loop for the particle simulation.
+@@ -138,7 +136,7 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
+  * @return PetscErrorCode 0 on success, non-zero on failure.
+  */
+ PetscErrorCode AdvanceSimulation_TEST(UserCtx *user, PetscInt StartStep, PetscReal StartTime,
+-                                      PetscInt StepsToRun, PetscInt OutputFreq, PetscBool readFields, BoundingBox *bboxlist);
++                                      PetscInt StepsToRun, PetscInt OutputFreq, BoundingBox *bboxlist);
+ 
+ /**
+  * @brief Performs the complete initial setup for the particle simulation at time t=0. [TEST VERSION]
+@@ -160,8 +158,6 @@ PetscErrorCode AdvanceSimulation_TEST(UserCtx *user, PetscInt StartStep, PetscRe
+  * @param user Pointer to the UserCtx structure.
+  * @return PetscErrorCode 0 on success, non-zero on failure.
+  */
+-PetscErrorCode PerformInitialSetup_TEST(UserCtx *user, PetscReal currentTime, PetscInt step,
+-                                        PetscBool readFields, PetscInt OutputFreq,
+-                                        PetscInt StepsToRun, PetscInt StartStep,
+-					BoundingBox *bboxlist);
++PetscErrorCode PerformInitialSetup_TEST(UserCtx *user, PetscReal currentTime, PetscInt step,PetscInt OutputFreq,
++                                        PetscInt StepsToRun, PetscInt StartStep,BoundingBox *bboxlist);
+ #endif  // SIMULATION_H
+diff --git a/src/aux.c b/old/aux.c
+similarity index 100%
+rename from src/aux.c
+rename to old/aux.c
+diff --git a/src/bcs_old.c b/old/bcs_old.c
+similarity index 100%
+rename from src/bcs_old.c
+rename to old/bcs_old.c
+diff --git a/src/bcs_samar.c b/old/bcs_samar.c
+similarity index 100%
+rename from src/bcs_samar.c
+rename to old/bcs_samar.c
+diff --git a/src/bmv.c b/old/bmv.c
+similarity index 100%
+rename from src/bmv.c
+rename to old/bmv.c
+diff --git a/src/buffer.c b/old/buffer.c
+similarity index 100%
+rename from src/buffer.c
+rename to old/buffer.c
+diff --git a/src/compgeom.c b/old/compgeom.c
+similarity index 100%
+rename from src/compgeom.c
+rename to old/compgeom.c
+diff --git a/src/copepod.c b/old/copepod.c
+similarity index 100%
+rename from src/copepod.c
+rename to old/copepod.c
+diff --git a/src/cstart.c b/old/cstart.c
+similarity index 100%
+rename from src/cstart.c
+rename to old/cstart.c
+diff --git a/src/data.c b/old/data.c
+similarity index 100%
+rename from src/data.c
+rename to old/data.c
+diff --git a/src/data_ibm.c b/old/data_ibm.c
+similarity index 100%
+rename from src/data_ibm.c
+rename to old/data_ibm.c
+diff --git a/src/fish.c b/old/fish.c
+similarity index 100%
+rename from src/fish.c
+rename to old/fish.c
+diff --git a/src/fsi.c b/old/fsi.c
+similarity index 100%
+rename from src/fsi.c
+rename to old/fsi.c
+diff --git a/src/fsi_move.c b/old/fsi_move.c
+similarity index 100%
+rename from src/fsi_move.c
+rename to old/fsi_move.c
+diff --git a/src/ibm.c b/old/ibm.c
+similarity index 100%
+rename from src/ibm.c
+rename to old/ibm.c
+diff --git a/src/ibm_io.c b/old/ibm_io.c
+similarity index 100%
+rename from src/ibm_io.c
+rename to old/ibm_io.c
+diff --git a/src/implicitsolver.c b/old/implicitsolver.c
+similarity index 100%
+rename from src/implicitsolver.c
+rename to old/implicitsolver.c
+diff --git a/src/init.c b/old/init.c
+similarity index 100%
+rename from src/init.c
+rename to old/init.c
+diff --git a/src/itfcsearch.c b/old/itfcsearch.c
+similarity index 100%
+rename from src/itfcsearch.c
+rename to old/itfcsearch.c
+diff --git a/src/k-omega.c b/old/k-omega.c
+similarity index 100%
+rename from src/k-omega.c
+rename to old/k-omega.c
+diff --git a/src/les.c b/old/les.c
+similarity index 100%
+rename from src/les.c
+rename to old/les.c
+diff --git a/src/main.c b/old/main.c
+similarity index 100%
+rename from src/main.c
+rename to old/main.c
+diff --git a/src/metrics.c b/old/metrics.c
+similarity index 100%
+rename from src/metrics.c
+rename to old/metrics.c
+diff --git a/src/multidatavtppost.c b/old/multidatavtppost.c
+similarity index 100%
+rename from src/multidatavtppost.c
+rename to old/multidatavtppost.c
+diff --git a/src/platlet.c b/old/platlet.c
+similarity index 100%
+rename from src/platlet.c
+rename to old/platlet.c
+diff --git a/src/poisson.c b/old/poisson.c
+similarity index 100%
+rename from src/poisson.c
+rename to old/poisson.c
+diff --git a/src/poisson_hypre.c b/old/poisson_hypre.c
+similarity index 100%
+rename from src/poisson_hypre.c
+rename to old/poisson_hypre.c
+diff --git a/src/ps_backup.c b/old/ps_backup.c
+similarity index 100%
+rename from src/ps_backup.c
+rename to old/ps_backup.c
+diff --git a/src/rheology.c b/old/rheology.c
+similarity index 100%
+rename from src/rheology.c
+rename to old/rheology.c
+diff --git a/src/rhs.c b/old/rhs.c
+similarity index 100%
+rename from src/rhs.c
+rename to old/rhs.c
+diff --git a/src/rhs2.c b/old/rhs2.c
+similarity index 100%
+rename from src/rhs2.c
+rename to old/rhs2.c
+diff --git a/src/scratchfile.c~ b/old/scratchfile.c~
+similarity index 100%
+rename from src/scratchfile.c~
+rename to old/scratchfile.c~
+diff --git a/src/solvers.c b/old/solvers.c
+similarity index 100%
+rename from src/solvers.c
+rename to old/solvers.c
+diff --git a/src/spline.c b/old/spline.c
+similarity index 100%
+rename from src/spline.c
+rename to old/spline.c
+diff --git a/src/swarm_test.c b/old/swarm_test.c
+similarity index 100%
+rename from src/swarm_test.c
+rename to old/swarm_test.c
+diff --git a/src/temp.c b/old/temp.c
+similarity index 100%
+rename from src/temp.c
+rename to old/temp.c
+diff --git a/src/temp2.c b/old/temp2.c
+similarity index 100%
+rename from src/temp2.c
+rename to old/temp2.c
+diff --git a/src/test_walkingsearch.c b/old/test_walkingsearch.c
+similarity index 100%
+rename from src/test_walkingsearch.c
+rename to old/test_walkingsearch.c
+diff --git a/src/testvtp.py~ b/old/testvtp.py~
+similarity index 100%
+rename from src/testvtp.py~
+rename to old/testvtp.py~
+diff --git a/src/utils.c b/old/utils.c
+similarity index 100%
+rename from src/utils.c
+rename to old/utils.c
+diff --git a/src/variables.c b/old/variables.c
+similarity index 100%
+rename from src/variables.c
+rename to old/variables.c
+diff --git a/src/wallfunction.c b/old/wallfunction.c
+similarity index 100%
+rename from src/wallfunction.c
+rename to old/wallfunction.c
+diff --git a/src/BC_Handlers.c b/src/BC_Handlers.c
+index 0d54a4f..e698867 100644
+--- a/src/BC_Handlers.c
++++ b/src/BC_Handlers.c
+@@ -417,14 +417,17 @@ static PetscErrorCode Destroy_InletConstantVelocity(BoundaryCondition *self)
+ PetscErrorCode Create_InletConstantVelocity(BoundaryCondition *bc)
+ {
+     PetscErrorCode ierr;
++    InletConstantData *priv;
++    
+     PetscFunctionBeginUser;
+     if (!bc) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Input BoundaryCondition object is NULL");
+ 
+     // Allocate the private data structure for this handler
+-    ierr = PetscMalloc1(1, &bc->data); CHKERRQ(ierr);
++    ierr = PetscMalloc1(1, &priv); CHKERRQ(ierr);
+     LOG_ALLOW(LOCAL, LOG_DEBUG, "Create_InletConstantVelocity: Allocated private data struct.\n");
+ 
+     // Assign the function pointers for this handler type
++    bc->data       = priv;
+     bc->Initialize = Initialize_InletConstantVelocity;
+     bc->PreStep    = PreStep_InletConstantVelocity;
+     bc->Apply      = Apply_InletConstantVelocity;
+diff --git a/src/BC_Handlers.c~ b/src/BC_Handlers.c~
+deleted file mode 100644
+index a978426..0000000
+--- a/src/BC_Handlers.c~
++++ /dev/null
+@@ -1,434 +0,0 @@
+-#include "BC_Handlers.h"     // The header that declares this file's "constructor" functions
+-
+-//================================================================================
+-//
+-//               HANDLER IMPLEMENTATION: NO-SLIP WALL
+-//               (Corresponds to BC_HANDLER_WALL_NOSLIP)
+-//
+-// This handler implements a stationary, impenetrable wall where the fluid
+-// velocity is zero (no-slip condition). It is one of the simplest but most
+-// common boundary conditions.
+-//
+-//================================================================================
+-
+-/**
+- * @brief (Handler Action) Applies the no-slip wall condition to a specified face.
+- *
+- * This function is the core implementation for the no-slip wall. It is called by the
+- * BoundarySystem during the Apply phase of each time step. Its responsibilities are:
+- *   1. Check if the current MPI rank owns any part of the face to be processed.
+- *   2. If so, iterate over the local portion of that face.
+- *   3. For each boundary cell face, set the normal contravariant velocity (flux) to zero.
+- *   4. Set the Cartesian ghost cell velocity to enforce the no-slip condition
+- *      (e.g., u_ghost = -u_interior), which is a common second-order accurate
+- *      approximation for a wall located exactly on the cell face.
+- *
+- * @param self A pointer to the BoundaryCondition object. This simple handler does not
+- *             use this parameter, but it is required by the standard interface.
+- * @param ctx  A pointer to the BCContext, which provides access to the UserCtx (containing
+- *             the vectors to be modified) and the ID of the face to be processed.
+- * @return PetscErrorCode 0 on success.
+- */
+-static PetscErrorCode Apply_WallNoSlip(BoundaryCondition *self, BCContext *ctx)
+-{
+-    PetscErrorCode ierr;
+-    UserCtx*       user = ctx->user;
+-    BCFace         face_id = ctx->face_id;
+-    PetscBool      can_service;
+-    PetscMPIInt    rank;
+-
+-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD,&rank);
+-    
+-    // This unused-variable pragma silences compiler warnings for simple handlers
+-    // that don't need their own 'self' pointer.
+-    (void)self;
+-    
+-    PetscFunctionBeginUser;
+-
+-    // Step 1: Check if this MPI rank has any work to do for this face.
+-    // This is a critical efficiency step to avoid unnecessary work and memory access.
+-    // It uses a utility function that understands the parallel grid decomposition.
+-    ierr = CanRankServiceFace(&user->info, face_id, &can_service); CHKERRQ(ierr);
+-    if (!can_service) {
+-        PetscFunctionReturn(0); // This rank does not own this boundary face. Exit silently.
+-    }
+-
+-    // If we proceed, this rank has work to do. Log the action.
+-    const char *face_name = BCFaceToString(face_id);
+-    LOG_ALLOW(LOCAL, LOG_DEBUG, "Apply_WallNoSlip: Rank %d applying condition to Face %d (%s).\n",rank, face_id, face_name);
+-
+-    // Step 2: Get safe access to the local PETSc vector arrays.
+-    // We get the local vectors (lUcat, lUcont) because ghost cell data is only
+-    // guaranteed to be correct on the local representation after a ghost update.
+-    DMDALocalInfo  *info = &user->info;
+-    Cmpnts       ***l_ucat, ***l_ucont;
+-    ierr = DMDAVecGetArray(user->fda, user->lUcat, &l_ucat); CHKERRQ(ierr);
+-    ierr = DMDAVecGetArray(user->fda, user->lUcont, &l_ucont); CHKERRQ(ierr);
+-
+-    // Step 3: Apply the no-slip condition based on which face is being processed.
+-    // The loop bounds are for the *owned* nodes on this rank (xs to xe, etc.).
+-    // The logic inside correctly accesses the ghost nodes or face-normal fluxes.
+-    PetscInt i, j, k;
+-    PetscInt xs = info->xs, xe = info->xs + info->xm;
+-    PetscInt ys = info->ys, ye = info->ys + info->ym;
+-    PetscInt zs = info->zs, ze = info->zs + info->zm;
+-    PetscInt mx = info->mx, my = info->my, mz = info->mz; // Global dimensions
+-
+-    switch (face_id) {
+-        case BC_FACE_NEG_X: // -Xi face at global index i=0
+-            i = 0;
+-            for (k = zs; k < ze; k++) {
+-                for (j = ys; j < ye; j++) {
+-                    l_ucont[k][j][i].x = 0.0; // Set normal contravariant flux to zero.
+-                    // Set Cartesian ghost cell velocity for no-slip: u_ghost(i) = -u_interior(i+1)
+-                    l_ucat[k][j][i].x = -l_ucat[k][j][i+1].x;
+-                    l_ucat[k][j][i].y = -l_ucat[k][j][i+1].y;
+-                    l_ucat[k][j][i].z = -l_ucat[k][j][i+1].z;
+-                }
+-            }
+-            break;
+-
+-        case BC_FACE_POS_X: // +Xi face at global index i = mx-1
+-            i = mx - 1;
+-            for (k = zs; k < ze; k++) {
+-                for (j = ys; j < ye; j++) {
+-                    l_ucont[k][j][i-1].x = 0.0;
+-                    // u_ghost(i) = -u_interior(i-1)
+-                    l_ucat[k][j][i].x = -l_ucat[k][j][i-1].x;
+-                    l_ucat[k][j][i].y = -l_ucat[k][j][i-1].y;
+-                    l_ucat[k][j][i].z = -l_ucat[k][j][i-1].z;
+-                }
+-            }
+-            break;
+-
+-        case BC_FACE_NEG_Y: // -Eta face at global index j=0
+-            j = 0;
+-            for (k = zs; k < ze; k++) {
+-                for (i = xs; i < xe; i++) {
+-                    l_ucont[k][j][i].y = 0.0;
+-                    l_ucat[k][j][i].x = -l_ucat[k][j+1][i].x;
+-                    l_ucat[k][j][i].y = -l_ucat[k][j+1][i].y;
+-                    l_ucat[k][j][i].z = -l_ucat[k][j+1][i].z;
+-                }
+-            }
+-            break;
+-
+-        case BC_FACE_POS_Y: // +Eta face at global index j = my-1
+-            j = my - 1;
+-            for (k = zs; k < ze; k++) {
+-                for (i = xs; i < xe; i++) {
+-                    l_ucont[k][j-1][i].y = 0.0;
+-                    l_ucat[k][j][i].x = -l_ucat[k][j-1][i].x;
+-                    l_ucat[k][j][i].y = -l_ucat[k][j-1][i].y;
+-                    l_ucat[k][j][i].z = -l_ucat[k][j-1][i].z;
+-                }
+-            }
+-            break;
+-            
+-        case BC_FACE_NEG_Z: // -Zeta face at global index k=0
+-            k = 0;
+-            for (j = ys; j < ye; j++) {
+-                for (i = xs; i < xe; i++) {
+-                    l_ucont[k][j][i].z = 0.0;
+-                    l_ucat[k][j][i].x = -l_ucat[k+1][j][i].x;
+-                    l_ucat[k][j][i].y = -l_ucat[k+1][j][i].y;
+-                    l_ucat[k][j][i].z = -l_ucat[k+1][j][i].z;
+-                }
+-            }
+-            break;
+-
+-        case BC_FACE_POS_Z: // +Zeta face at global index k = mz-1
+-            k = mz - 1;
+-            for (j = ys; j < ye; j++) {
+-                for (i = xs; i < xe; i++) {
+-                    l_ucont[k-1][j][i].z = 0.0;
+-                    l_ucat[k][j][i].x = -l_ucat[k-1][j][i].x;
+-                    l_ucat[k][j][i].y = -l_ucat[k-1][j][i].y;
+-                    l_ucat[k][j][i].z = -l_ucat[k-1][j][i].z;
+-                }
+-            }
+-            break;
+-    }
+-
+-    // Step 4: Restore safe access to the PETSc vector arrays.
+-    ierr = DMDAVecRestoreArray(user->fda, user->lUcat, &l_ucat); CHKERRQ(ierr);
+-    ierr = DMDAVecRestoreArray(user->fda, user->lUcont, &l_ucont); CHKERRQ(ierr);
+-
+-    PetscFunctionReturn(0);
+-}
+-
+-
+-/**
+- * @brief (Handler Constructor) Populates a BoundaryCondition object with No-Slip Wall behavior.
+- *
+- * This function is called by the BoundarySystem factory (`BoundaryCondition_Create` in
+- * `Boundaries.c`). It "constructs" a no-slip wall handler by setting the function
+- * pointers in the provided BoundaryCondition struct to point to the static functions
+- * defined in this file.
+- *
+- * A no-slip wall is simple and requires only the `Apply` method:
+- *  - It needs no special initialization (`Initialize` is NULL).
+- *  - It does not contribute to the global mass balance (`PreStep` is NULL).
+- *  - It has a specific `Apply` function to enforce zero velocity.
+- *  - It allocates no private data, so `Destroy` is NULL.
+- *
+- * @param bc A pointer to the generic BoundaryCondition object to be configured.
+- * @return PetscErrorCode 0 on success.
+- */
+-PetscErrorCode Create_WallNoSlip(BoundaryCondition *bc)
+-{
+-    PetscFunctionBeginUser;
+-    if (!bc) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Input BoundaryCondition object is NULL in Create_WallNoSlip");
+-
+-    // Assign the appropriate function pointers for this handler type.
+-    // This is the essence of the "Strategy" pattern in C.
+-    bc->Initialize = NULL;
+-    bc->PreStep    = NULL;
+-    bc->Apply      = Apply_WallNoSlip; // The ONLY action this handler needs to perform.
+-    bc->Destroy    = NULL;
+-    
+-    // No private data struct is needed for this handler, so bc->data remains NULL.
+-
+-    PetscFunctionReturn(0);
+-}
+-
+-///////////////////////////////////////////////////////////////////////////////////////////////////////////
+-
+-//================================================================================
+-//
+-//          HANDLER IMPLEMENTATION: CONSTANT VELOCITY INLET
+-//          (Corresponds to BC_HANDLER_INLET_CONSTANT_VELOCITY)
+-//
+-// This handler implements an inlet with a prescribed, uniform Cartesian velocity.
+-//
+-//================================================================================
+-
+-// --- 1. FORWARD DECLARATIONS for this handler's static methods ---
+-// This tells the compiler that these functions exist before they are used.
+-// It resolves the "declared implicitly" warning.
+-static PetscErrorCode Initialize_InletConstantVelocity(BoundaryCondition *self, BCContext *ctx);
+-static PetscErrorCode PreStep_InletConstantVelocity(BoundaryCondition *self, BCContext *ctx, PetscReal *in, PetscReal *out);
+-static PetscErrorCode Apply_InletConstantVelocity(BoundaryCondition *self, BCContext *ctx);
+-static PetscErrorCode Destroy_InletConstantVelocity(BoundaryCondition *self);
+-
+-/**
+- * @brief Private data structure for the Constant Velocity Inlet handler.
+- *
+- * This struct holds the specific parameters needed for this handler, which are
+- * parsed from the bcs.dat file during initialization.
+- */
+-typedef struct {
+-    Cmpnts specified_velocity; // The desired Cartesian velocity (vx, vy, vz)
+-} InletConstantData;
+-
+-
+-/**
+- * @brief (Handler Action) Sets the initial state of the boundary face.
+- *
+- * This function is called once by BoundarySystem_Create. It performs two tasks:
+- * 1. Parses the `params` list (from bcs.dat) to find the 'vx', 'vy', and 'vz'
+- *    parameters and stores them in its private `data` struct.
+- * 2. Sets the initial Ucont and Ucat values on the boundary face to reflect
+- *    this constant velocity.
+- *
+- * @param self The BoundaryCondition object for this handler.
+- * @param ctx  The context, providing access to UserCtx and face_id.
+- * @return PetscErrorCode 0 on success.
+- */
+-static PetscErrorCode Initialize_InletConstantVelocity(BoundaryCondition *self, BCContext *ctx)
+-{
+-    PetscErrorCode ierr;
+-    UserCtx*       user = ctx->user;
+-    BCFace         face_id = ctx->face_id;
+-    InletConstantData *data = (InletConstantData*)self->data;
+-    
+-    PetscFunctionBeginUser;
+-    LOG_ALLOW(LOCAL, LOG_DEBUG, "Initialize_InletConstantVelocity: Initializing handler for Face %d.", face_id);
+-
+-    // 1. Parse parameters from the linked list stored in the face configuration.
+-    data->specified_velocity = (Cmpnts){0.0, 0.0, 0.0}; // Default to zero
+-    for (BC_Param *p = user->boundary_faces[face_id].params; p; p = p->next) {
+-        if (strcasecmp(p->key, "vx") == 0) data->specified_velocity.x = atof(p->value);
+-        else if (strcasecmp(p->key, "vy") == 0) data->specified_velocity.y = atof(p->value);
+-        else if (strcasecmp(p->key, "vz") == 0) data->specified_velocity.z = atof(p->value);
+-    }
+-    LOG_ALLOW(LOCAL, LOG_INFO, "  Inlet Face %d configured with velocity (vx,vy,vz) = (%.2f, %.2f, %.2f)",
+-              face_id, data->specified_velocity.x, data->specified_velocity.y, data->specified_velocity.z);
+-
+-    // 2. Set the initial boundary state. We can simply call the Apply function to do this,
+-    //    as the logic is the same for the initial state and subsequent steps for this handler.
+-    ierr = Apply_InletConstantVelocity(self, ctx); CHKERRQ(ierr);
+-
+-    PetscFunctionReturn(0);
+-}
+-
+-
+-/**
+- * @brief (Handler Action) Calculates the target inflow flux for the PreStep phase.
+- *
+- * This function calculates the total volumetric flux that *should* be entering
+- * through the portion of the inlet face owned by this MPI rank. It does this by
+- * dotting the specified Cartesian velocity with the face-normal area vectors.
+- *
+- * @param self The BoundaryCondition object for this handler.
+- * @param ctx  The context, providing UserCtx and face_id.
+- * @param[out] local_inflow_contribution  The calculated inflow flux is added to this value.
+- * @param[out] local_outflow_contribution This handler does not produce outflow, so this is unused.
+- * @return PetscErrorCode 0 on success.
+- */
+-static PetscErrorCode PreStep_InletConstantVelocity(BoundaryCondition *self, BCContext *ctx, PetscReal *local_inflow_contribution, PetscReal *local_outflow_contribution)
+-{
+-    // ... (This function would calculate the flux: V_spec · Area_vector) ...
+-    // For Phase 2, we can leave this as a placeholder, as it's only needed
+-    // when we have a mass-conserving outlet that needs to know the target inflow.
+-    (void)self; (void)ctx; (void)local_inflow_contribution; (void)local_outflow_contribution;
+-    PetscFunctionBeginUser;
+-    PetscFunctionReturn(0);
+-}
+-
+-/**
+- * @brief (Handler Action) Applies the constant velocity inlet condition to a specified face.
+- *
+- * This function is the core "workhorse" for the constant velocity inlet. It is called
+- * by the BoundarySystem during the Apply phase of each time step. Its responsibility
+- * is to enforce the pre-configured velocity on its assigned face. It does this by:
+- *
+- * 1.  Setting the ghost-cell Cartesian velocity (`Ucat`) directly to the specified
+- *     velocity vector (e.g., `ucat[k][j][0] = {vx, vy, vz}`). This provides a
+- *     Dirichlet condition for any calculations using Cartesian velocity.
+- *
+- * 2.  Calculating the corresponding contravariant velocity components (`Ucont`). This
+- *     is done by projecting the specified Cartesian velocity vector onto the
+- *     contravariant basis vectors at each point on the face. For example, the first
+- *     contravariant component is U¹ = v_cartesian ⋅ g¹ = (vx,vy,vz) ⋅ (csi.x,csi.y,csi.z).
+- *     This ensures that the volumetric flux through each face is consistent with the
+- *     specified Cartesian velocity.
+- *
+- * @param self The BoundaryCondition object for this handler, which contains the
+- *             private `data` struct holding the configured velocity.
+- * @param ctx  The context, providing access to UserCtx (for PETSc vectors and grid info)
+- *             and the ID of the face to be processed.
+- * @return PetscErrorCode 0 on success.
+- */
+-static PetscErrorCode Apply_InletConstantVelocity(BoundaryCondition *self, BCContext *ctx)
+-{
+-    PetscErrorCode ierr;
+-    UserCtx*       user = ctx->user;
+-    BCFace         face_id = ctx->face_id;
+-    InletConstantData *data = (InletConstantData*)self->data; // Cast private data
+-    PetscBool      can_service;
+-    PetscMPIInt    rank;
+-    
+-    PetscFunctionBeginUser;
+-
+-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD,&rank);
+-
+-    // Step 1: Check if this MPI rank owns any part of the face to be processed.
+-    ierr = CanRankServiceFace(&user->info, face_id, &can_service); CHKERRQ(ierr);
+-    if (!can_service) {
+-        PetscFunctionReturn(0); // This rank has no work to do for this face.
+-    }
+-
+-    const char* face_name = BCFaceToString(face_id);
+-    LOG_ALLOW(LOCAL, LOG_DEBUG, "Apply_InletConstantVelocity: Rank %d applying condition to Face %d (%s).", rank, face_id, face_name);
+-
+-    // Step 2: Get access to the necessary PETSc vector arrays.
+-    DMDALocalInfo  *info = &user->info;
+-    Cmpnts       ***l_ucat, ***l_ucont;
+-    Cmpnts       ***l_csi, ***l_eta, ***l_zet;
+-    ierr = DMDAVecGetArray(user->fda, user->lUcat, &l_ucat); CHKERRQ(ierr);
+-    ierr = DMDAVecGetArray(user->fda, user->lUcont, &l_ucont); CHKERRQ(ierr);
+-    ierr = DMDAVecGetArrayRead(user->fda, user->lCsi, &l_csi); CHKERRQ(ierr);
+-    ierr = DMDAVecGetArrayRead(user->fda, user->lEta, &l_eta); CHKERRQ(ierr);
+-    ierr = DMDAVecGetArrayRead(user->fda, user->lZet, &l_zet); CHKERRQ(ierr);
+-
+-    const Cmpnts *v_spec = &data->specified_velocity; // Create a convenient shortcut
+-
+-    // Step 3: Loop over the owned nodes on the specified face and apply the BC.
+-    PetscInt i, j, k;
+-    const PetscInt xs = info->xs, xe = info->xs + info->xm;
+-    const PetscInt ys = info->ys, ye = info->ys + info->ym;
+-    const PetscInt zs = info->zs, ze = info->zs + info->zm;
+-    const PetscInt mx = info->mx, my = info->my, mz = info->mz;
+-
+-    // The loops iterate over the entire local ownership range. The `if` conditions
+-    // inside ensure that the logic is only applied to the nodes on the correct boundary face.
+-    for (k = zs; k < ze; k++) {
+-        for (j = ys; j < ye; j++) {
+-            for (i = xs; i < xe; i++) {
+-
+-                if (i == 0 && face_id == BC_FACE_NEG_X) {
+-                    l_ucat[k][j][i] = *v_spec;
+-                    l_ucont[k][j][i].x = v_spec->x * l_csi[k][j][i].x + v_spec->y * l_csi[k][j][i].y + v_spec->z * l_csi[k][j][i].z;
+-                }
+-                else if (i == mx - 1 && face_id == BC_FACE_POS_X) {
+-                    l_ucat[k][j][i] = *v_spec;
+-                    // Note: Ucont.x is on the i-face, so for the max face, it's at index i-1
+-                    l_ucont[k][j][i-1].x = v_spec->x * l_csi[k][j][i-1].x + v_spec->y * l_csi[k][j][i-1].y + v_spec->z * l_csi[k][j][i-1].z;
+-                }
+-                else if (j == 0 && face_id == BC_FACE_NEG_Y) {
+-                    l_ucat[k][j][i] = *v_spec;
+-                    l_ucont[k][j][i].y = v_spec->x * l_eta[k][j][i].x + v_spec->y * l_eta[k][j][i].y + v_spec->z * l_eta[k][j][i].z;
+-                }
+-                else if (j == my - 1 && face_id == BC_FACE_POS_Y) {
+-                    l_ucat[k][j][i] = *v_spec;
+-                    l_ucont[k][j-1][i].y = v_spec->x * l_eta[k][j-1][i].x + v_spec->y * l_eta[k][j-1][i].y + v_spec->z * l_eta[k][j-1][i].z;
+-                }
+-                else if (k == 0 && face_id == BC_FACE_NEG_Z) {
+-                    l_ucat[k][j][i] = *v_spec;
+-                    l_ucont[k][j][i].z = v_spec->x * l_zet[k][j][i].x + v_spec->y * l_zet[k][j][i].y + v_spec->z * l_zet[k][j][i].z;
+-                }
+-                else if (k == mz - 1 && face_id == BC_FACE_POS_Z) {
+-                    l_ucat[k][j][i] = *v_spec;
+-                    l_ucont[k-1][j][i].z = v_spec->x * l_zet[k-1][j][i].x + v_spec->y * l_zet[k-1][j][i].y + v_spec->z * l_zet[k-1][j][i].z;
+-                }
+-            }
+-        }
+-    }
+-    
+-    // Step 4: Restore safe access to the PETSc vector arrays.
+-    ierr = DMDAVecRestoreArray(user->fda, user->lUcat, &l_ucat); CHKERRQ(ierr);
+-    ierr = DMDAVecRestoreArray(user->fda, user->lUcont, &l_ucont); CHKERRQ(ierr);
+-    ierr = DMDAVecRestoreArrayRead(user->fda, user->lCsi, &l_csi); CHKERRQ(ierr);
+-    ierr = DMDAVecRestoreArrayRead(user->fda, user->lEta, &l_eta); CHKERRQ(ierr);
+-    ierr = DMDAVecRestoreArrayRead(user->fda, user->lZet, &l_zet); CHKERRQ(ierr);
+-    
+-    PetscFunctionReturn(0);
+-}
+-
+-/**
+- * @brief (Handler Destructor) Frees memory allocated by the Constant Velocity Inlet handler.
+- */
+-static PetscErrorCode Destroy_InletConstantVelocity(BoundaryCondition *self)
+-{
+-    PetscFunctionBeginUser;
+-    if (self && self->data) {
+-        LOG_ALLOW(LOCAL, LOG_DEBUG, "Destroy_InletConstantVelocity: Freeing private data struct.");
+-        PetscFree(self->data);
+-        self->data = NULL;
+-    }
+-    PetscFunctionReturn(0);
+-}
+-
+-
+-/**
+- * @brief (Handler Constructor) Populates a BoundaryCondition object with Constant Velocity Inlet behavior.
+- */
+-PetscErrorCode Create_InletConstantVelocity(BoundaryCondition *bc)
+-{
+-    PetscErrorCode ierr;
+-    PetscFunctionBeginUser;
+-    if (!bc) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Input BoundaryCondition object is NULL");
+-
+-    // Allocate the private data structure for this handler
+-    ierr = PetscMalloc1(1, &bc->data); CHKERRQ(ierr);
+-    LOG_ALLOW(LOCAL, LOG_DEBUG, "Create_InletConstantVelocity: Allocated private data struct.");
+-
+-    // Assign the function pointers for this handler type
+-    bc->Initialize = Initialize_InletConstantVelocity;
+-    bc->PreStep    = PreStep_InletConstantVelocity;
+-    bc->Apply      = Apply_InletConstantVelocity;
+-    bc->Destroy    = Destroy_InletConstantVelocity;
+-    
+-    PetscFunctionReturn(0);
+-}
+diff --git a/src/Metric.c~ b/src/Metric.c~
+deleted file mode 100644
+index b9b4a44..0000000
+--- a/src/Metric.c~
++++ /dev/null
+@@ -1,165 +0,0 @@
+-/* Metric.c ------------------------------------------------------------------
+- * Utility routines for curvilinear-grid metric operations used by the
+- * particle-swarm module.
+- *
+- *  –  Logical (xi,eta,zta) → physical (x,y,z) mapping via trilinear blend.
+- *  –  Jacobian matrix and determinant for contravariant velocity conversion.
+- *
+- * The only data this file needs from the application is the DMDA that stores
+- * vertex coordinates in the usual PETSc coordinate DM (user->da) and the
+- * coordinate array type `Cmpnts` (three-component struct {x,y,z}).
+- * ---------------------------------------------------------------------------*/
+-
+-#include <petsc.h>
+-#include "Metric.h"          /* forward declarations + Cmpnts + UserCtx */
+-
+-/* ------------------------------------------------------------------------- */
+-/**
+- * @brief Extract the eight vertex coordinates of the hexahedral cell (i,j,k).
+- *
+- * Vertices are returned in the standard trilinear ordering: bit 0 → x-corner,
+- * bit 1 → y-corner, bit 2 → z-corner.  (000 = origin of the cell, 111 = far
+- * corner.)
+- */
+-PetscErrorCode MetricGetCellVertices(UserCtx *user,
+-                                     const Cmpnts ***X,   /* coord array */
+-                                     PetscInt i,PetscInt j,PetscInt k,
+-                                     Cmpnts V[8])
+-{
+-  PetscFunctionBeginUser;
+-  for (PetscInt c = 0; c < 8; ++c) {
+-    PetscInt ii = i + ((c & 1) ? 1 : 0);
+-    PetscInt jj = j + ((c & 2) ? 1 : 0);
+-    PetscInt kk = k + ((c & 4) ? 1 : 0);
+-    V[c] = X[kk][jj][ii];
+-  }
+-  PetscFunctionReturn(0);
+-}
+-
+-/* ------------------------------------------------------------------------- */
+-/**
+- * @brief Map logical coordinates to physical space using trilinear basis.
+- *
+- * @param[in]   V   Array of the eight vertex coordinates (MetricGetCellVertices).
+- * @param[in]   xi,eta,zta  Logical coordinates in [0,1].
+- * @param[out]  Xp  Physical coordinate.
+- */
+-static inline void TrilinearBlend(const Cmpnts V[8],
+-                                  PetscReal xi,PetscReal eta,PetscReal zta,
+-                                  Cmpnts *Xp)
+-{
+-  PetscReal x=0,y=0,z=0;
+-  for (PetscInt c=0;c<8;++c) {
+-    PetscReal N = ((c&1)?xi : 1.0-xi ) *
+-                  ((c&2)?eta: 1.0-eta) *
+-                  ((c&4)?zta: 1.0-zta);
+-    x += N * V[c].x;
+-    y += N * V[c].y;
+-    z += N * V[c].z;
+-  }
+-  Xp->x = x; Xp->y = y; Xp->z = z;
+-}
+-
+-/* ------------------------------------------------------------------------- */
+-/**
+- * @brief Public wrapper: map (cell index, ξ,η,ζ) to (x,y,z).
+- */
+-PetscErrorCode MetricLogicalToPhysical(UserCtx  *user,
+-                                       const Cmpnts ***X,
+-                                       PetscInt i,PetscInt j,PetscInt k,
+-                                       PetscReal xi,PetscReal eta,PetscReal zta,
+-                                       Cmpnts *Xp)
+-{
+-  PetscErrorCode ierr;
+-  Cmpnts V[8];
+-  PetscFunctionBeginUser;
+-  ierr = MetricGetCellVertices(user,X,i,j,k,V); CHKERRQ(ierr);
+-  TrilinearBlend(V,xi,eta,zta,Xp);
+-  PetscFunctionReturn(0);
+-}
+-
+-/* ------------------------------------------------------------------------- */
+-/**
+- * @brief Compute Jacobian matrix and its determinant at (xi,eta,zta).
+- *
+- *        J = [ x_ξ  x_η  x_ζ ]
+- *            [ y_ξ  y_η  y_ζ ]
+- *            [ z_ξ  z_η  z_ζ ]
+- *
+- * This is handy for converting physical velocities (u,v,w) into contravariant
+- * components and for volume weighting.
+- */
+-PetscErrorCode MetricJacobian(UserCtx *user,
+-                              const Cmpnts ***X,
+-                              PetscInt i,PetscInt j,PetscInt k,
+-                              PetscReal xi,PetscReal eta,PetscReal zta,
+-                              PetscReal J[3][3], PetscReal *detJ)
+-{
+-  PetscErrorCode ierr;
+-  Cmpnts V[8];
+-  PetscFunctionBeginUser;
+-  ierr = MetricGetCellVertices(user,X,i,j,k,V); CHKERRQ(ierr);
+-
+-  /* derivatives of trilinear shape functions */
+-  PetscReal dN_dXi[8], dN_dEta[8], dN_dZta[8];
+-  for (PetscInt c=0;c<8;++c) {
+-    PetscReal sx = (c & 1) ?  1.0 : -1.0;
+-    PetscReal sy = (c & 2) ?  1.0 : -1.0;
+-    PetscReal sz = (c & 4) ?  1.0 : -1.0;
+-    dN_dXi [c] = 0.125 * sx * ( (c&2?eta:1-eta) ) * ( (c&4?zta:1-zta) );
+-    dN_dEta[c] = 0.125 * sy * ( (c&1?xi :1-xi ) ) * ( (c&4?zta:1-zta) );
+-    dN_dZta[c] = 0.125 * sz * ( (c&1?xi :1-xi ) ) * ( (c&2?eta:1-eta) );
+-  }
+-
+-  /* assemble Jacobian */
+-  PetscReal x_xi=0,y_xi=0,z_xi=0,
+-            x_eta=0,y_eta=0,z_eta=0,
+-            x_zta=0,y_zta=0,z_zta=0;
+-  for (PetscInt c=0;c<8;++c) {
+-    x_xi  += dN_dXi [c]*V[c].x;  y_xi  += dN_dXi [c]*V[c].y;  z_xi  += dN_dXi [c]*V[c].z;
+-    x_eta += dN_dEta[c]*V[c].x;  y_eta += dN_dEta[c]*V[c].y;  z_eta += dN_dEta[c]*V[c].z;
+-    x_zta += dN_dZta[c]*V[c].x;  y_zta += dN_dZta[c]*V[c].y;  z_zta += dN_dZta[c]*V[c].z;
+-  }
+-
+-  J[0][0]=x_xi;  J[0][1]=x_eta;  J[0][2]=x_zta;
+-  J[1][0]=y_xi;  J[1][1]=y_eta;  J[1][2]=y_zta;
+-  J[2][0]=z_xi;  J[2][1]=z_eta;  J[2][2]=z_zta;
+-
+-  if (detJ) {
+-    *detJ = x_xi*(y_eta*z_zta - y_zta*z_eta)
+-          - x_eta*(y_xi*z_zta - y_zta*z_xi)
+-          + x_zta*(y_xi*z_eta - y_eta*z_xi);
+-  }
+-  PetscFunctionReturn(0);
+-}
+-
+-/* ------------------------------------------------------------------------- */
+-/**
+- * @brief Convert physical velocity (u,v,w) to contravariant components (u^xi, u^eta, u^zta).
+- */
+-PetscErrorCode MetricVelocityContravariant(const PetscReal J[3][3], PetscReal detJ,
+-                                           const PetscReal u[3], PetscReal uc[3])
+-{
+-  PetscFunctionBeginUser;
+-  /* contravariant basis vectors (row of adjugate(J)) divided by detJ */
+-  PetscReal gxi[3]  = {  J[1][1]*J[2][2]-J[1][2]*J[2][1],
+-                        -J[0][1]*J[2][2]+J[0][2]*J[2][1],
+-                         J[0][1]*J[1][2]-J[0][2]*J[1][1] };
+-  PetscReal geta[3] = { -J[1][0]*J[2][2]+J[1][2]*J[2][0],
+-                         J[0][0]*J[2][2]-J[0][2]*J[2][0],
+-                        -J[0][0]*J[1][2]+J[0][2]*J[1][0] };
+-  PetscReal gzta[3] = {  J[1][0]*J[2][1]-J[1][1]*J[2][0],
+-                        -J[0][0]*J[2][1]+J[0][1]*J[2][0],
+-                         J[0][0]*J[1][1]-J[0][1]*J[1][0] };
+-
+-  PetscReal invDet = 1.0 / detJ;
+-  for (int d=0; d<3; ++d) { gxi[d]  *= invDet; geta[d] *= invDet; gzta[d] *= invDet; }
+-
+-  uc[0] = gxi [0]*u[0] + gxi [1]*u[1] + gxi [2]*u[2];
+-  uc[1] = geta[0]*u[0] + geta[1]*u[1] + geta[2]*u[2];
+-  uc[2] = gzta[0]*u[0] + gzta[1]*u[1] + gzta[2]*u[2];
+-  PetscFunctionReturn(0);
+-}
+-
+-/* ------------------------------------------------------------------------- */
+-/* End of Metric.c */
+diff --git a/src/ParticleMotion.c b/src/ParticleMotion.c
+index d69ad64..46a54bc 100644
+--- a/src/ParticleMotion.c
++++ b/src/ParticleMotion.c
+@@ -784,6 +784,7 @@ PetscErrorCode ResizeSwarmGlobally(DM swarm, PetscInt N_target)
+  *
+  * @return PetscErrorCode 0 on success, non-zero on failure (including PETSC_ERR_FILE_OPEN).
+  */
++/*
+ PetscErrorCode PreCheckAndResizeSwarm(UserCtx *user,
+                                       PetscInt ti,
+                                       const char *ext)
+@@ -863,6 +864,115 @@ PetscErrorCode PreCheckAndResizeSwarm(UserCtx *user,
+ 
+     PetscFunctionReturn(0); // Return 0 only if everything succeeded
+ }
++*/
++
++/**
++ * @brief Checks particle count from a saved file and resizes the swarm globally.
++ *
++ * This function uses a robust parallel pattern: only Rank 0 reads the reference
++ * position file to determine the total number of particles saved (`N_file`).
++ * This count is then broadcast to all other ranks. Finally, each rank compares
++ * N_file with the current swarm size and participates in resizing if necessary.
++ *
++ * @param[in,out] user Pointer to the UserCtx structure containing the DMSwarm.
++ * @param[in]     ti   Time index for constructing the file name.
++ * @param[in]     ext  File extension (e.g., "dat").
++ *
++ * @return PetscErrorCode 0 on success, non-zero on failure.
++ */
++PetscErrorCode PreCheckAndResizeSwarm(UserCtx *user,
++                                      PetscInt ti,
++                                      const char *ext)
++{
++    PetscErrorCode ierr;
++    char           filename[PETSC_MAX_PATH_LEN];
++    PetscInt       N_file = 0; // The number of particles determined from the file
++    PetscInt       N_current = 0;
++    MPI_Comm       comm;
++    PetscMPIInt    rank;
++    const char    *refFieldName = "position";
++    const PetscInt bs = 3;
++    
++    // NOTE: Your filename format has a hardcoded "_0" which is typical for
++    // PETSc when writing a parallel object from a single rank.
++    // If you ever write in parallel, PETSc might create one file per rank.
++    // The current logic assumes a single file written by one process.
++    const int      placeholder_int = 0;
++
++    PetscFunctionBeginUser;
++    ierr = PetscObjectGetComm((PetscObject)user->swarm, &comm); CHKERRQ(ierr);
++    ierr = MPI_Comm_rank(comm, &rank); CHKERRQ(ierr);
++
++        // --- Construct filename using the specified format ---
++    // results/%s%05<PetscInt_FMT>_%d.%s
++    ierr = PetscSNPrintf(filename, sizeof(filename), "results/%s%05" PetscInt_FMT "_%d.%s",
++                         refFieldName, ti, placeholder_int, ext); CHKERRQ(ierr);
++    // Note: Make sure the "results" directory exists or handle directory creation elsewhere.
++
++    LOG_ALLOW(GLOBAL, LOG_INFO, "PreCheckAndResizeSwarm: Checking particle count for timestep %d using ref file '%s'.\n", ti, filename);
++
++    // --- Rank 0 reads the file to determine the size ---
++    if (rank == 0) {
++        PetscBool fileExists = PETSC_FALSE;
++        ierr = PetscTestFile(filename, 'r', &fileExists); CHKERRQ(ierr);
++
++        if (!fileExists) {
++            // Set a special value to indicate file not found, then broadcast it.
++            N_file = -1;
++            LOG_ALLOW(GLOBAL, LOG_ERROR, "Rank 0: Mandatory reference file '%s' not found for timestep %d.\n", filename, ti);
++        } else {
++            PetscViewer viewer;
++            Vec         tmpVec;
++            PetscInt    vecSize;
++            
++            ierr = VecCreate(PETSC_COMM_SELF, &tmpVec); CHKERRQ(ierr); // Create a SEQUENTIAL vector
++            ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF, filename, FILE_MODE_READ, &viewer); CHKERRQ(ierr);
++            ierr = VecLoad(tmpVec, viewer); CHKERRQ(ierr);
++            ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
++
++            ierr = VecGetSize(tmpVec, &vecSize); CHKERRQ(ierr);
++            ierr = VecDestroy(&tmpVec); CHKERRQ(ierr);
++
++            if (vecSize % bs != 0) {
++                N_file = -2; // Special error code for bad file format
++                LOG_ALLOW(GLOBAL, LOG_ERROR, "Rank 0: Vector size %d from file '%s' is not divisible by block size %d.\n", vecSize, filename, bs);
++            } else {
++                N_file = vecSize / bs;
++                LOG_ALLOW(GLOBAL, LOG_DEBUG, "Rank 0: Found %d particles in file.\n", N_file);
++            }
++        }
++    }
++
++    // --- Broadcast the particle count (or error code) from Rank 0 to all other ranks ---
++    ierr = MPI_Bcast(&N_file, 1, MPIU_INT, 0, comm); CHKERRMPI(ierr);
++
++    // --- All ranks check for errors and abort if necessary ---
++    if (N_file == -1) {
++        SETERRQ(comm, PETSC_ERR_FILE_OPEN, "Mandatory reference file '%s' not found for timestep %d (as determined by Rank 0).", filename, ti);
++    }
++    if (N_file == -2) {
++        SETERRQ(comm, PETSC_ERR_FILE_READ, "Reference file '%s' has incorrect format (as determined by Rank 0).", filename);
++    }
++    if (N_file < 0) {
++         SETERRQ(comm, PETSC_ERR_PLIB, "Received invalid particle count %d from Rank 0.", N_file);
++    }
++
++
++    // --- Now all ranks have the correct N_file, compare and resize if needed ---
++    ierr = DMSwarmGetSize(user->swarm, &N_current); CHKERRQ(ierr);
++
++    if (N_file != N_current) {
++        LOG_ALLOW(GLOBAL, LOG_INFO, "Swarm size %d differs from file size %d. Resizing swarm globally.\n", N_current, N_file);
++        ierr = ResizeSwarmGlobally(user->swarm, N_file); CHKERRQ(ierr);
++    } else {
++        LOG_ALLOW(GLOBAL, LOG_DEBUG, "Swarm size (%d) already matches file size. No resize needed.\n", N_current);
++    }
++    
++    // Also update the context
++    user->NumberofParticles = N_file;
++
++    PetscFunctionReturn(0);
++}
+ 
+ 
+ /**
+@@ -1400,9 +1510,18 @@ PetscErrorCode GuessParticleOwnerWithBBox(UserCtx *user,
+     
+     *guess_rank_out = MPI_PROC_NULL; // Default to "not found"
+ 
+-    LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld]: Starting guess for lost particle at (%.3f, %.3f, %.3f).\n",
++    LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld]: Starting guess for particle at (%.3f, %.3f, %.3f).\n",
+               (long long)particle->PID, particle->loc.x, particle->loc.y, particle->loc.z);
+ 
++    // *** THE PRIMARY FIX ***
++    // --- Step 0: Check if the particle is inside the CURRENT rank's bounding box FIRST. ---
++    // This handles the common case of initial placement where a particle is "lost" but physically local.
++    if (IsParticleInBox(localBBox, &particle->loc)) {
++      *guess_rank_out = rank;
++      LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld]: Fast path guess SUCCESS. Particle is within the local (Rank %d) bounding box.\n",
++		(long long)particle->PID, rank);
++      PetscFunctionReturn(0); // Found it, we're done.
++    }
+     // --- 2. Fast Path: Check Immediate Neighbors Based on Exit Direction ---
+     // This is the logic repurposed directly from your IdentifyMigratingParticles.
+ 
+@@ -1657,6 +1776,7 @@ PetscErrorCode LocateAllParticlesInGrid_TEST(UserCtx *user,BoundingBox *bboxlist
+         PetscInt       migrationListCapacity = 0;
+         PetscInt       nlocal_before;
+         PetscInt64     *pids_before_snapshot = NULL;
++	PetscInt       local_lost_count = 0;
+ 
+         ierr = DMSwarmGetLocalSize(user->swarm, &nlocal_before); CHKERRQ(ierr);
+         LOG_ALLOW(LOCAL, LOG_DEBUG, "[Rank %d] Pass %d begins with %d local particles.\n", rank, passes, nlocal_before);
+@@ -1690,13 +1810,20 @@ PetscErrorCode LocateAllParticlesInGrid_TEST(UserCtx *user,BoundingBox *bboxlist
+                 Particle current_particle;
+                 ierr = UnpackSwarmFields(p_idx, pid_p, weights_p, pos_p, cell_p, vel_p, status_p, &current_particle); CHKERRQ(ierr);
+ 
+-		// ParticleLocationStatus final_status = NEEDS_LOCATION;
+ 		ParticleLocationStatus final_status = (ParticleLocationStatus)status_p[p_idx];
+-                PetscMPIInt            destination_rank = MPI_PROC_NULL;
+ 
++
++		// CASE 1: Particle has a valid prior cell index.
++                // It has moved, so we only need to run the robust walk from its last known location.
++                if (current_particle.cell[0] >= 0) {
++		  LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] has valid prior cell. Strategy: Robust Walk from previous cell.\n", (long long)current_particle.PID);
++		  ierr = LocateParticleOrFindMigrationTarget_TEST(user, &current_particle, &final_status); CHKERRQ(ierr);
++                } 
++
++		/*		
+                 // --- "GUESS" FAST PATH for lost particles ---
+                 if (current_particle.cell[0] < 0) {
+-                    LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] Is lost (cell=%d), attempting fast guess.\n", (long long)current_particle.PID, current_particle.cell[0]);
++                    LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] is lost or uninitialzied (cell=%d), attempting fast guess.\n", (long long)current_particle.PID, current_particle.cell[0]);
+                     ierr = GuessParticleOwnerWithBBox(user, &current_particle, bboxlist, &destination_rank); CHKERRQ(ierr);
+                     if (destination_rank != MPI_PROC_NULL && destination_rank != rank) {
+                         final_status = MIGRATING_OUT;
+@@ -1705,8 +1832,10 @@ PetscErrorCode LocateAllParticlesInGrid_TEST(UserCtx *user,BoundingBox *bboxlist
+                     }
+                 }
+ 
++		LOG_ALLOW(LOCAL,LOG_DEBUG,"[PID %lld] Particle status after Initial Guess:%d \n",(long long)current_particle.PID,final_status);
++
+                 // --- "VERIFY" ROBUST WALK if guess didn't resolve it ---
+-                if (final_status == NEEDS_LOCATION) {
++                if (final_status == NEEDS_LOCATION  || UNINITIALIZED) {
+                     LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] Not resolved by guess, starting robust walk.\n", (long long)current_particle.PID);
+                     // This function will update the particle's status and destination rank internally.
+ 		     ierr = LocateParticleOrFindMigrationTarget_TEST(user, &current_particle, &final_status); CHKERRQ(ierr);
+@@ -1724,6 +1853,44 @@ PetscErrorCode LocateAllParticlesInGrid_TEST(UserCtx *user,BoundingBox *bboxlist
+                      // PACK: Use the helper to write results back to the swarm arrays.
+                      ierr = UpdateSwarmFields(p_idx, &current_particle, weights_p, cell_p, status_p); CHKERRQ(ierr);
+                 }
++		*/
++                // CASE 2: Particle is "lost" (cell = -1). Strategy: Guess -> Verify.
++                else {
++		  LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] has invalid cell. Strategy: Guess Owner -> Find Cell.\n", (long long)current_particle.PID);
++                    
++		  PetscMPIInt guessed_owner_rank = MPI_PROC_NULL;
++		  ierr = GuessParticleOwnerWithBBox(user, &current_particle, bboxlist, &guessed_owner_rank); CHKERRQ(ierr);
++
++		  // If the guess finds a DIFFERENT rank, we can mark for migration and skip the walk.
++		  if (guessed_owner_rank != MPI_PROC_NULL && guessed_owner_rank != rank) {
++		    LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] Guess SUCCESS: Found migration target Rank %d. Finalizing.\n", (long long)current_particle.PID, guessed_owner_rank);
++		    final_status = MIGRATING_OUT;
++		    current_particle.destination_rank = guessed_owner_rank;
++		  } 
++		  else {
++
++		    // This block runs if the guess either failed (rank is NULL) or found the particle is local (rank is self).
++		    // In BOTH cases, the situation is unresolved, and we MUST fall back to the robust walk.
++		    if (guessed_owner_rank == rank) {
++		      LOG_ALLOW(LOCAL, LOG_DEBUG, "[PID %lld] Guess determined particle is local. Proceeding to robust walk to find cell.\n", (long long)current_particle.PID);
++		    } else { // guessed_owner_rank == MPI_PROC_NULL
++		      LOG_ALLOW(LOCAL, LOG_WARNING, "[PID %lld] Guess FAILED to find an owner. Proceeding to robust walk for definitive search.\n", (long long)current_particle.PID);
++		    }
++                        
++		    ierr = LocateParticleOrFindMigrationTarget_TEST(user, &current_particle, &final_status); CHKERRQ(ierr);
++		  }
++                }
++		
++                // --- PROCESS THE FINAL, DEFINITIVE STATUS ---
++                current_particle.location_status = final_status;
++                ierr = UpdateSwarmFields(p_idx, &current_particle, weights_p, cell_p, status_p); CHKERRQ(ierr);
++                
++                if (final_status == MIGRATING_OUT) {
++		  ierr = AddToMigrationList(&migrationList, &migrationListCapacity, &local_migration_count, p_idx, current_particle.destination_rank); CHKERRQ(ierr);
++                } else if (final_status == LOST) {
++		  local_lost_count++;
++                }
++	    		
+             } // End of main particle processing loop
+ 
+             // Restore all the fields acquired for this pass.
+diff --git a/src/ParticleSwarm.c b/src/ParticleSwarm.c
+index 2c8f273..722e0de 100644
+--- a/src/ParticleSwarm.c
++++ b/src/ParticleSwarm.c
+@@ -162,7 +162,7 @@ PetscErrorCode InitializeLogicalSpaceRNGs(PetscRandom *rand_logic_i, PetscRandom
+     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+ 
+     // --- RNG for i-logical dimension ---
+-    ierr = PetscRandomCreate(PETSC_COMM_SELF, rand_logic_i); CHKERRQ(ierr);
++    ierr = PetscRandomCreate(PETSC_COMM_WORLD, rand_logic_i); CHKERRQ(ierr);
+     ierr = PetscRandomSetType((*rand_logic_i), PETSCRAND48); CHKERRQ(ierr);
+     ierr = PetscRandomSetInterval(*rand_logic_i, 0.0, 1.0); CHKERRQ(ierr); // Key change: [0,1)
+     ierr = PetscRandomSetSeed(*rand_logic_i, rank + 202401); CHKERRQ(ierr); // Unique seed
+@@ -170,7 +170,7 @@ PetscErrorCode InitializeLogicalSpaceRNGs(PetscRandom *rand_logic_i, PetscRandom
+     LOG_ALLOW_SYNC(LOCAL,LOG_DEBUG, "InitializeLogicalSpaceRNGs - Initialized RNG for i-logical dimension [0,1).\n");
+ 
+     // --- RNG for j-logical dimension ---
+-    ierr = PetscRandomCreate(PETSC_COMM_SELF, rand_logic_j); CHKERRQ(ierr);
++    ierr = PetscRandomCreate(PETSC_COMM_WORLD, rand_logic_j); CHKERRQ(ierr);
+     ierr = PetscRandomSetType((*rand_logic_j), PETSCRAND48); CHKERRQ(ierr);
+     ierr = PetscRandomSetInterval(*rand_logic_j, 0.0, 1.0); CHKERRQ(ierr); // Key change: [0,1)
+     ierr = PetscRandomSetSeed(*rand_logic_j, rank + 202402); CHKERRQ(ierr);
+@@ -178,7 +178,7 @@ PetscErrorCode InitializeLogicalSpaceRNGs(PetscRandom *rand_logic_i, PetscRandom
+     LOG_ALLOW_SYNC(LOCAL,LOG_DEBUG, "InitializeLogicalSpaceRNGs - Initialized RNG for j-logical dimension [0,1).\n");
+ 
+     // --- RNG for k-logical dimension ---
+-    ierr = PetscRandomCreate(PETSC_COMM_SELF, rand_logic_k); CHKERRQ(ierr);
++    ierr = PetscRandomCreate(PETSC_COMM_WORLD, rand_logic_k); CHKERRQ(ierr);
+     ierr = PetscRandomSetType((*rand_logic_k), PETSCRAND48); CHKERRQ(ierr);
+     ierr = PetscRandomSetInterval(*rand_logic_k, 0.0, 1.0); CHKERRQ(ierr); // Key change: [0,1)
+     ierr = PetscRandomSetSeed(*rand_logic_k, rank + 202403); CHKERRQ(ierr);
+@@ -718,8 +718,6 @@ PetscErrorCode FinalizeSwarmSetup(PetscRandom *randx, PetscRandom *randy, PetscR
+ 
+     ierr = PetscOptionsGetInt(NULL, NULL, "-pinit", &ParticleInitialization, NULL); CHKERRQ(ierr);
+  
+-    if(ParticleInitialization==1){
+-
+     // Destroy random number generators to free resources
+     // Physical space
+     ierr = PetscRandomDestroy(randx); CHKERRQ(ierr);
+@@ -732,9 +730,6 @@ PetscErrorCode FinalizeSwarmSetup(PetscRandom *randx, PetscRandom *randy, PetscR
+     ierr = PetscRandomDestroy(rand_logic_k); CHKERRQ(ierr);      
+       
+       LOG_ALLOW(LOCAL,LOG_DEBUG,"FinalizeSwarmSetup - Destroyed all random number generators.\n");
+-    }else if(ParticleInitialization==0){
+-      LOG_ALLOW(LOCAL,LOG_DEBUG,"FinalizeSwarmSetup - Not a Random Initialization of Particles.\n");
+-    }
+ 
+     return 0;
+ }
+@@ -1038,7 +1033,7 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
+     // Compute and update the particle's weights
+     particle->weights.x = d[LEFT] / (d[LEFT] + d[RIGHT]);
+     particle->weights.y = d[BOTTOM] / (d[BOTTOM] + d[TOP]);
+-    particle->weights.z = d[FRONT] / (d[FRONT] + d[BACK]);
++    particle->weights.z = d[BACK] / (d[FRONT] + d[BACK]);
+ 
+     // LOG_ALLOW the updated weights
+     LOG_ALLOW_SYNC(LOCAL,LOG_DEBUG,
+@@ -1048,6 +1043,103 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
+     return 0;
+ }
+ 
++
++/**
++ * @brief Resets the location-dependent state of a loaded swarm to force relocation.
++ * @ingroup ParticleRestart
++ *
++ * This function is a critical part of the simulation restart procedure. It must be
++ * called immediately after `ReadAllSwarmFields` has populated a swarm from restart
++ * files. Its purpose is to invalidate the "location" state of the loaded particles,
++ * ensuring that the `LocateAllParticlesInGrid_TEST` orchestrator performs a fresh,
++ * comprehensive search for every particle based on its loaded position.
++ *
++ * It does this by performing two actions on every locally-owned particle:
++ * 1.  It resets the `DMSwarm_CellID` field to a sentinel value of `(-1, -1, -1)`.
++ *     This invalidates any cell index that might have been loaded or defaulted to 0.
++ * 2.  It sets the `DMSwarm_location_status` field to `NEEDS_LOCATION`.
++ *
++ * This guarantees that the location logic will not mistakenly use a stale cell index
++ * from a previous run and will instead use the robust "Guess -> Verify" strategy
++ * appropriate for particles with unknown locations.
++ *
++ * @param[in,out] user Pointer to the UserCtx structure which contains the `DMSwarm` object
++ *                     that has just been loaded with data from restart files.
++ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code if field access fails.
++ */
++PetscErrorCode PrepareLoadedSwarmForRelocation(UserCtx *user)
++{
++    PetscErrorCode ierr;
++    DM             swarm;
++    PetscInt       n_local;
++    PetscInt      *cell_p;    // Pointer to the raw data for the CellID field
++    PetscInt      *status_p;  // Pointer to the raw data for the location_status field
++    PetscInt64    *PIDs;      // Pointer to the raw data for the Particle ID field.
++    PetscMPIInt   rank,size;
++
++    PetscFunctionBeginUser;
++
++    ierr = MPI_Comm_rank(PETSC_COMM_WORLD,&rank);  CHKERRQ(ierr);
++    ierr = MPI_Comm_size(PETSC_COMM_WORLD,&size);  CHKERRQ(ierr);
++    
++    // --- 1. Input Validation and Setup ---
++    if (!user || !user->swarm) {
++        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx or its DMSwarm is NULL in PrepareLoadedSwarmForRelocation.");
++    }
++    swarm = user->swarm;
++
++    // Get the number of particles on this MPI rank.
++    ierr = DMSwarmGetLocalSize(swarm, &n_local); CHKERRQ(ierr);
++
++    // If there are no local particles, there is nothing to do.
++    if (n_local == 0) {
++        PetscFunctionReturn(0);
++    }
++ 
++    
++    LOG_ALLOW(GLOBAL, LOG_INFO, "Preparing %d loaded particles for relocation by resetting their CellID and Status.\n", n_local);
++
++    // --- 2. Get Writable Access to Swarm Fields ---
++    // This provides direct pointers to the underlying data arrays for the fields.
++    ierr = DMSwarmGetField(swarm, "DMSwarm_CellID",          NULL, NULL, (void**)&cell_p);   CHKERRQ(ierr);
++    ierr = DMSwarmGetField(swarm, "DMSwarm_location_status", NULL, NULL, (void**)&status_p); CHKERRQ(ierr);
++    ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&PIDs); CHKERRQ(ierr); CHKERRQ(ierr);
++
++    // --- 3. Determine Starting Global PID for this Rank ---
++    PetscInt particles_per_rank_ideal = user->NumberofParticles / size; // Assumes user->size is PETSC_COMM_WORLD size
++    PetscInt remainder_particles = user->NumberofParticles % size;
++    PetscInt base_pid_for_rank = rank * particles_per_rank_ideal + PetscMin(rank, remainder_particles);
++    // This calculation must match how particlesPerProcess was determined (e.g., in DistributeParticles).
++    
++    // --- 4. Loop Through All Local Particles and Reset State ---
++    for (PetscInt p = 0; p < n_local; ++p) {
++
++        
++        // Reset the 3 components of the cell index vector.
++        cell_p[3*p + 0] = -1;
++        cell_p[3*p + 1] = -1;
++        cell_p[3*p + 2] = -1;
++
++        // Reset the status to ensure it will be processed by the location algorithm.
++        status_p[p] = (ParticleLocationStatus)UNINITIALIZED;
++
++	//set the PID for each particle
++	PIDs[p] =  (PetscInt64)base_pid_for_rank + p;
++    }
++
++    // --- 4. Restore Fields ---
++    // This returns control of the data arrays back to the DMSwarm. It is a mandatory
++    // step to ensure data consistency and prevent memory issues.
++    ierr = DMSwarmRestoreField(swarm, "DMSwarm_CellID",          NULL, NULL, (void**)&cell_p);   CHKERRQ(ierr);
++    ierr = DMSwarmRestoreField(swarm, "DMSwarm_location_status", NULL, NULL, (void**)&status_p); CHKERRQ(ierr);
++    ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&PIDs); CHKERRQ(ierr); CHKERRQ(ierr);
++
++    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Successfully reset location state for all loaded particles.\n");
++
++    PetscFunctionReturn(0);
++}
++
++
+ /**
+  * @brief Perform particle swarm initialization, particle-grid interaction, and related operations.
+  *
+@@ -1074,6 +1166,7 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
+     PetscInt particlesPerProcess = 0;         // Number of particles assigned to the local MPI process.
+     PetscRandom randx,randy,randz;     // Random number generators[x,y,z]. (used if ParticleInitialization==1).
+     PetscRandom rand_logic_i, rand_logic_j,rand_logic_k; // RNGs for Logical space.
++    PetscInt    start_step = 0;
+     LOG_ALLOW(GLOBAL, LOG_INFO, "Starting particle swarm Initialization with %d particles.\n", np);
+       
+     // Step 1: Create and initialize the particle swarm
+@@ -1083,6 +1176,10 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
+     ierr = CreateParticleSwarm(user, np, &particlesPerProcess,bboxlist); CHKERRQ(ierr);
+     LOG_ALLOW(GLOBAL, LOG_INFO, "Particle swarm created successfully.\n");
+ 
++    ierr = PetscOptionsGetInt(NULL, NULL, "-rstart", &start_step, NULL); CHKERRQ(ierr);
++
++    if(start_step == 0){
++    
+       // Create the RNGs
+       LOG_ALLOW(LOCAL, LOG_DEBUG, "Initializing physical space RNGs.\n");
+       ierr = InitializeRandomGenerators(user, &randx, &randy, &randz); CHKERRQ(ierr);
+@@ -1098,6 +1195,36 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
+ 
+       // Ensure all ranks complete before proceeding
+       LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, " Particles generated & initialized.\n");
++    }
++    
++    else if (start_step > 0){
+ 
++      LOG_ALLOW(LOCAL,LOG_DEBUG," Particle Swarm status being set at restart [Step %d].\n",start_step);
++      
++      ierr = PreCheckAndResizeSwarm(user,start_step,"dat");
++
++      // --- Read Particle Data (EVERY timestep) ---
++      // ReadAllSwarmFields should read position and velocity for timestep 'ti'
++      
++      ierr = ReadAllSwarmFields(user, start_step);
++      if (ierr) {
++	// Check if the error was specifically a file open error (missing file)
++	if (ierr == PETSC_ERR_FILE_OPEN) {
++	  LOG_ALLOW(GLOBAL, LOG_WARNING, "Missing particle data file(s) for timestep %d. Skipping VTK output for this step.\n",(PetscInt)user->step );
++	} else {
++	  LOG_ALLOW(GLOBAL, LOG_ERROR, "Failed to read swarm fields for timestep %d (Error code: %d). Skipping VTK output for this step.\n",(PetscInt)user->step  , ierr);
++	   }
++      }
++
++      // Ensure  all the swarm fields not read from file are initialized.
++      //  ierr = PrepareLoadedSwarmForRelocation(user);
++      
++      // Ensure all ranks complete before proceeding
++      LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, " Particles generated & initialized.\n");
++      
++      
++    }
+     return 0;
+  }
++
++ 
+diff --git a/src/grid.c b/src/grid.c
+index f5871e6..5640703 100644
+--- a/src/grid.c
++++ b/src/grid.c
+@@ -3,6 +3,8 @@
+ 
+ #include "grid.h"
+ 
++#define BBOX_TOLERANCE 1e-9
++
+ //extern PetscInt block_number;
+ 
+ // DM da;  // For DOF=1, cell-centered scalars (Pressure, Nvert)
+@@ -75,6 +77,7 @@ PetscErrorCode InitializeGridDM(UserCtx *user, PetscInt *generate_grid) {
+     // Retrieve the coordinate DM (PETSc creates/associates this)
+     // This fda will have DOF=3 and compatible stencil width s=2
+     ierr = DMGetCoordinateDM(user->da, &(user->fda)); CHKERRQ(ierr);
++    ierr = DMSetUp(user->fda); CHKERRQ(ierr);
+     ierr = PetscObjectSetName((PetscObject)user->fda, "Vector_Coord_DM_Derived"); CHKERRQ(ierr);
+     
+     if (!file_grid_mode) {
+@@ -837,9 +840,22 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
+         }
+     }
+ 
++
++    // Add tolerance to bboxes.
++    minCoords.x =  minCoords.x - BBOX_TOLERANCE;
++    minCoords.y =  minCoords.y - BBOX_TOLERANCE;
++    minCoords.z =  minCoords.z - BBOX_TOLERANCE;
++
++    maxCoords.x =  maxCoords.x + BBOX_TOLERANCE;
++    maxCoords.y =  maxCoords.y + BBOX_TOLERANCE;
++    maxCoords.z =  maxCoords.z + BBOX_TOLERANCE;
++
++    LOG_ALLOW(LOCAL,LOG_INFO," Tolerance added to the limits: %.8e .\n",(PetscReal)BBOX_TOLERANCE);
++       
+     // Log the computed min and max coordinates
+-    LOG_ALLOW(LOCAL, LOG_INFO, "ComputeLocalBoundingBox: Rank - %d - Computed bounding box - minCoords=(%.6f, %.6f, %.6f), maxCoords=(%.6f, %.6f, %.6f).\n",
+-        rank,minCoords.x, minCoords.y, minCoords.z, maxCoords.x, maxCoords.y, maxCoords.z);
++     LOG_ALLOW(LOCAL, LOG_INFO,"Rank - %d - Computed bounding box - minCoords=(%.6f, %.6f, %.6f), maxCoords=(%.6f, %.6f, %.6f).\n",rank,minCoords.x, minCoords.y, minCoords.z, maxCoords.x, maxCoords.y, maxCoords.z);
++
++
+     
+     // Restore the coordinate array
+     ierr = DMDAVecRestoreArrayRead(user->fda, coordinates, &coordArray);
+@@ -977,7 +993,7 @@ PetscErrorCode BroadcastAllBoundingBoxes(UserCtx *user, BoundingBox **bboxlist)
+         if (!*bboxlist) SETERRABORT(PETSC_COMM_WORLD, PETSC_ERR_MEM, "Failed to allocate memory for bboxlist on non-root ranks.");
+     }
+ 
+-    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "BroadcastAllBoundingBoxes: Broadcasting bounding box information from rank 0.\n");
++    LOG_ALLOW(LOCAL, LOG_INFO, "BroadcastAllBoundingBoxes: Broadcasting bounding box information from rank 0.\n");
+ 
+     // Broadcast bboxlist from rank 0 to all other ranks
+     ierr = MPI_Bcast(*bboxlist, (PetscInt)(size * sizeof(BoundingBox)), MPI_BYTE, 0, PETSC_COMM_WORLD);
+@@ -985,5 +1001,7 @@ PetscErrorCode BroadcastAllBoundingBoxes(UserCtx *user, BoundingBox **bboxlist)
+         SETERRABORT(PETSC_COMM_WORLD, PETSC_ERR_LIB, "MPI_Bcast failed for bboxlist.");
+     }
+ 
++    LOG_ALLOW(LOCAL, LOG_INFO, "BroadcastAllBoundingBoxes: Broadcasted bounding box information from rank 0.\n");    
++
+     return 0;
+ }
+diff --git a/src/inttest.c b/src/inttest.c
+index 253a4bb..277c4c7 100644
+--- a/src/inttest.c
++++ b/src/inttest.c
+@@ -65,9 +65,9 @@ int main(int argc, char **argv) {
+     
+     LOG_ALLOW(GLOBAL,LOG_INFO," Simulation Initialized \n");
+ 
+-    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
+-              "readFields = %s, size = %d, rank = %d\n",
+-		   readFields ? "true" : "false", size,rank);
++    //  LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
++    //          "readFields = %s, size = %d, rank = %d\n",
++    //           readFields ? "true" : "false", size,rank);
+ 
+     // Setup the computational grid
+     ierr = SetupGridAndVectors(user, block_number); CHKERRQ(ierr);
+@@ -76,24 +76,26 @@ int main(int argc, char **argv) {
+ 
+     LOG_ALLOW(GLOBAL,LOG_INFO," Simulation Fields %s \n",readFields ? "read":"generated");    
+ 
++    // Setup the Domain Rank Information.
++    ierr = SetupDomainRankInfo(user, &bboxlist);
++    
++    LOG_ALLOW(GLOBAL,LOG_INFO," Bounding Boxes setup \n");
++
+     ierr = SetupBoundaryConditions(user);
+ 
++
+      if(get_log_level() == LOG_INFO && is_function_allowed(__func__)){
+        // Compute and print maximum velocity magnitude
+        ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
+        LOG_ALLOW(GLOBAL,LOG_INFO,"Maximum velocity magnitude:%f \n", umax);
+      }
+     
+-    // Setup the Domain Rank Information.
+-    ierr = SetupDomainRankInfo(user, &bboxlist);
+-    
+-    LOG_ALLOW(GLOBAL,LOG_INFO," Bounding Boxes setup \n");
++    // Initialize particle swarm with bboxlist knowledge on all ranks
++    ierr = InitializeParticleSwarm(user, np, bboxlist); CHKERRQ(ierr);
+ 
+     // Display Banner for simulation
+     ierr = DisplayBanner(user, StartTime, StartStep, StepsToRun, size, np, bboxlist); CHKERRQ(ierr);
+ 
+-    // Initialize particle swarm with bboxlist knowledge on all ranks
+-    ierr = InitializeParticleSwarm(user, np, bboxlist); CHKERRQ(ierr);
+ 
+     // Setup Only Condition
+     ActualStepsToRun=StepsToRun;
+@@ -103,7 +105,7 @@ int main(int argc, char **argv) {
+     }
+     // Advance the Lagrangian Particle Simulation
+     //  ierr = AdvanceSimulation(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,readFields,bboxlist);
+-    ierr = AdvanceSimulation_TEST(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,readFields,bboxlist);
++    ierr = AdvanceSimulation_TEST(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,bboxlist);
+     
+     // Finalize simulation
+     ierr = FinalizeSimulation(user, block_number, bboxlist,allowedFuncs,nAllowed,&logviewer); CHKERRQ(ierr);
+diff --git a/src/io.c b/src/io.c
+index 06c4725..b79029b 100644
+--- a/src/io.c
++++ b/src/io.c
+@@ -175,114 +175,220 @@ PetscErrorCode ReadGridFile(const char *filename, PetscInt *nblk,
+     return 0;
+ }
+ 
+-// Helper function to construct the filename and test existence
+-// This avoids repeating the snprintf and PetscTestFile logic for each field.
++/**
++ * @brief Checks for a data file's existence in a parallel-safe manner.
++ *
++ * Only Rank 0 checks for the file on disk. The result (true or false) is
++ * then broadcast to all other processes in the communicator. This ensures all
++ * processes make a collective, synchronized decision.
++ *
++ * @param ti The time index of the file.
++ * @param fieldName The name of the field.
++ * @param ext The file extension.
++ * @param fileExists [out] The result, which will be identical on all ranks.
++ * @return PetscErrorCode
++ */
+ static PetscErrorCode CheckDataFile(PetscInt ti, const char *fieldName, const char *ext, PetscBool *fileExists)
+ {
+     PetscErrorCode ierr;
+-    char           filename[PETSC_MAX_PATH_LEN];
+-    PetscMPIInt    rank; // Use PetscMPIInt for MPI rank
++    PetscMPIInt    rank;
++    MPI_Comm       comm = PETSC_COMM_WORLD;
++    PetscInt       placeholder_int = 0;
+ 
+     PetscFunctionBeginUser;
+-    *fileExists = PETSC_FALSE; // Default to not existing
+-
+-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
++    ierr = MPI_Comm_rank(comm, &rank); CHKERRQ(ierr);
+ 
+-    // Construct filename: results/FIELDNAME<#####>_RANK.EXT
+-    // Ensure the format string correctly uses PetscInt_FMT for ti if it's PetscInt
+-    // and %d for rank if it's int/PetscMPIInt.
+-    // Based on your logs: "results/ufield00000_0.dat"
+-    // fieldName, ti (5 digits), rank (integer), ext
+-    ierr = PetscSNPrintf(filename, sizeof(filename), "results/%s%05" PetscInt_FMT "_%d.%s",
+-                         fieldName, ti, (int)rank, ext); CHKERRQ(ierr);
++    if (rank == 0) {
++        char filename[PETSC_MAX_PATH_LEN];
++        // Use the same standardized, rank-independent filename format
+ 
++        ierr =  PetscSNPrintf(filename, sizeof(filename), "results/%s%05"PetscInt_FMT"_%d.%s", fieldName, ti, placeholder_int, ext); 
+         ierr = PetscTestFile(filename, 'r', fileExists); CHKERRQ(ierr);
+-
+         if (!(*fileExists)) {
+-        LOG_ALLOW(GLOBAL, LOG_WARNING, "CheckDataFile - Optional data file '%s' for field '%s' at ti=%d not found.\n", filename, fieldName, ti);
+-    } else {
+-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "CheckDataFile - Data file '%s' for field '%s' at ti=%d found.\n", filename, fieldName, ti);
++            LOG_ALLOW(GLOBAL, LOG_WARNING, "CheckDataFile (Rank 0) - Optional data file '%s' not found.\n", filename);
++        }
+     }
++
++    // Broadcast the result from Rank 0 to all other ranks.
++    // We cast the PetscBool to a PetscMPIInt for MPI_Bcast.
++    PetscMPIInt fileExists_int = (rank == 0) ? (PetscMPIInt)(*fileExists) : 0;
++    ierr = MPI_Bcast(&fileExists_int, 1, MPI_INT, 0, comm); CHKERRMPI(ierr);
++    *fileExists = (PetscBool)fileExists_int;
++
+     PetscFunctionReturn(0);
+ }
+ 
+-/**
+- * @brief Reads data for a specific field from a file into the provided vector.
+- *
+- * This function uses the field name to construct the file path and reads the data
+- * from the corresponding file into the provided PETSc vector.
+- *
+- * @param[in]     user        Pointer to the UserCtx structure containing simulation context.
+- * @param[in]     field_name  Name of the field (e.g., "ufield", "vfield", "pfield").
+- * @param[out]    field_vec   PETSc vector to store the field data.
+- * @param[in]     ti          Time index for constructing the file name.
+- * @param[in]     ext         File extension (e.g., "dat").
+- *
+- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+- */
+-PetscErrorCode ReadFieldData(UserCtx *user, const char *field_name, Vec field_vec, PetscInt ti, const char *ext)
++/************************************************************************************************
++*  @file   io.c
++*  @brief  Utility for (re-)loading PETSc Vec-based fields written by rank-0 in a previous run
++*          – works in both serial and MPI executions.
++*
++*  The restart files are always written as **one** sequential Vec per field
++*  ( `<results>/<field_name><step>_0.<ext>` ).  In parallel we therefore
++*  have to:
++*
++*     • let rank-0 read that sequential file into a temporary Vec,
++*     • broadcast the raw array to every rank, and
++*     • copy the local slice into the distributed Vec supplied by the caller.
++*
++*  The function purposely avoids `VecScatterCreateToAll()` because PETSc
++*  chooses an even block-cyclic layout that seldom matches an existing
++*  application layout – that mismatch is the root–cause of the previous
++*  “Scatter sizes of ix and iy don’t match” / “incompatible local lengths”
++*  crashes.  A plain `MPI_Bcast` plus a `memcpy()` into the already
++*  allocated local array is bullet-proof and costs one extra buffer only
++*  on the non-root ranks.
++*
++*  Logging helper used below:
++*      LOG_ALLOW(scope,level,fmt,…)     – your existing macro
++*
++*  @param[in]  user        – application context (unused here but part of original API)
++*  @param[in]  field_name  – base name of the field (“position”, “ufield”, …)
++*  @param[out] field_vec   – **distributed** Vec we have to fill
++*  @param[in]  ti          – time-step index encoded in the filename
++*  @param[in]  ext         – file-name extension (“dat”, “bin”, …)
++*
++*  @returns 0 on success or a PETSc error code.
++************************************************************************************************/
++PetscErrorCode ReadFieldData(UserCtx *user,
++                             const char *field_name,
++                             Vec         field_vec,
++                             PetscInt    ti,
++                             const char *ext)
++{
++   PetscErrorCode ierr;
++   char           filename[PETSC_MAX_PATH_LEN];
++   MPI_Comm       comm;
++   PetscMPIInt    rank,size;
++
++   PetscFunctionBeginUser;
++
++   ierr = PetscObjectGetComm((PetscObject)field_vec,&comm);CHKERRQ(ierr);
++   ierr = MPI_Comm_rank(comm,&rank);CHKERRQ(ierr);
++   ierr = MPI_Comm_size(comm,&size);CHKERRQ(ierr);
++
++   /* ---------------------------------------------------------------------
++    * Compose <results>/<field_name><step with 5 digits>_0.<ext>
++    * (all restart files are written by rank-0 with that naming scheme).
++    * ------------------------------------------------------------------ */
++   ierr = PetscSNPrintf(filename,sizeof(filename),
++                        "results/%s%05" PetscInt_FMT "_0.%s",
++                        field_name,ti,ext);CHKERRQ(ierr);
++
++   LOG_ALLOW(GLOBAL,LOG_DEBUG,
++             "ReadFieldData - Attempting to read <%s> on rank %d/%d\n",
++             filename,(int)rank,(int)size);
++
++   /* ======================================================================
++    * 1.  SERIAL JOB  – just hand the Vec to VecLoad()
++    * ==================================================================== */
++   if(size==1)
+    {
+-    PetscErrorCode ierr, ierr_load; // Use a separate variable for VecLoad's potential error
+       PetscViewer viewer;
+-    char           filename[PETSC_MAX_PATH_LEN]; // Use PETSc constant
+-    PetscBool      fileExists;
+-    PetscMPIInt    rank;
++      PetscBool   found;
++
++      ierr = PetscTestFile(filename,'r',&found);CHKERRQ(ierr);
++      if(!found) SETERRQ(comm,PETSC_ERR_FILE_OPEN,
++                         "Restart file not found: %s",filename);
+ 
+-    PetscFunctionBeginUser; // Use User version
+-    // Validate inputs
+-    if (!user || !field_name || !field_vec || !ext) {
+-        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "ReadFieldData - Null argument provided.");
++      ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF,filename,
++                                   FILE_MODE_READ,&viewer);CHKERRQ(ierr);
++      ierr = VecLoad(field_vec,viewer);CHKERRQ(ierr);
++      ierr = PetscViewerDestroy(&viewer);CHKERRQ(ierr);
++
++      LOG_ALLOW(GLOBAL,LOG_INFO,
++                "ReadFieldData - Loaded <%s> (serial path)\n",filename);
++      PetscFunctionReturn(0);
+    }
+-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr); // Use CHKERRQ for MPI errors
+ 
+-    // Construct filename
+-    // Consider making results directory path configurable
+-    ierr = PetscSNPrintf(filename, sizeof(filename), "results/%s%05" PetscInt_FMT "_%d.%s", field_name, ti, 0 /*user->_this placeholder*/, ext); CHKERRQ(ierr);
++   /* ======================================================================
++    * 2.  PARALLEL JOB
++    * ==================================================================== */
++   PetscInt globalSize;
++   ierr = VecGetSize(field_vec,&globalSize);CHKERRQ(ierr);
++
++   /* -------------------- rank-0 : read the sequential file -------------- */
++   Vec            seq_vec = NULL;      /* only valid on rank-0            */
++   const PetscScalar *seqArray = NULL; /* borrowed pointer on rank-0 only */
++
++   if(rank==0)
++   {
++      PetscViewer viewer;
++      PetscBool   found;
++
++      ierr = PetscTestFile(filename,'r',&found);CHKERRQ(ierr);
++      if(!found) SETERRQ(PETSC_COMM_SELF,PETSC_ERR_FILE_OPEN,
++                         "Restart file not found: %s",filename);
+ 
+-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "ReadFieldData - Attempting to read file: %s\n", filename);
++      /* create EMPTY sequential Vec – VecLoad() will size it correctly   */
++      ierr = VecCreate(PETSC_COMM_SELF,&seq_vec);CHKERRQ(ierr);
++      ierr = VecSetType(seq_vec,VECSEQ);CHKERRQ(ierr);
+ 
+-    // Check file existence
+-    ierr = PetscTestFile(filename, FILE_MODE_READ, &fileExists); CHKERRQ(ierr);
+-    if (!fileExists) {
+-        LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadFieldData - File '%s' does not exist. Skipping field read.\n", filename);
+-        // Return a specific error code that the caller (ReadAllSwarmFields) can check
+-        PetscFunctionReturn(PETSC_ERR_FILE_OPEN);
++      ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF,filename,
++                                   FILE_MODE_READ,&viewer);CHKERRQ(ierr);
++      ierr = VecLoad(seq_vec,viewer);CHKERRQ(ierr);
++      ierr = PetscViewerDestroy(&viewer);CHKERRQ(ierr);
++
++      /* size sanity-check */
++      PetscInt loaded;
++      ierr = VecGetSize(seq_vec,&loaded);CHKERRQ(ierr);
++      if(loaded != globalSize)
++         SETERRQ(comm,PETSC_ERR_FILE_UNEXPECTED,
++                 "File %s holds %d entries – expected %d",
++                 filename,loaded,globalSize);
++
++      /* borrow array for later Bcast */
++      ierr = VecGetArrayRead(seq_vec,&seqArray);CHKERRQ(ierr);
++
++      LOG_ALLOW(GLOBAL,LOG_DEBUG,
++                "ReadFieldData - Rank 0 successfully loaded <%s>\n",filename);
+    }
+ 
+-    // Open the viewer
+-    ierr = PetscViewerBinaryOpen(PETSC_COMM_WORLD, filename, FILE_MODE_READ, &viewer);
+-    // Handle viewer open error separately - might be permissions etc.
+-    if (ierr) {
+-         LOG_ALLOW(GLOBAL, LOG_WARNING, "ReadFieldData - PetscViewerBinaryOpen failed for '%s' (Error code %d). Skipping field read.\n", filename, ierr);
+-         // We still want to return PETSC_ERR_FILE_OPEN to the caller
+-         PetscFunctionReturn(PETSC_ERR_FILE_OPEN);
+-    }
+-
+-    // Attempt to load data, store return code separately
+-    ierr_load = VecLoad(field_vec, viewer);
+-
+-    // Always destroy the viewer
+-    ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr); // Use CHKERRQ for critical errors like viewer destroy failure
+-
+-    // Check the return code from VecLoad *after* destroying the viewer
+-    if (ierr_load) {
+-        // An error occurred during VecLoad (e.g., size mismatch, corrupted data)
+-        LOG_ALLOW(GLOBAL, LOG_WARNING,"ReadFieldData - VecLoad failed for file '%s' (Error code %d). Vector data may be incorrect/incomplete. Continuing post-processing.\n", filename, ierr_load);
+-        // Decide how to proceed. Returning 0 allows post-processing to continue,
+-        // but the vector might be in an inconsistent state (e.g., wrong size
+-        // if the resize failed internally before erroring).
+-        // Returning the error might be safer if subsequent steps rely on valid data.
+-        // Let's return 0 for now, assuming the caller checks vector size.
+-        PetscFunctionReturn(0);
+-         // Alternatively, return the specific error:
+-         // PetscFunctionReturn(ierr_load);
++   /* -------------------- everybody : broadcast raw data ----------------- */
++   PetscScalar *buffer = NULL;               /* receives the full field    */
++   if(rank==0)
++   {
++      /* shallow-copy: const-cast is safe, we do not modify the data        */
++      buffer = (PetscScalar *)seqArray;
++   }
++   else
++   { /* non-root ranks allocate a receive buffer                           */
++      ierr = PetscMalloc1(globalSize,&buffer);CHKERRQ(ierr);
++   }
++
++   ierr = MPI_Bcast(buffer, (int)globalSize, MPIU_SCALAR, 0, comm);CHKERRQ(ierr);
++
++   /* -------------------- copy my slice into field_vec ------------------- */
++   PetscInt  rstart,rend,loc;
++   PetscScalar *locArray;
++
++   ierr = VecGetOwnershipRange(field_vec,&rstart,&rend);CHKERRQ(ierr);
++   loc  = rend - rstart;                    /* local length               */
++
++   ierr = VecGetArray(field_vec,&locArray);CHKERRQ(ierr);
++   ierr = PetscMemcpy(locArray,
++                      buffer + rstart,
++                      loc*sizeof(PetscScalar));CHKERRQ(ierr);
++   ierr = VecRestoreArray(field_vec,&locArray);CHKERRQ(ierr);
++
++   /* -------------------- tidy up ---------------------------------------- */
++   if(rank==0)
++   {
++      ierr = VecRestoreArrayRead(seq_vec,&seqArray);CHKERRQ(ierr);
++      ierr = VecDestroy(&seq_vec);CHKERRQ(ierr);
++   }
++   else
++   {
++      ierr = PetscFree(buffer);CHKERRQ(ierr);
+    }
+ 
+-    LOG_ALLOW(GLOBAL, LOG_INFO, "ReadFieldData - Successfully loaded data for field: %s from %s\n", field_name, filename);
++   LOG_ALLOW(GLOBAL,LOG_INFO,
++             "ReadFieldData - Loaded <%s> (parallel path)\n",filename);
+ 
+    PetscFunctionReturn(0);
+ }
+ 
++
+ /**
+  * @brief Reads simulation fields from files into their respective PETSc vectors.
+  *
+@@ -437,6 +543,7 @@ PetscErrorCode ReadRANSFields(UserCtx *user,PetscInt ti)
+  *
+  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
+  */
++/*
+ PetscErrorCode WriteFieldData(UserCtx *user, const char *field_name, Vec field_vec, PetscInt ti, const char *ext)
+ {
+     PetscErrorCode ierr;
+@@ -467,6 +574,271 @@ PetscErrorCode WriteFieldData(UserCtx *user, const char *field_name, Vec field_v
+ 
+     return 0;
+ }
++*/
++
++ /**
++ * @brief Writes data from a specific PETSc vector to a single, sequential file.
++ *
++ * This function is now parallel-safe.
++ * - In PARALLEL: All processes send their local data to Rank 0. Rank 0 assembles
++ *   the data into a temporary sequential vector and writes it to a single file.
++ * - In SERIAL: It performs a direct, simple write.
++ *
++ * This ensures the output file is always in a simple, portable format.
++ *
++ * @param[in] user       Pointer to the UserCtx structure.
++ * @param[in] field_name Name of the field (e.g., "position").
++ * @param[in] field_vec  The parallel PETSc vector containing the data to write.
++ * @param[in] ti         Time index for constructing the file name.
++ * @param[in] ext        File extension (e.g., "dat").
++ *
++ * @return PetscErrorCode Returns 0 on success, non-zero on failure.
++ */
++/**
++ * @brief Dump a **distributed** PETSc Vec to the *single* sequential file
++ *        format used by our restart / post-processing tools.
++ *
++ * The companion of ReadFieldData(): it always produces **one** file
++ * (e.g. `results/ufield00006_0.dat`) regardless of how many MPI ranks
++ * are running.
++ *
++ * **Behaviour**
++ *
++ * | # MPI ranks | Strategy                                                                  |
++ * |-------------|---------------------------------------------------------------------------|
++ * |      1      | Direct `VecView()` into the file.                                          |
++ * |    > 1      | `VecScatterCreateToZero()` gathers the distributed Vec onto **rank 0**.    |
++ * |             | Rank 0 writes the sequential Vec; all other ranks allocate no storage.     |
++ *
++ * The routine never alters or destroys the parallel Vec passed in; the
++ * gather buffer is created and freed internally.
++ *
++ * @param[in] user        Simulation context (used only for logging).
++ * @param[in] field_name  Logical field name (forms part of the filename).
++ * @param[in] field_vec   Distributed PETSc Vec to write.
++ * @param[in] ti          Timestep index used in the filename.
++ * @param[in] ext         File extension (`"dat"` in our workflow).
++ *
++ * @return `0` on success or a PETSc error code.
++ */
++PetscErrorCode WriteFieldData(UserCtx *user,
++                              const char *field_name,
++                              Vec field_vec,
++                              PetscInt ti,
++                              const char *ext)
++{
++    PetscErrorCode ierr;
++    MPI_Comm       comm;
++    PetscMPIInt    rank, size;
++
++    const PetscInt placeholder_int = 0;                    /* keep legacy name */
++    char           filename[PETSC_MAX_PATH_LEN];
++
++    PetscFunctionBeginUser;
++
++    /* ------------------------------------------------------------ */
++    /*                  Basic communicator information              */
++    /* ------------------------------------------------------------ */
++    ierr = PetscObjectGetComm((PetscObject)field_vec,&comm);CHKERRQ(ierr);
++    ierr = MPI_Comm_rank(comm,&rank);CHKERRQ(ierr);
++    ierr = MPI_Comm_size(comm,&size);CHKERRQ(ierr);
++
++    ierr = PetscSNPrintf(filename,sizeof(filename),
++                         "results/%s%05" PetscInt_FMT "_%d.%s",
++                         field_name,ti,placeholder_int,ext);CHKERRQ(ierr);
++
++    LOG_ALLOW(GLOBAL,LOG_DEBUG,
++              "WriteFieldData - Preparing to write <%s> on rank %d/%d\n",
++              filename,rank,size);
++
++    /* ------------------------------------------------------------ */
++    /*                       1.  Serial path                        */
++    /* ------------------------------------------------------------ */
++    if (size == 1) {
++        PetscViewer viewer;
++
++        ierr = PetscViewerBinaryOpen(comm,filename,
++                                     FILE_MODE_WRITE,&viewer);CHKERRQ(ierr);
++        ierr = VecView(field_vec,viewer);CHKERRQ(ierr);
++        ierr = PetscViewerDestroy(&viewer);CHKERRQ(ierr);
++
++        LOG_ALLOW(GLOBAL,LOG_INFO,
++                  "WriteFieldData - Wrote <%s> (serial path)\n",filename);
++        PetscFunctionReturn(0);
++    }
++
++    /* ------------------------------------------------------------ */
++    /*                      2.  Parallel path                       */
++    /* ------------------------------------------------------------ */
++    VecScatter scatter;
++    Vec        seq_vec=NULL;               /* created by PETSc, lives only on rank 0 */
++
++    /* 2.1  Create gather context and buffer                        */
++    ierr = VecScatterCreateToZero(field_vec,&scatter,&seq_vec);CHKERRQ(ierr);
++
++    /* 2.2  Gather distributed → sequential (on rank 0)             */
++    ierr = VecScatterBegin(scatter,field_vec,seq_vec,
++                           INSERT_VALUES,SCATTER_FORWARD);CHKERRQ(ierr);
++    ierr = VecScatterEnd  (scatter,field_vec,seq_vec,
++                           INSERT_VALUES,SCATTER_FORWARD);CHKERRQ(ierr);
++
++    /* 2.3  Rank 0 writes the file                                  */
++    if (rank == 0) {
++        PetscViewer viewer;
++
++        /* (optional) value diagnostics */
++        PetscReal vmin,vmax;
++        ierr = VecMin(seq_vec,NULL,&vmin);CHKERRQ(ierr);
++        ierr = VecMax(seq_vec,NULL,&vmax);CHKERRQ(ierr);
++        LOG_ALLOW(GLOBAL,LOG_DEBUG,
++                  "WriteFieldData - <%s> range = [%.4e … %.4e]\n",
++                  field_name,(double)vmin,(double)vmax);
++
++        ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF,filename,
++                                     FILE_MODE_WRITE,&viewer);CHKERRQ(ierr);
++        ierr = VecView(seq_vec,viewer);CHKERRQ(ierr);
++        ierr = PetscViewerDestroy(&viewer);CHKERRQ(ierr);
++
++        LOG_ALLOW(GLOBAL,LOG_INFO,
++                  "WriteFieldData - Wrote <%s> (parallel path)\n",filename);
++    }
++
++    /* 2.4  Cleanup                                                 */
++    ierr = VecScatterDestroy(&scatter);CHKERRQ(ierr);
++    ierr = VecDestroy(&seq_vec);CHKERRQ(ierr);
++
++    PetscFunctionReturn(0);
++}
++
++/*
++PetscErrorCode WriteFieldData(UserCtx *user, const char *field_name, Vec field_vec, PetscInt ti, const char *ext)
++{
++    PetscErrorCode ierr;
++    char           filename[PETSC_MAX_PATH_LEN];
++    PetscMPIInt    rank, size;
++    MPI_Comm       comm;
++    PetscInt       placeholder_int = 0;
++
++    PetscFunctionBeginUser;
++    ierr = PetscObjectGetComm((PetscObject)field_vec, &comm); CHKERRQ(ierr);
++    ierr = MPI_Comm_rank(comm, &rank); CHKERRQ(ierr);
++    ierr = MPI_Comm_size(comm, &size); CHKERRQ(ierr);
++
++    // Construct a filename that does NOT depend on the rank number.
++    // This ensures a single, predictable output file.
++    ierr = PetscSNPrintf(filename, sizeof(filename), "results/%s%05"PetscInt_FMT"_%d.%s", field_name, ti, placeholder_int, ext);
++
++
++    LOG_ALLOW(GLOBAL, LOG_DEBUG, "WriteFieldData - Preparing to write file: %s\n", filename);
++
++    // Optional: Log min/max values. This is a collective operation.
++    PetscReal vmin, vmax;
++    ierr = VecMin(field_vec, NULL, &vmin); CHKERRQ(ierr);
++    ierr = VecMax(field_vec, NULL, &vmax); CHKERRQ(ierr);
++    LOG_ALLOW(GLOBAL,LOG_DEBUG,"%s step %d  min=%.6e  max=%.6e\n", field_name, ti, (double)vmin, (double)vmax);
++
++    if (size == 1) {
++        // --- SERIAL CASE: Simple and direct write ---
++        PetscViewer viewer;
++        ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF, filename, FILE_MODE_WRITE, &viewer); CHKERRQ(ierr);
++        ierr = VecView(field_vec, viewer); CHKERRQ(ierr);
++        ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
++    } else {
++        // --- PARALLEL CASE: Gather on Rank 0 and write sequentially ---
++        Vec         seq_vec = NULL; // A sequential vector on Rank 0
++        VecScatter  scatter_ctx;
++
++        // Create a scatter context to gather data from the parallel vector
++        // onto a new sequential vector that will exist only on Rank 0.
++        ierr = VecScatterCreateToZero(field_vec, &scatter_ctx, &seq_vec); CHKERRQ(ierr);
++
++        // Perform the scatter (gather) operation.
++        ierr = VecScatterBegin(scatter_ctx, field_vec, seq_vec, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
++        ierr = VecScatterEnd(scatter_ctx, field_vec, seq_vec, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
++        ierr = VecScatterDestroy(&scatter_ctx); CHKERRQ(ierr);
++
++        // Now, only Rank 0 has the populated sequential vector and can write it.
++        if (rank == 0) {
++            PetscViewer viewer;
++            ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF, filename, FILE_MODE_WRITE, &viewer); CHKERRQ(ierr);
++            ierr = VecView(seq_vec, viewer); CHKERRQ(ierr);
++            ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
++        }
++
++        // All ranks must destroy the sequential vector, though it only "exists" on Rank 0.
++        ierr = VecDestroy(&seq_vec); CHKERRQ(ierr);
++    }
++
++    LOG_ALLOW(GLOBAL, LOG_INFO, "WriteFieldData - Successfully wrote data for field: %s\n", field_name);
++    PetscFunctionReturn(0);
++}
++*/
++/*
++PetscErrorCode WriteFieldData(UserCtx *user, const char *field_name, Vec field_vec, PetscInt ti, const char *ext)
++{
++    PetscErrorCode ierr;
++    PetscMPIInt    rank, size;
++    MPI_Comm       comm;
++
++    PetscFunctionBeginUser;
++    ierr = PetscObjectGetComm((PetscObject)field_vec, &comm); CHKERRQ(ierr);
++    ierr = MPI_Comm_rank(comm, &rank); CHKERRQ(ierr);
++    ierr = MPI_Comm_size(comm, &size); CHKERRQ(ierr);
++
++    if (size == 1) {
++        // SERIAL CASE: This is simple and correct.
++        PetscViewer viewer;
++        char filename[PETSC_MAX_PATH_LEN];
++        ierr = PetscSNPrintf(filename, sizeof(filename), "output/%s_step%d.%s", field_name, ti, ext); CHKERRQ(ierr);
++        ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF, filename, FILE_MODE_WRITE, &viewer); CHKERRQ(ierr);
++        ierr = VecView(field_vec, viewer); CHKERRQ(ierr);
++        ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
++    } else {
++        // PARALLEL CASE: The robust "Gather on 0 and Write" pattern.
++        Vec         seq_vec = NULL;
++        VecScatter  scatter_ctx;
++        IS          is_from, is_to;
++        PetscInt    global_size;
++
++        ierr = VecGetSize(field_vec, &global_size); CHKERRQ(ierr);
++        ierr = ISCreateStride(comm, global_size, 0, 1, &is_from); CHKERRQ(ierr);
++        ierr = ISCreateStride(PETSC_COMM_SELF, global_size, 0, 1, &is_to); CHKERRQ(ierr);
++
++        // Rank 0 creates the destination sequential vector.
++        if (rank == 0) {
++            ierr = VecCreate(PETSC_COMM_SELF, &seq_vec); CHKERRQ(ierr);
++            ierr = VecSetSizes(seq_vec, global_size, global_size); CHKERRQ(ierr);
++            ierr = VecSetFromOptions(seq_vec); CHKERRQ(ierr);
++        }
++
++        // Create the general scatter context.
++        ierr = VecScatterCreate(field_vec, is_from, seq_vec, is_to, &scatter_ctx); CHKERRQ(ierr);
++        ierr = VecScatterBegin(scatter_ctx, field_vec, seq_vec, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
++        ierr = VecScatterEnd(scatter_ctx, field_vec, seq_vec, INSERT_VALUES, SCATTER_FORWARD); CHKERRQ(ierr);
++
++        // Only Rank 0 writes the populated sequential vector.
++        if (rank == 0) {
++            PetscViewer viewer;
++            char filename[PETSC_MAX_PATH_LEN];
++            ierr = PetscSNPrintf(filename, sizeof(filename), "output/%s_step%d.%s", field_name, ti, ext); CHKERRQ(ierr);
++            ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF, filename, FILE_MODE_WRITE, &viewer); CHKERRQ(ierr);
++            ierr = VecView(seq_vec, viewer); CHKERRQ(ierr);
++            ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
++        }
++
++        // Clean up.
++        ierr = ISDestroy(&is_from); CHKERRQ(ierr);
++        ierr = ISDestroy(&is_to); CHKERRQ(ierr);
++        ierr = VecScatterDestroy(&scatter_ctx); CHKERRQ(ierr);
++        if (rank == 0) {
++            ierr = VecDestroy(&seq_vec); CHKERRQ(ierr);
++        }
++    }
++
++    LOG_ALLOW(GLOBAL, LOG_INFO, "WriteFieldData - Successfully wrote data for field: %s\n", field_name);
++    PetscFunctionReturn(0);
++}
++*/
+ 
+ /**
+  * @brief Writes simulation fields to files.
+@@ -1532,7 +1904,7 @@ PetscErrorCode ReadSwarmField(UserCtx *user, const char *field_name, PetscInt ti
+ 
+   LOG_ALLOW(GLOBAL,LOG_DEBUG," Vector created from Field \n");
+ 
+-  /* 3) Use the provided ReadFieldData() function to read data into fieldVec. */
++  /* 3) Use the ReadFieldData() function to read data into fieldVec. */
+   ierr = ReadFieldData(user, field_name, fieldVec, ti, ext);CHKERRQ(ierr);
+ 
+   /* 4) Destroy the global vector reference. */
+@@ -1786,8 +2158,8 @@ PetscErrorCode DisplayBanner(UserCtx *user,
+         } else {
+             // Fallback or warning if bboxlist is not available for global calculation
+             LOG_ALLOW(PETSC_COMM_SELF, LOG_WARNING, "DisplayBanner (Rank 0) - bboxlist not provided or num_mpi_procs <=0; using user->bbox for domain bounds.\n");
+-            global_min_coords = user->bbox.min_coords; // Use local bbox of rank 0 as fallback
+-            global_max_coords = user->bbox.max_coords;
++	    // global_min_coords = user->bbox.min_coords; // Use local bbox of rank 0 as fallback
++	    // global_max_coords = user->bbox.max_coords;
+         }
+ 
+ 
+diff --git a/src/postprocess.c b/src/postprocess.c
+index ffbec0c..ddc61e2 100644
+--- a/src/postprocess.c
++++ b/src/postprocess.c
+@@ -575,7 +575,7 @@ int main(int argc, char **argv)
+     LOG_ALLOW(LOCAL, LOG_INFO, "Initial Eulerian fields read successfully.\n");
+     // --- End Eulerian Read ---
+ 
+-    // Write Eulerian field data to vts files
++    // Write Eulerian field data to vts files.
+     ierr =  WriteEulerianVTK(user,pps.startTime, pps.eulerianExt,pps.eulerianPrefix);
+     
+     // Loop over timesteps for PARTICLE processing
+@@ -611,7 +611,7 @@ int main(int argc, char **argv)
+             } else {
+                  LOG_ALLOW(GLOBAL, LOG_ERROR, "Failed to read swarm fields for timestep %d (Error code: %d). Skipping VTK output for this step.\n", ti, ierr);
+             }
+-            // Skip processing for this timestep if read failed
++            // Skip processing for this timestep if read failed.
+             continue;
+         }
+         LOG_ALLOW(LOCAL,LOG_INFO, " Particle Fields Read for timestep %d\n", ti);
+diff --git a/src/setup.c b/src/setup.c
+index c461b21..8a25d54 100644
+--- a/src/setup.c
++++ b/src/setup.c
+@@ -202,7 +202,7 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
+     if (!user) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx pointer is null.");
+     // This function assumes it's handling a single block context passed from main.
+     if (block_number != 1) {
+-        LOG_ALLOW(GLOBAL, LOG_WARNING, "SetupGridAndVectors is optimized for block_number=1 but was called with %d. The loop will run, but ensure `user` is an array.", block_number);
++        LOG_ALLOW(GLOBAL, LOG_WARNING, "SetupGridAndVectors is optimized for block_number=1 but was called with %d. The loop will run, but ensure `user` is an array.\n", block_number);
+     }
+ 
+     // --- 1. Define Grid DMs and Assign Physical Coordinates ---
+@@ -221,7 +221,7 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
+     }
+ 
+     // --- 3. Create and Initialize All Vectors ---
+-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Creating and initializing all simulation vectors.");
++    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Creating and initializing all simulation vectors.\n");
+     // Primary Field Vecs
+     ierr = DMCreateGlobalVector(user->fda, &user->Ucat); CHKERRQ(ierr);
+     ierr = DMCreateGlobalVector(user->fda, &user->Ucont); CHKERRQ(ierr);
+@@ -280,7 +280,7 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
+     ierr = ComputeCellCenteredJacobianInverse(user); CHKERRQ(ierr);
+     ierr = CheckAndFixGridOrientation(user); CHKERRQ(ierr);
+ 
+-    LOG_ALLOW(GLOBAL, LOG_INFO, "Primary metrics (Csi, Eta, Zet, Aj) computed and prepared.");
++    LOG_ALLOW(GLOBAL, LOG_INFO, "Primary metrics (Csi, Eta, Zet, Aj) computed and prepared.\n");
+ 
+     // --- (Optional) Compute face-centered metrics ---
+     // ierr = ComputeFaceCenteredMetrics(user); CHKERRQ(ierr);
+@@ -306,14 +306,7 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
+ 
+     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr); // Corrected: use &rank
+ 
+-
+-    // Create an ASCII viewer to write log output to file
+-    ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, "simulationlog.txt", logviewer);
+-
+-    LOG_ALLOW(GLOBAL,LOG_INFO," PETSC Logs written \n");
+-    
+-    // Print PETSc logging results at the end
+-    ierr = PetscLogView(*logviewer); CHKERRQ(ierr);
++    PetscBool logActive;
+     
+     // Destroy DM and vectors for each block
+     for (PetscInt bi = 0; bi < block_number; bi++) {
+@@ -353,22 +346,36 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
+ 	LOG_ALLOW(GLOBAL, LOG_INFO, "Finalizing simulation, destroying boundary system.\n");
+ 	ierr = BoundarySystem_Destroy(&user[bi]); CHKERRQ(ierr);
+ 
++	ierr = PetscFree(user[bi].RankCellInfoMap); CHKERRQ(ierr);
++	
+         ierr = DMDestroy(&(user[bi].da)); CHKERRQ(ierr);
+ 	LOG_ALLOW(GLOBAL,LOG_DEBUG," da Destroyed \n");
+         ierr = DMDestroy(&(user[bi].swarm)); CHKERRQ(ierr);
+ 	LOG_ALLOW(GLOBAL,LOG_DEBUG," swarm Destroyed \n");
+     }
+ 
++     // Create an ASCII viewer to write log output to file
++    ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, "simulationlog.txt", logviewer); CHKERRQ(ierr);
++    
++    ierr = PetscLogIsActive(&logActive); CHKERRQ(ierr);
++    if (logActive) {
++      ierr = PetscLogView(*logviewer); CHKERRQ(ierr);
++    }
++    
++    ierr = PetscViewerDestroy(logviewer); CHKERRQ(ierr);
++
++    LOG_ALLOW(GLOBAL,LOG_INFO," PETSC Logs written \n");   
+     
+-    // Free user context
+-    ierr = PetscFree(user); CHKERRQ(ierr);
+-    LOG_ALLOW(GLOBAL,LOG_DEBUG," user Destroyed \n");     
+     // Now free bboxlist on all ranks since all allocated their own copy
+     if (bboxlist) {
+         free(bboxlist);
+         bboxlist = NULL;
+     }
+     
++    // Free user context
++    ierr = PetscFree(user); CHKERRQ(ierr);
++    LOG_ALLOW(GLOBAL,LOG_DEBUG," user Destroyed \n");     
++
+     if (allowedFuncs && nAllowed > 0) {
+         ierr = FreeAllowedFunctions(allowedFuncs, nAllowed); CHKERRQ(ierr);
+     }
+@@ -1348,7 +1355,12 @@ PetscErrorCode SetupBoundaryConditions(UserCtx *user)
+     char           bcs_filename_buffer[PETSC_MAX_PATH_LEN];
+     PetscFunctionBeginUser;
+ 
+-    LOG_ALLOW(GLOBAL, LOG_INFO, "Starting boundary condition system setup...");
++    ierr = MPI_Barrier(PETSC_COMM_WORLD);
++    LOG_ALLOW(GLOBAL, LOG_INFO, "Starting boundary condition system setup...\n");
++
++    // Set all boundary faces to be zero initially
++    PetscMemzero(user->boundary_faces,6 * sizeof(*user->boundary_faces));
++
+     
+     // --- Step 1: Determine the BCs configuration file name ---
+     // Set a default name first.
+@@ -1358,16 +1370,16 @@ PetscErrorCode SetupBoundaryConditions(UserCtx *user)
+     ierr = PetscOptionsGetString(NULL, NULL, "-bcs_file", bcs_filename_buffer, sizeof(bcs_filename_buffer), &bcsFileOptionFound); CHKERRQ(ierr);
+     
+     if (bcsFileOptionFound) {
+-        LOG_ALLOW(GLOBAL, LOG_INFO, "Using user-specified boundary conditions file: '%s'", bcs_filename_buffer);
++        LOG_ALLOW(GLOBAL, LOG_INFO, "Using user-specified boundary conditions file: '%s'.\n", bcs_filename_buffer);
+     } else {
+-        LOG_ALLOW(GLOBAL, LOG_INFO, "No -bcs_file option found. Using default: '%s'", bcs_filename_buffer);
++        LOG_ALLOW(GLOBAL, LOG_INFO, "No -bcs_file option found. Using default: '%s'.\n", bcs_filename_buffer);
+     }
+ 
+     // --- Step 2: Call the main creator for the boundary system ---
+     // This single call will parse the file, create all handlers, and initialize them.
+     ierr = BoundarySystem_Create(user, bcs_filename_buffer); CHKERRQ(ierr);
+     
+-    LOG_ALLOW(GLOBAL, LOG_INFO, "Boundary condition system setup complete.");
++    LOG_ALLOW(GLOBAL, LOG_INFO, "Boundary condition system setup complete.\n");
+     PetscFunctionReturn(0);
+ }
+ 
+diff --git a/src/simulation.c b/src/simulation.c
+index e296327..dbdbe61 100644
+--- a/src/simulation.c
++++ b/src/simulation.c
+@@ -184,11 +184,9 @@ PetscErrorCode PerformInitialSetup(UserCtx *user, PetscReal currentTime, PetscIn
+  * @param step        The current timestep number being processed.
+  * @param StartStep   The initial timestep number of the simulation.
+  * @param time        The current simulation time.
+- * @param readFields  A boolean flag. If true, the simulation attempts to read fields
+- *                    from files at the StartStep instead of generating them.
+  * @return PetscErrorCode 0 on success.
+  */
+-PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartStep, PetscReal time, PetscBool readFields)
++PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartStep, PetscReal time)
+ {
+     PetscErrorCode ierr;
+     PetscFunctionBeginUser;
+@@ -197,6 +195,63 @@ PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartSte
+     PetscReal umax=0.0;
+     PetscReal ucont_max=0.0;
+     PetscReal umin=0.0;
++
++    // ==============================================================================
++    // --- STEP 1: Update the INTERIOR of the domain based on the simulation phase ---
++    // ==============================================================================
++
++    if (step == StartStep && StartStep > 0) {
++        // --- PATH 1: RESTART from file ---
++        // This is the first time this function is called in a restarted run.
++        LOG_ALLOW(GLOBAL, LOG_INFO, "RESTART condition: Reading all grid fields from file for step %d.\n", step);
++        ierr = ReadSimulationFields(user, step); CHKERRQ(ierr); // Assumes this function reads Ucat, Ucont, etc.
++
++        // After loading, we MUST update local ghosts to ensure consistency for any subsequent calculations.
++        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Updating local ghost regions for all fields after reading.\n", time, step);
++        ierr = UpdateLocalGhosts(user, "Ucont"); CHKERRQ(ierr);
++        ierr = UpdateLocalGhosts(user, "Ucat"); CHKERRQ(ierr);
++
++    } else {
++        // --- PATH 2 & 3: FRESH START or TIME ADVANCEMENT ---
++        // This block handles both generating initial fields and advancing the solver in time.
++
++        if (step == 0) { // Condition is now simply step == 0 for a fresh start
++            // --- PATH 2: Initial Field Setup (t=0) ---
++            LOG_ALLOW(GLOBAL, LOG_INFO, "FRESH START: Generating INTERIOR fields for initial step 0.\n");
++            ierr = SetInitialInteriorField(user, "Ucont"); CHKERRQ(ierr);
++        } else {
++            // --- PATH 3: Advancing the simulation (step > 0) ---
++            LOG_ALLOW(GLOBAL, LOG_DEBUG, "TIME ADVANCE: Updating INTERIOR fields for step %d.\n", step);
++            // This is the hook for the actual fluid dynamics solver.
++            // ierr = YourNavierStokesSolver(user, user->dt); CHKERRQ(ierr);
++        }
++
++        // The following logic is common to both fresh starts and time advancement,
++        // but not to a file-based restart (which loads the final Ucat directly).
++
++        // STEP 2: APPLY BOUNDARY CONDITIONS
++        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Executing boundary condition system.\n", time, step);
++        ierr = BoundarySystem_ExecuteStep(user); CHKERRQ(ierr);
++
++        // STEP 3: SYNCHRONIZE Ucont BEFORE CONVERSION
++        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Updating local ghost regions for Ucont.\n", time, step);
++        ierr = UpdateLocalGhosts(user, "Ucont"); CHKERRQ(ierr);
++
++        // STEP 4: CONVERT CONTRAVARIANT TO CARTESIAN
++        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Converting Ucont to Ucat.\n", time, step);
++        ierr = Contra2Cart(user); CHKERRQ(ierr);
++
++        // STEP 5: Re-apply BCs and SYNCHRONIZE Ucat
++        // It's often necessary to apply BCs again to ensure Ucat is correct at boundaries.
++        ierr = BoundarySystem_ExecuteStep(user); CHKERRQ(ierr);
++        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Updating local ghost regions for Ucat.\n", time, step);
++        ierr = UpdateLocalGhosts(user, "Ucat"); CHKERRQ(ierr);
++    }
++
++    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Complete Eulerian state is now finalized and consistent.\n", time, step);
++    PetscFunctionReturn(0);
++}
++    /*
+     // ==============================================================================
+     // --- STEP 1: Update the INTERIOR of the domain ---
+     // ==============================================================================
+@@ -295,6 +350,7 @@ PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartSte
+     LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Complete Eulerian state is now finalized and consistent.\n", time, step);
+     PetscFunctionReturn(0);
+ }
++    */
+ 
+ /**
+  * @brief Executes the main time-marching loop for the particle simulation.
+@@ -353,7 +409,7 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
+     // --- Handle Initial Setup (if StartStep is 0) ---
+     if (StartStep == 0) {
+         // Set Eulerian fields for t=0 before particle setup
+-        ierr = SetEulerianFields(user, StartStep, StartStep, currentTime, readFields); CHKERRQ(ierr);
++        ierr = SetEulerianFields(user, StartStep, StartStep, currentTime); CHKERRQ(ierr);
+         // Perform comprehensive initial particle setup
+         ierr = PerformInitialSetup(user, currentTime, StartStep, readFields, bboxlist, OutputFreq, StepsToRun, StartStep); CHKERRQ(ierr);
+ 
+@@ -488,7 +544,7 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
+  * @return PetscErrorCode 0 on success, non-zero on failure.
+  */
+ PetscErrorCode PerformInitialSetup_TEST(UserCtx *user, PetscReal currentTime, PetscInt step,
+-                                        PetscBool readFields, PetscInt OutputFreq,
++                                        PetscInt OutputFreq,
+                                         PetscInt StepsToRun, PetscInt StartStep,
+ 					BoundingBox *bboxlist)
+ {
+@@ -525,14 +581,14 @@ PetscErrorCode PerformInitialSetup_TEST(UserCtx *user, PetscReal currentTime, Pe
+         ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency); CHKERRQ(ierr);
+         ierr = WriteSwarmField(user, "position", step, "dat"); CHKERRQ(ierr);
+         ierr = WriteSwarmField(user, "velocity", step, "dat"); CHKERRQ(ierr);
+-        if (!readFields) {
++	//  if (!readFields) {
+         ierr = WriteSimulationFields(user); CHKERRQ(ierr);
+     }
+-    }
+ 
+     PetscFunctionReturn(0);
+ }
+ 
++
+ /**
+  * @brief Executes the main time-marching loop for the particle simulation. [TEST VERSION]
+  *
+@@ -554,12 +610,13 @@ PetscErrorCode PerformInitialSetup_TEST(UserCtx *user, PetscReal currentTime, Pe
+  * @return PetscErrorCode 0 on success, non-zero on failure.
+  */
+ PetscErrorCode AdvanceSimulation_TEST(UserCtx *user, PetscInt StartStep, PetscReal StartTime,
+-                                      PetscInt StepsToRun, PetscInt OutputFreq, PetscBool readFields, BoundingBox *bboxlist)
++                                      PetscInt StepsToRun, PetscInt OutputFreq, BoundingBox *bboxlist)
+ {
+     PetscErrorCode ierr;
+     PetscReal      dt = user->dt;
+     PetscReal      currentTime = StartTime;
+     PetscInt       removed_local, removed_global;
++    PetscInt       output_step;// just for output to be easier to understand.
+ 
+     PetscFunctionBeginUser;
+     LOG_ALLOW(GLOBAL, LOG_INFO, "Starting simulation run [TEST]: %d steps from step %d (t=%.4f), dt=%.4f\n",
+@@ -567,24 +624,39 @@ PetscErrorCode AdvanceSimulation_TEST(UserCtx *user, PetscInt StartStep, PetscRe
+ 
+     // --- Handle Initial Setup (t=0) ---
+     if (StartStep == 0) {
+-        ierr = SetEulerianFields(user, StartStep, StartStep, currentTime, readFields); CHKERRQ(ierr);
+-        ierr = PerformInitialSetup_TEST(user, currentTime, StartStep, readFields, OutputFreq, StepsToRun, StartStep, bboxlist); CHKERRQ(ierr);
++
++        LOG_ALLOW(GLOBAL, LOG_INFO, "--- Preparing state for initial time t=0.0 (Step 0) ---\n");
++	user->step = 0;
++	
++        ierr = SetEulerianFields(user, StartStep, StartStep, currentTime); CHKERRQ(ierr);
++
++	ierr = PerformInitialSetup_TEST(user, currentTime, StartStep, OutputFreq, StepsToRun, StartStep, bboxlist); CHKERRQ(ierr);
+ 
+         if (StepsToRun == 0) {
+             LOG_ALLOW(GLOBAL, LOG_INFO, "Initial setup completed. Exiting AdvanceSimulation_TEST.\n");
+             PetscFunctionReturn(0);
+         }
+-    }
+     
++    	currentTime += dt;
++	user->step = 1;
++	LOG_ALLOW(GLOBAL, LOG_INFO, "--- Initial state setup complete. Beginning time marching. ---\n\n");
++    }
++    // For a RESTART, this entire block is skipped. currentTime and user->step are already correct.
+     // --- Time Marching Loop ---
+-    for (PetscInt step = StartStep; step < StartStep + StepsToRun; ++step)
++    for (PetscInt step = StartStep; step < StartStep + StepsToRun; step++)
+     {
+-        LOG_ALLOW(GLOBAL, LOG_INFO, "--- Starting Step %d, Time: %.4f ---\n", step, currentTime);
++        output_step = step;
++        LOG_ALLOW(GLOBAL, LOG_INFO, "--- Starting advance to Step %d, Target + Time: %.4f ---\n", output_step, currentTime);
++
++        // --- Step 0: Prepare for Next Timestep ---
++        // This is the crucial reset you identified.
++        LOG_ALLOW(GLOBAL, LOG_DEBUG, "Resetting particle statuses to prepare for next timestep.\n");
++        ierr = ResetAllParticleStatuses(user); CHKERRQ(ierr);
+ 	
+         // --- Step 1: Set/Update Eulerian Fields for the current time ---
+         // This is done at the beginning of the step.
+         if (step > StartStep || (step == StartStep && StartStep > 0)) {
+-           ierr = SetEulerianFields(user, step, StartStep, currentTime, readFields); CHKERRQ(ierr);
++           ierr = SetEulerianFields(user, step, StartStep, currentTime); CHKERRQ(ierr);
+         }
+ 
+         // --- Step 2: Update Particle Positions ---
+@@ -625,12 +697,9 @@ PetscErrorCode AdvanceSimulation_TEST(UserCtx *user, PetscInt StartStep, PetscRe
+             ierr = WriteSimulationFields(user); CHKERRQ(ierr);
+         }
+ 
+-        // --- Step 8: Prepare for Next Timestep ---
+-        // This is the crucial reset you identified.
+-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "Resetting particle statuses to prepare for next timestep.\n");
+-        ierr = ResetAllParticleStatuses(user); CHKERRQ(ierr);
+ 
+-        LOG_ALLOW(GLOBAL, LOG_INFO, "--- Finished Step %d, Current Time: %.4f ---\n\n", step, currentTime);
++
++        LOG_ALLOW(GLOBAL, LOG_INFO, "--- Finished Step %d, Current Time: %.4f ---\n\n", output_step, currentTime);
+     } 
+ 
+     LOG_ALLOW(GLOBAL, LOG_INFO, "Time marching completed. Final time t=%.4f.\n", currentTime);
+diff --git a/src/simulation.c~ b/src/simulation.c~
+deleted file mode 100644
+index 36caa9e..0000000
+--- a/src/simulation.c~
++++ /dev/null
+@@ -1,465 +0,0 @@
+-/**
+- * @file simulation.c  // code for simulation loop 
+- * @brief Test program for DMSwarm interpolation using the fdf-curvIB method.
+- * Provides the setup to start any simulation with DMSwarm and DMDAs.
+- **/
+-
+-#include "simulation.h"
+-
+-/**
+- * @brief Performs the complete initial setup for the particle simulation at time t=0.
+- *
+- * This includes:
+- * 1. Initial locating of particles (based on their potentially arbitrary initial assignment).
+- * 2. A preliminary migration cycle to ensure particles are on the MPI rank that owns
+- *    their initial physical region.
+- * 3. If `user->ParticleInitialization == 0` (Surface Init), re-initializes particles on the
+- *    designated inlet surface. This ensures particles migrated to an inlet-owning rank
+- *    are correctly distributed on that surface.
+- * 4. A final locating of all particles to get their correct cell indices and interpolation weights.
+- * 5. Interpolation of initial Eulerian fields to the particles.
+- * 6. Scattering of particle data to Eulerian fields (if applicable).
+- * 7. Outputting initial data if requested.
+- *
+- * @param user Pointer to the UserCtx structure.
+- * @param currentTime The current simulation time (should be StartTime, typically 0.0).
+- * @param step The current simulation step (should be StartStep, typically 0).
+- * @param readFields Flag indicating if Eulerian fields were read from file (influences output).
+- * @param bboxlist Array of BoundingBox structures for domain decomposition.
+- * @param OutputFreq Frequency for writing output files.
+- * @param StepsToRun Total number of simulation steps planned (used for output logic on setup-only runs).
+- * @param StartStep The starting step of the simulation (used for output logic).
+- * @return PetscErrorCode 0 on success, non-zero on failure.
+- */
+-PetscErrorCode PerformInitialSetup(UserCtx *user, PetscReal currentTime, PetscInt step,
+-                                   PetscBool readFields, const BoundingBox *bboxlist,
+-                                   PetscInt OutputFreq, PetscInt StepsToRun, PetscInt StartStep)
+-{
+-    PetscErrorCode ierr;
+-    MigrationInfo  *migrationList_for_initial_sort = NULL; // Managed locally for this initial sort
+-    PetscInt       migrationCount_initial_sort = 0;
+-    PetscInt       migrationListCapacity_initial_sort = 0;
+-    PetscInt       globalMigrationCount_initial_sort;
+-    PetscMPIInt    rank; // For logging
+-    PetscReal      uMax = 0.0, uMaxcat = 0.0;
+-
+-    PetscFunctionBeginUser;
+-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+-
+-    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Performing initial particle setup procedures.\n", currentTime, step);
+-
+-    // --- 1. Initial Locate (based on positions from InitializeParticleBasicProperties) ---
+-    // This gets a first guess of where particles are, which might be (0,0,0) for many if not placed by their initial rank.
+-    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Initial Locate: Determining particle cells before preliminary migration.\n", currentTime, step);
+-    ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
+-
+-    LOG_ALLOW(GLOBAL,LOG_INFO," Particle layout (pre-preliminary migration): \n");
+-    ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency); CHKERRQ(ierr);
+-
+-    // --- 2. Preliminary Spatial Sorting Migration ---
+-    // This moves particles (e.g., those at (0,0,0)) to the rank that actually owns their physical region.
+-    ierr = PerformSingleParticleMigrationCycle(user, bboxlist,
+-                                               &migrationList_for_initial_sort, &migrationCount_initial_sort, &migrationListCapacity_initial_sort,
+-                                               currentTime, step, "Preliminary Sort", &globalMigrationCount_initial_sort); CHKERRQ(ierr);
+-    // migrationList_for_initial_sort is allocated/reallocated within PerformSingleParticleMigrationCycle if needed.
+-    
+-    // --- 3. Re-initialize Particles on Inlet Surface (if applicable) ---
+-    // This is crucial for ParticleInitialization == 0 (Surface Init). After particles have been
+-    // migrated to the rank(s) owning the inlet surface, this step ensures they are properly
+-    // distributed *on* that surface, rather than remaining at their migrated position (e.g., (0,0,0)).
+- 
+-    if (user->ParticleInitialization == 0 && user->inletFaceDefined) {
+-      ierr = ReinitializeParticlesOnInletSurface(user, currentTime, step); CHKERRQ(ierr);
+-      // ---   DEBUG
+-      // if (rank == 0) { // Or the rank that does the re-init
+-      //  PetscReal *coords_check;
+-      //  PetscInt nlocal_check;
+-      //  ierr = DMSwarmGetLocalSize(user->swarm, &nlocal_check); CHKERRQ(ierr);
+-      //  if (nlocal_check > 0) {
+-      //     ierr = DMSwarmGetField(user->swarm, "position", NULL, NULL, (void**)&coords_check); CHKERRQ(ierr);
+-      //	  LOG_ALLOW(LOCAL,LOG_DEBUG, "[Rank %d DEBUG] After Reinit, first particle pos: (%.2f, %.2f, %.2f)\n",
+-      //	      rank, coords_check[0], coords_check[1], coords_check[2]);
+-	  // Check for NaNs/Infs in a few particles if suspicious
+-      //  for (int p_chk = 0; p_chk < PetscMin(5, nlocal_check); ++p_chk) {
+-      //	    if (PetscIsInfOrNanReal(coords_check[3*p_chk+0]) ||
+-      //	PetscIsInfOrNanReal(coords_check[3*p_chk+1]) ||
+-      //	PetscIsInfOrNanReal(coords_check[3*p_chk+2])) {
+-      //      LOG_ALLOW(LOCAL,LOG_DEBUG, "[Rank %d DEBUG ERROR] Bad coord for particle %d after reinit!\n", rank, p_chk);
+-      //    }
+-      //  }
+-      //  ierr = DMSwarmRestoreField(user->swarm, "position", NULL, NULL, (void**)&coords_check); CHKERRQ(ierr);
+-      //  }
+-      //  fflush(stdout);
+-	// }
+-    // --------- DEBUG	
+-    }
+-
+-    LOG_ALLOW(LOCAL,LOG_DEBUG," [ Rank %d] ReinitializeParticlesOnInletSurface completed, heading into PetscBarrier.\n",rank);
+-    
+-    // Ensure all ranks wait till Reinitialization is done to proceed.
+-    ierr = PetscBarrier(NULL);
+-    
+-    // --- 4. Final Locate and Interpolate ---
+-    // Now that particles are on their correct ranks and (if surface init) correctly positioned on the inlet,
+-    // perform the definitive location and interpolation for t=0.
+-    LOG_ALLOW(LOCAL, LOG_INFO, "[T=%.4f, Step=%d , Rank=%d] Second Initial Locate & Interpolate (post-migration & re-placement).\n", currentTime, step,rank);
+-    ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
+-    ierr = InterpolateAllFieldsToSwarm(user); CHKERRQ(ierr);
+-
+-    VecNorm(user->Ucont, NORM_INFINITY, &uMax);
+-    LOG_ALLOW(GLOBAL, LOG_INFO,"[Step %d] Initial  max(|Ucont|) before Scatter  = %.6e\n",step , uMax);
+-    uMax = 0.0;
+-
+-    VecNorm(user->Ucat, NORM_INFINITY, &uMaxcat);
+-    LOG_ALLOW(GLOBAL, LOG_INFO,"[Step %d]  Initial max(|Ucat|) before Scatter  = %.6e\n", step, uMaxcat);
+-    uMaxcat = 0.0;
+-    
+-    // --- 5. Scatter Particle Data to Eulerian Grid (if part of initialization) ---
+-    ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
+-
+-    VecNorm(user->Ucont, NORM_INFINITY, &uMax);
+-    LOG_ALLOW(GLOBAL, LOG_INFO,"[Step %d] Initial  max(|Ucont|) after Scatter  = %.6e\n",step , uMax);
+-    uMax = 0.0;
+-
+-    VecNorm(user->Ucat, NORM_INFINITY, &uMaxcat);
+-    LOG_ALLOW(GLOBAL, LOG_INFO,"[Step %d]  Initial max(|Ucat|) after Scatter  = %.6e\n", step, uMaxcat);
+-    uMaxcat = 0.0;
+-    
+-    // --- 6. Initial Output ---
+-    // Output if OutputFreq > 0 OR if it's a setup-only run (StepsToRun==0 and StartStep==0).
+-    if (OutputFreq > 0 || (StepsToRun == 0 && StartStep == 0)) {
+-        LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Logging initial data and (if applicable) interpolation error.\n", currentTime, step);
+-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "Printing Initial particle fields at t=%.4f (step %d completed)\n", currentTime, step);
+-       
+-	//  LOG_ALLOW(LOCAL, LOG_DEBUG, "[Rank %d] ABOUT TO CALL LOG_PARTICLE_FIELDS.\n", rank);
+-	ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency); CHKERRQ(ierr);
+-	//  LOG_ALLOW(LOCAL, LOG_INFO, "[Rank %d] RETURNED FROM LOG_PARTICLE_FIELDS.\n", rank); 
+-
+-	// DEPRECIATED - Testing against sinusoidal (now FieldInitialization = 1 has changed meaning.
+-	// if(user->FieldInitialization==1) { // If analytic fields are available for comparison
+-	//    ierr = LOG_INTERPOLATION_ERROR(user); CHKERRQ(ierr);
+-        //}
+-
+-        LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Writing initial particle data (for step %d).\n", currentTime, step, step);
+-	//	LOG_ALLOW(LOCAL, LOG_INFO, "[%d] About to call WriteSwarmField for position.\n", rank);
+-        ierr = WriteSwarmField(user, "position", step, "dat"); CHKERRQ(ierr);
+-        ierr = WriteSwarmField(user, "velocity", step, "dat"); CHKERRQ(ierr);
+-        // ierr = WriteSwarmField(user, "pos_phy",  step, "dat"); CHKERRQ(ierr); // If needed
+-        if (!readFields) { // Only write grid fields if they were generated, not read
+-            ierr = WriteSimulationFields(user); CHKERRQ(ierr);
+-        }
+-    }
+-
+-    // --- 7. Cleanup Memory ---
+-    // Free the migration list used specifically for this initial sort.
+-    ierr = PetscFree(migrationList_for_initial_sort); CHKERRQ(ierr);
+-
+-    PetscFunctionReturn(0);
+-}
+-
+-
+-/**
+- * @brief Initializes or updates the complete, consistent state of all Eulerian fields for a given timestep.
+- *
+- * This function is a high-level wrapper that orchestrates the entire process of preparing
+- * the fluid fields for a single time step. It follows the standard procedure for a
+- * curvilinear solver: first resolving contravariant velocities (`Ucont`) and then
+- * converting them to Cartesian (`Ucat`).
+- *
+- * Its sequential operations are:
+- * 1.  Update the INTERIOR of the domain:
+- *     - For the initial step, it calls `SetInitialInteriorField` to generate values.
+- *     - For subsequent steps, it calls the main fluid solver.
+- *     - If restarting from a file, it reads the data, overwriting the whole field.
+- *
+- * 2.  Apply Boundary Conditions:
+- *     - It then calls the modular `BoundarySystem_ExecuteStep` to enforce all configured
+- *       boundary conditions on the domain edges.
+- *
+- * 3.  Convert to Cartesian and Finalize:
+- *     - It calls `Contra2Cart` to compute `Ucat` from `Ucont`.
+- *     - It calls `UpdateLocalGhosts` to ensure all parallel data is synchronized.
+- *
+- * @param user        Pointer to the UserCtx structure, containing all simulation data.
+- * @param step        The current timestep number being processed.
+- * @param StartStep   The initial timestep number of the simulation.
+- * @param time        The current simulation time.
+- * @param readFields  A boolean flag. If true, the simulation attempts to read fields
+- *                    from files at the StartStep instead of generating them.
+- * @return PetscErrorCode 0 on success.
+- */
+-PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartStep, PetscReal time, PetscBool readFields)
+-{
+-    PetscErrorCode ierr;
+-    PetscFunctionBeginUser;
+-    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Preparing complete Eulerian state.\n", time, step);
+-
+-    PetscReal umax=0.0;
+-    PetscReal ucont_max=0.0;
+-    PetscReal umin=0.0;
+-    // ==============================================================================
+-    // --- STEP 1: Update the INTERIOR of the domain ---
+-    // ==============================================================================
+-
+-    if (step == StartStep && readFields) {
+-        // --- RESTART from file ---
+-        // This case reads the full, previously saved state, overwriting everything.
+-        LOG_ALLOW(GLOBAL, LOG_INFO, "RESTART condition: Reading all fields from file for step %d.\n", step);
+-        ierr = ReadSimulationFields(user, step); CHKERRQ(ierr);
+-
+-	// Even after reading, we must update local ghosts to ensure consistency for subsequent steps.
+-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Updating local ghost regions for all fields after reading.\n", time, step);
+-        ierr = UpdateLocalGhosts(user, "Ucont"); CHKERRQ(ierr);
+-        ierr = UpdateLocalGhosts(user, "Ucat"); CHKERRQ(ierr);
+-	
+-    } else {
+-        // --- This block handles both initial setup and time-advancement ---
+-        
+-          if (step == StartStep) {
+-            // --- Initial Field Setup ---
+-            // The boundaries have already been initialized by BoundarySystem_Create.
+-            // We now fill the domain interior using the newly named function.
+-	    // ierr = VecZeroEntries(user->Ucont);CHKERRQ(ierr);
+-	    // ----DEBUG TEST
+-	    // ierr = VecSet(user->Ucont,1.0);
+-	    LOG_ALLOW(GLOBAL, LOG_INFO, "INITIAL start: Generating INTERIOR fields for initial step %d.\n", step);
+-            ierr = SetInitialInteriorField(user, "Ucont"); CHKERRQ(ierr);
+-
+-	    ierr = VecNorm(user->Ucont, NORM_INFINITY, &ucont_max); CHKERRQ(ierr);
+-	    LOG_ALLOW(GLOBAL,LOG_INFO,"[DEBUG] max(|Ucont|) after SetInitialInteriorField = %.6e\n", ucont_max);
+-	    ucont_max=0.0;
+-	    
+-	         } else { // Advancing the simulation (step > StartStep)
+-            LOG_ALLOW(GLOBAL, LOG_DEBUG, "ADVANCE step: Updating INTERIOR fields for step %d.\n", step);
+-
+-
+-	    ierr = VecNorm(user->Ucont, NORM_INFINITY, &ucont_max); CHKERRQ(ierr);
+-	    LOG_ALLOW(GLOBAL,LOG_INFO,"[DEBUG] max(|Ucont|) (timestep = %d)  = %.6e\n",step,ucont_max);
+-	    ucont_max=0.0;
+-	    // This is the hook for the actual fluid dynamics solver, which would update Ucont.
+-            // ierr = YourNavierStokesSolver(user, user->dt); CHKERRQ(ierr);
+-	        }
+-
+-        // ==============================================================================
+-        // --- STEP 2: APPLY BOUNDARY CONDITIONS ---
+-        // ==============================================================================
+-        // The boundary system applies conditions. For a wall, this sets the normal
+-        // component of Ucont to 0 and also sets the ghost-cell Ucat values.
+-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Executing boundary condition system.\n", time, step);
+-	ierr = BoundarySystem_ExecuteStep(user); CHKERRQ(ierr);
+-	
+-	// ==============================================================================
+-        // --- STEP 3: SYNCHRONIZE Ucont BEFORE CONVERSION ---
+-        // ==============================================================================
+-        // THIS IS THE CRITICAL FIX: Update lUcont with correct global data and ghost cells
+-        // BEFORE calling Contra2Cart, which relies on lUcont for its stencil.
+-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Updating local ghost regions for Ucont.\n", time, step);
+-        ierr = UpdateLocalGhosts(user, "Ucont"); CHKERRQ(ierr);
+-
+-        // ==============================================================================
+-        // --- STEP 4: CONVERT CONTRAVARIANT TO CARTESIAN ---
+-        // ==============================================================================
+-        // With Ucont fully defined (interior + boundaries), compute the Cartesian velocity.
+-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Converting Ucont to Ucat.\n", time, step);
+-	//	ierr = VecZeroEntries(user->Ucat); CHKERRQ(ierr);
+-	// DEBUG--------
+-
+-        ierr = Contra2Cart(user); CHKERRQ(ierr);
+-	
+-	ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
+-	LOG_ALLOW(GLOBAL,LOG_INFO,"[DEBUG] max(|Ucat|) after Contra2Cart = %.6e\n", umax);
+-	umax = 0.0;
+-
+-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Executing boundary condition system.\n", time, step);
+-	ierr = BoundarySystem_ExecuteStep(user); CHKERRQ(ierr);	
+-	
+-	ierr = VecMin(user->Ucat, NULL, &umin);
+-	LOG_ALLOW(GLOBAL,LOG_DEBUG, "[DEBUG] min(Ucat) after Contra2Cart = %.6e\n", umin);
+-	// ==============================================================================
+-        // --- STEP 5: SYNCHRONIZE Ucat AFTER CONVERSION ---
+-        // ==============================================================================
+-        // Finally, update the local lUcat with the newly computed global Ucat data.
+-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Updating local ghost regions for Ucat.\n", time, step);
+-        ierr = UpdateLocalGhosts(user, "Ucat"); CHKERRQ(ierr);
+-    }
+-    
+-    // ==============================================================================
+-    // --- STEP 4: UPDATE GHOST CELLS (FINALIZATION) ---
+-    // ==============================================================================
+-    // This final step synchronizes the ghost cell layers across all MPI ranks for
+-    // all relevant fields, ensuring a consistent state before they are used.
+-    //  LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f, Step=%d] Updating local ghost regions for all fields.\n", time, step);
+-    //  ierr = UpdateLocalGhosts(user, "Ucont"); CHKERRQ(ierr);
+-    // ierr = UpdateLocalGhosts(user, "Ucat"); CHKERRQ(ierr);
+-
+-    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Complete Eulerian state is now finalized and consistent.\n", time, step);
+-    PetscFunctionReturn(0);
+-}
+-
+-/**
+- * @brief Executes the main time-marching loop for the particle simulation.
+- *
+- * This function performs the following steps repeatedly for `StepsToRun`:
+- * 1. Updates/Sets the background fluid velocity field (Ucat) for the current step.
+- * 2. If it's the very first step (StartStep=0), calls `PerformInitialSetup` for
+- *    preliminary migration, location, interpolation, and output.
+- * 3. Updates particle positions using velocity from the *previous* step's interpolation.
+- * 4. Performs boundary checks and removes out-of-bounds particles.
+- * 5. Migrates particles between MPI processors using `PerformSingleParticleMigrationCycle`.
+- * 6. Advances simulation time and step counter.
+- * 7. Locates particles in the grid based on their *new* positions.
+- * 8. Interpolates the fluid velocity (from the *current* Ucat) to the new particle locations
+- *    to get velocities for the *next* advection step.
+- * 9. Scatters particle data back to Eulerian fields.
+- *10. Logs errors and outputs data at specified `OutputFreq` intervals.
+- *
+- * @param user         Pointer to the UserCtx structure.
+- * @param StartStep    The initial step number (e.g., 0 for a new run, >0 for restart).
+- * @param StartTime    The simulation time corresponding to StartStep.
+- * @param StepsToRun   The number of steps to execute in this run. If 0 and StartStep is 0,
+- *                     only `PerformInitialSetup` is executed.
+- * @param OutputFreq   Frequency (in number of steps) at which to output data and log errors.
+- * @param readFields   Flag indicating whether to read initial fields (used by `SetEulerianFields`
+- *                     and `PerformInitialSetup`).
+- * @param bboxlist     Array of BoundingBox structures for domain decomposition, used for migration.
+- *
+- * @return PetscErrorCode 0 on success, non-zero on failure.
+- */
+-PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal StartTime,
+-                                 PetscInt StepsToRun, PetscInt OutputFreq, PetscBool readFields,
+-                                 const BoundingBox *bboxlist)
+-{
+-    PetscErrorCode ierr;
+-    PetscMPIInt    rank;            // MPI rank of the current process
+-    PetscReal      dt = user->dt;   // Timestep size
+-    PetscInt       step_loop_counter; // Loop counter for simulation steps
+-    PetscReal      currentTime;     // Current simulation time
+-    PetscInt       removed_local, removed_global; // Counters for out-of-bounds particles
+-    PetscReal      uMax = 0.0, uMaxcat = 0.0;
+-
+-    // Variables for particle migration within the main loop
+-    MigrationInfo  *migrationList_main_loop = NULL;    // Managed by AdvanceSimulation for the loop
+-    PetscInt       migrationCount_main_loop = 0;
+-    PetscInt       migrationListCapacity_main_loop = 0;
+-    PetscInt       globalMigrationCount_in_loop_cycle; // Output from migration cycle
+-
+-    PetscFunctionBeginUser;
+-    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+-    LOG_ALLOW(GLOBAL, LOG_INFO, "Starting simulation run: %d steps from step %d (t=%.4f), dt=%.4f\n",
+-              StepsToRun, StartStep, StartTime, dt);
+-
+-    currentTime = StartTime; // Initialize current simulation time
+-
+-    // --- Handle Initial Setup (if StartStep is 0) ---
+-    if (StartStep == 0) {
+-        // Set Eulerian fields for t=0 before particle setup
+-        ierr = SetEulerianFields(user, StartStep, StartStep, currentTime, readFields); CHKERRQ(ierr);
+-        // Perform comprehensive initial particle setup
+-        ierr = PerformInitialSetup(user, currentTime, StartStep, readFields, bboxlist, OutputFreq, StepsToRun, StartStep); CHKERRQ(ierr);
+-
+-        // If only initial setup was requested (StepsToRun == 0), exit now.
+-        if (StepsToRun == 0) {
+-            LOG_ALLOW(GLOBAL, LOG_INFO, "Initial setup completed as StepsToRun is 0. Time t=%.4f. Exiting AdvanceSimulation.\n", currentTime);
+-            // The migrationList_main_loop is not yet used, but free it for consistency.
+-            ierr = PetscFree(migrationList_main_loop); CHKERRQ(ierr);
+-            PetscFunctionReturn(0);
+-        }
+-    }
+-    
+-    // --- Time Marching Loop ---
+-    // Loops from the StartStep up to (but not including) StartStep + StepsToRun
+-    for (step_loop_counter = StartStep; step_loop_counter < StartStep + StepsToRun; step_loop_counter++)
+-    {
+-      LOG_ALLOW(GLOBAL, LOG_INFO, "Starting step %d, t=%.4f\n", step_loop_counter, currentTime);
+-
+-      // Set/Update Eulerian Fields for the current time step
+-      // If StartStep was 0, fields for t=0 were already set.
+-      // If restarting (StartStep > 0), or for subsequent steps (step_loop_counter > StartStep),
+-      // set/update fields for the current `currentTime`.
+-      //    if (step_loop_counter > StartStep || (step_loop_counter == StartStep && StartStep > 0)) {
+-      //   ierr = SetEulerianFields(user, step_loop_counter, StartStep, currentTime, readFields); CHKERRQ(ierr);
+-	  //	    }
+-
+-      // Step 3: Update Particle Positions
+-      // Moves particles from P(currentTime) to P(currentTime + dt) using velocity_particle(currentTime).
+-      LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f -> T=%.4f, Step=%d] Updating particle positions (Rank: %d).\n", currentTime, currentTime+dt, step_loop_counter, rank);
+-      ierr = UpdateAllParticlePositions(user); CHKERRQ(ierr);
+-
+-      // Step 4: Check Boundaries and Remove Out-Of-Bounds Particles
+-      ierr = CheckAndRemoveOutOfBoundsParticles(user, &removed_local, &removed_global,bboxlist); CHKERRQ(ierr);
+-      if (removed_global > 0) {
+-          LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Removed %d out-of-bounds particles globally.\n", currentTime, step_loop_counter, removed_global);
+-      }
+-
+-      LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"[Rank %d] ENTERING MIGRATION AFTER UPDATE.\n",rank);
+-      
+-      // Step 5 & 6: Migrate Particles between processors
+-      // Migration is based on new positions P(currentTime + dt).
+-      // The time logged for migration is the target time of the new positions.
+-      ierr = PerformSingleParticleMigrationCycle(user, bboxlist,
+-                                                 &migrationList_main_loop, &migrationCount_main_loop, &migrationListCapacity_main_loop,
+-                                                 currentTime + dt, step_loop_counter, "Main Loop", &globalMigrationCount_in_loop_cycle); CHKERRQ(ierr);
+-      // migrationCount_main_loop is reset inside PerformSingleParticleMigrationCycle for the *next* call within this loop.
+-
+-      // Step 7: Advance Time
+-      currentTime += dt; // currentTime now represents the time at the *end* of the step just completed.
+-
+-      // ierr = SetEulerianFields(user, step_loop_counter+1, StartStep, currentTime, readFields); CHKERRQ(ierr);
+-
+-      // Step 9: Locate Particles at New Positions (t = currentTime)
+-      // This is for particles now on the current rank after migration, using their P(currentTime) positions.
+-      LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Locating particles at new positions (Rank: %d).\n", currentTime, step_loop_counter, rank);
+-      ierr = LocateAllParticlesInGrid(user); CHKERRQ(ierr);
+-
+-      // Step 10: Interpolate Eulerian Field to New Particle Positions
+-      // Eulerian field Ucat is typically from the beginning of the current step (time effectively currentTime - dt).
+-      // Interpolate this Ucat to P(currentTime) to get V_particle(currentTime) for the *next* advection.
+-      LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Interpolating field (from Ucat at t=%.4f) to new particle positions (Rank: %d).\n", currentTime, step_loop_counter, currentTime-dt, rank);
+-      ierr = InterpolateAllFieldsToSwarm(user); CHKERRQ(ierr);
+-      
+-      // Step 11: Scatter Particle Fields back to Eulerian Grid (if applicable)
+-      ierr = ScatterAllParticleFieldsToEulerFields(user); CHKERRQ(ierr);
+-      LOG_ALLOW(LOCAL, LOG_DEBUG, "[T=%.4f, Step=%d completed] Scattering particle fields to grid (Rank: %d).\n", currentTime, step_loop_counter, rank);
+-
+-      // Step 8: Update global step counter in user context.
+-      // This should reflect the step number *completed*.
+-      user->step = step_loop_counter + 1;
+-      
+-      // Step 12: Output and Error Logging (based on the step *just completed*, using user->step)
+-      if (OutputFreq > 0 && (user->step % OutputFreq == 0) ) {
+-          LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d completed (Output for step %d)] Logging interpolation error.\n", currentTime, step_loop_counter, user->step);
+-
+-	// DEPRECIATED - Testing against sinusoidal (now FieldInitialization = 1 has changed meaning.
+-	//  if(user->FieldInitialization==1) { // If analytic fields are available for comparison
+-        //      ierr = LOG_INTERPOLATION_ERROR(user); CHKERRQ(ierr);
+-        //  }
+-
+-	  
+-          LOG_ALLOW(GLOBAL, LOG_DEBUG, "Printing particle fields at t=%.4f (step %d completed, output for step %d)\n", currentTime, step_loop_counter, user->step);
+-          ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency); CHKERRQ(ierr);
+-
+-          LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d completed] Writing particle data (for step %d).\n", currentTime, step_loop_counter, user->step);
+-          ierr = WriteSwarmField(user, "position", user->step, "dat"); CHKERRQ(ierr); // Write P(t+dt)
+-          ierr = WriteSwarmField(user, "velocity", user->step, "dat"); CHKERRQ(ierr); // Write V_interp @ P(t+dt)
+-          // ierr = WriteSwarmField(user, "pos_phy",  user->step, "dat"); CHKERRQ(ierr);
+-          ierr = WriteSimulationFields(user); CHKERRQ(ierr); // Optional grid field write
+-      }
+-      LOG_ALLOW(GLOBAL, LOG_INFO, "Finished step %d, current time t=%.4f (user->step is now %d)\n", step_loop_counter, currentTime, user->step);
+-    } // End of time marching loop
+-
+-    PetscReal finalTimeRun = StartTime + StepsToRun * dt; // Target final time if all steps ran
+-    LOG_ALLOW(GLOBAL, LOG_INFO, "Time marching completed. %d steps run from StartStep %d. Current time t=%.4f (target final: %.4f).\n", StepsToRun, StartStep, currentTime, finalTimeRun);
+-
+-    // --- Final Particle Field Log (if not already done by OutputFreq and if steps were run) ---
+-    if (StepsToRun > 0 && !(OutputFreq > 0 && (user->step % OutputFreq == 0))) {
+-        // Avoid double logging if the last step was an output step.
+-        // Only log if actual simulation steps were performed.
+-        LOG_ALLOW(GLOBAL, LOG_DEBUG, "Printing final particle fields at end of run (t=%.4f):\n", currentTime);
+-        ierr = LOG_PARTICLE_FIELDS(user, user->LoggingFrequency); CHKERRQ(ierr);
+-    }
+-
+-    // --- Cleanup migration list used in the main loop ---
+-    ierr = PetscFree(migrationList_main_loop); CHKERRQ(ierr);
+-
+-    PetscFunctionReturn(0);
+-}
+diff --git a/src/walkingsearch.c b/src/walkingsearch.c
+index 6480a5f..f14be43 100644
+--- a/src/walkingsearch.c
++++ b/src/walkingsearch.c
+@@ -11,6 +11,7 @@
+ #define DISTANCE_THRESHOLD 1e-14
+ #define REPEAT_COUNT_THRESHOLD 5
+ 
++
+ /**
+  * @brief Estimates a characteristic length of the cell for threshold scaling.
+  *
+@@ -1472,6 +1473,8 @@ PetscErrorCode LocateParticleOrFindMigrationTarget_TEST(UserCtx *user,
+     // --- 1. Initialize the Search ---
+     ierr = InitializeTraversalParameters(user, particle, &idx, &idy, &idz, &traversal_steps); CHKERRQ(ierr);
+ 
++    LOG_ALLOW(LOCAL,LOG_DEBUG," [PID %lld]Traversal Initiated at : i = %d, j = %d, k = %d.\n",(long long)particle->PID,idx,idy,idz); 
++    
+     // --- 2. Main Walking Search Loop ---
+     while (!search_concluded && traversal_steps < MAX_TRAVERSAL) {
+         traversal_steps++;
+@@ -1544,7 +1547,7 @@ PetscErrorCode LocateParticleOrFindMigrationTarget_TEST(UserCtx *user,
+     // --- 3. Finalize and Determine Actionable Status ---
+     if (idx == -1 || (!search_concluded && traversal_steps >= MAX_TRAVERSAL)) {
+         if (idx != -1) {
+-            LOG_ALLOW(LOCAL, LOG_ERROR, "LocateOrMigrate [PID %lld]: Search FAILED, exceeded MAX_TRAVERSAL limit of %d.\n",
++            LOG_ALLOW(LOCAL, LOG_ERROR, "[PID %lld]: Search FAILED, exceeded MAX_TRAVERSAL limit of %d.\n",
+                       (long long)particle->PID, MAX_TRAVERSAL);
+         }
+         *status_out = LOST;
+@@ -1569,6 +1572,8 @@ PetscErrorCode LocateParticleOrFindMigrationTarget_TEST(UserCtx *user,
+         }
+     }
+ 
++     LOG_ALLOW(GLOBAL,LOG_DEBUG,"[PID %lld] Search complete.\n",particle->PID);
++
+     // --- 4. Report the Final Outcome ---
+     ierr = ReportSearchOutcome(particle, *status_out, traversal_steps); CHKERRQ(ierr);
+     

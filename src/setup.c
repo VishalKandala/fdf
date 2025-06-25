@@ -355,22 +355,24 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
     }
 
      // Create an ASCII viewer to write log output to file
-    ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, "simulationlog.txt", logviewer); CHKERRQ(ierr);
+    //   ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, "simulationlog.txt", logviewer); CHKERRQ(ierr);
     
-    ierr = PetscLogIsActive(&logActive); CHKERRQ(ierr);
-    if (logActive) {
-      ierr = PetscLogView(*logviewer); CHKERRQ(ierr);
-    }
+    //  ierr = PetscLogIsActive(&logActive); CHKERRQ(ierr);
+    // if (logActive) {
+    //   ierr = PetscLogView(*logviewer); CHKERRQ(ierr);
+    // }
     
-    ierr = PetscViewerDestroy(logviewer); CHKERRQ(ierr);
+    // ierr = PetscViewerDestroy(logviewer); CHKERRQ(ierr);
 
-    LOG_ALLOW(GLOBAL,LOG_INFO," PETSC Logs written \n");   
+    // LOG_ALLOW(GLOBAL,LOG_INFO," PETSC Logs written \n");   
     
     // Now free bboxlist on all ranks since all allocated their own copy
     if (bboxlist) {
         free(bboxlist);
         bboxlist = NULL;
     }
+
+    LOG_ALLOW(GLOBAL,LOG_DEBUG," bboxlist Destroyed \n");     
     
     // Free user context
     ierr = PetscFree(user); CHKERRQ(ierr);
@@ -966,7 +968,7 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
     ierr = DMDAGetNeighbors(user->da, &neighbor_ranks_ptr); CHKERRQ(ierr);
 
     // Log the raw values from DMDAGetNeighbors for boundary-relevant directions for debugging
-    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "[CASNR - Rank %d] Raw DMDAGetNeighbors: xm_raw=%d, xp_raw=%d, ym_raw=%d, yp_raw=%d, zm_raw=%d, zp_raw=%d. MPI_PROC_NULL is %d.",
+    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "[Rank %d]Raw DMDAGetNeighbors: xm_raw=%d, xp_raw=%d, ym_raw=%d, yp_raw=%d, zm_raw=%d, zp_raw=%d. MPI_PROC_NULL is %d.\n",
                    rank,
                    neighbor_ranks_ptr[12], neighbor_ranks_ptr[14],
                    neighbor_ranks_ptr[10], neighbor_ranks_ptr[16],
@@ -995,7 +997,7 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
 
     temp_neighbor = neighbor_ranks_ptr[12]; // xm
     if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid xm neighbor %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid xm neighbor %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_xm = MPI_PROC_NULL;
     } else {
         user->neighbors.rank_xm = temp_neighbor;
@@ -1003,7 +1005,7 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
 
     temp_neighbor = neighbor_ranks_ptr[14]; // xp
     if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid xp neighbor %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid xp neighbor %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_xp = MPI_PROC_NULL;
     } else {
         user->neighbors.rank_xp = temp_neighbor;
@@ -1011,7 +1013,7 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
 
     temp_neighbor = neighbor_ranks_ptr[10]; // ym
     if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid ym neighbor %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid ym neighbor %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_ym = MPI_PROC_NULL;
     } else {
         user->neighbors.rank_ym = temp_neighbor;
@@ -1020,7 +1022,7 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
     temp_neighbor = neighbor_ranks_ptr[16]; // yp
     if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
         // The log for index 16 was "zm" in your output, should be yp
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid yp neighbor (raw index 16) %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid yp neighbor (raw index 16) %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_yp = MPI_PROC_NULL;
     } else {
         user->neighbors.rank_yp = temp_neighbor;
@@ -1028,7 +1030,7 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
 
     temp_neighbor = neighbor_ranks_ptr[4]; // zm
     if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid zm neighbor %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid zm neighbor %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_zm = MPI_PROC_NULL;
     } else {
         user->neighbors.rank_zm = temp_neighbor;
@@ -1036,13 +1038,13 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
 
     temp_neighbor = neighbor_ranks_ptr[22]; // zp
     if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid zp neighbor %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid zp neighbor %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_zp = MPI_PROC_NULL;
     } else {
         user->neighbors.rank_zp = temp_neighbor;
     }
 
-    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "[CASNR - Rank %d] Stored user->neighbors: xm=%d, xp=%d, ym=%d, yp=%d, zm=%d, zp=%d\n", rank,
+    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "[Rank %d] Stored user->neighbors: xm=%d, xp=%d, ym=%d, yp=%d, zm=%d, zp=%d\n", rank,
               user->neighbors.rank_xm, user->neighbors.rank_xp,
               user->neighbors.rank_ym, user->neighbors.rank_yp,
               user->neighbors.rank_zm, user->neighbors.rank_zp);

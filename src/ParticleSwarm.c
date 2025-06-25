@@ -1217,7 +1217,7 @@ PetscErrorCode PrepareLoadedSwarmForRelocation(UserCtx *user)
       }
 
       // Ensure  all the swarm fields not read from file are initialized.
-      //  ierr = PrepareLoadedSwarmForRelocation(user);
+      ierr = PrepareLoadedSwarmForRelocation(user);
       
       // Ensure all ranks complete before proceeding
       LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, " Particles generated & initialized.\n");
