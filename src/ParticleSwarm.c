@@ -91,6 +91,13 @@ PetscErrorCode RegisterParticleFields(DM swarm)
     // Finalize the field registration after all fields have been added
     ierr = DMSwarmFinalizeFieldRegister(swarm); CHKERRQ(ierr);
     LOG_ALLOW(LOCAL,LOG_INFO,"RegisterParticleFields - Finalized field registration.\n");
+
+    PetscInt nfields;
+    const char **fieldnames;
+    DMSwarmGetFieldRegister(swarm, &nfields, &fieldnames);
+    for (int i = 0; i < nfields; ++i) {
+      LOG_ALLOW(GLOBAL,LOG_DEBUG, "Field %d: %s\n", i, fieldnames[i]);
+    }
     
     PetscFunctionReturn(0);
 }

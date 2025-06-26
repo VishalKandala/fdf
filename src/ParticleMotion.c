@@ -41,9 +41,10 @@ PetscErrorCode UpdateAllParticlePositions(UserCtx *user)
   PetscErrorCode ierr;
   DM swarm = user->swarm;
   PetscInt       nLocal, p;
-  Cmpnts        *pos = NULL;
-  Cmpnts        *vel = NULL;
+  PetscReal        *pos = NULL;
+  PetscReal        *vel = NULL;
   PetscMPIInt rank;
+  Cmpnts temp_pos, temp_vel; 
 
   ierr = MPI_Comm_rank(PETSC_COMM_WORLD,&rank);
 
@@ -63,7 +64,27 @@ PetscErrorCode UpdateAllParticlePositions(UserCtx *user)
 
   // 3) Loop over all local particles, updating each position by velocity * dt
   for (p = 0; p < nLocal; p++) {
-    ierr = UpdateParticlePosition(user, &pos[p], &vel[p]); CHKERRQ(ierr);
+
+    // update temporary position struct
+    temp_pos.x = pos[3*p];
+    temp_pos.y = pos[3*p + 1];
+    temp_pos.z = pos[3*p + 2];
+
+    // update temporary velocity struct
+    temp_vel.x = vel[3*p];
+    temp_vel.y = vel[3*p + 1];
+    temp_vel.z = vel[3*p + 2];    
+    
+    ierr = UpdateParticlePosition(user, &temp_pos, &temp_vel); CHKERRQ(ierr);
+    
+    // update swarm from temporary position struct
+    pos[3*p] = temp_pos.x;
+    pos[3*p + 1] = temp_pos.y;
+    pos[3*p + 2] = temp_pos.z;
+
+    vel[3*p] = temp_vel.x;
+    vel[3*p + 1] = temp_vel.y;
+    vel[3*p + 2] = temp_vel.z;
   }
 
   // 4) Restore the fields
