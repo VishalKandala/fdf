@@ -944,9 +944,15 @@ PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
     }
 
     // Perform MPI_Gather to collect all local bounding boxes on rank 0
-    ierr = MPI_Gather(&localBBox, sizeof(BoundingBox), MPI_BYTE,
-                      bboxArray, sizeof(BoundingBox), MPI_BYTE,
-                      0, PETSC_COMM_WORLD);
+    // Corrected MPI_Gather call
+ierr = MPI_Gather(&localBBox, sizeof(BoundingBox), MPI_BYTE,
+                  (rank == 0) ? bboxArray : NULL,  // Explicitly NULL on non-roots
+                  sizeof(BoundingBox), MPI_BYTE,   // Recv count is ignored on non-roots
+                  0, PETSC_COMM_WORLD); CHKERRMPI(ierr);
+ 
+//   ierr = MPI_Gather(&localBBox, sizeof(BoundingBox), MPI_BYTE,
+// bboxArray, sizeof(BoundingBox), MPI_BYTE,
+//                      0, PETSC_COMM_WORLD);
     if (ierr != MPI_SUCCESS) {
         LOG_ALLOW(LOCAL, LOG_ERROR, "GatherAllBoundingBoxes: Error during MPI_Gather operation.\n");
         if (rank == 0 && bboxArray) free(bboxArray); // Clean up if allocation was done

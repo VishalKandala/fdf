@@ -82,16 +82,24 @@ int main(int argc, char **argv) {
     LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"Domain Decomposition Information setup on rank %d! \n",rank);
 
     ierr = SetupBoundaryConditions(user);
+    // DEBUG ---------
+
+    //user->inletFaceDefined = PETSC_TRUE;
+
+    //user->identifiedInletBCFace = (BCFace)4;
+    
+    // DEBUG --------
 
     LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"Boundary Condition system setup on rank %d! \n",rank);
     
 
-    //if(get_log_level() == LOG_INFO && is_function_allowed(__func__)){
-    //   print_log_level();
+    
+    if(get_log_level() == LOG_INFO && is_function_allowed(__func__)){
+       print_log_level();
        // Compute and print maximum velocity magnitude
-       //   ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
-    //   LOG_ALLOW(GLOBAL,LOG_INFO,"Maximum velocity magnitude:%f \n", umax);
-    //  }
+       ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
+       LOG_ALLOW(GLOBAL,LOG_INFO,"Maximum velocity magnitude:%f \n", umax);
+      }
     
     
     // Initialize particle swarm with bboxlist knowledge on all ranks
@@ -108,8 +116,8 @@ int main(int argc, char **argv) {
       ActualStepsToRun = 0; // This will trigger the setup-only path in AdvanceSimulation
      }
     // Advance the Lagrangian Particle Simulation
-    //  ierr = AdvanceSimulation(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,readFields,bboxlist);
-    //ierr = AdvanceSimulation_TEST(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,bboxlist);
+    //ierr = AdvanceSimulation(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,readFields,bboxlist);
+    ierr = AdvanceSimulation_TEST(user,StartStep,StartTime,ActualStepsToRun,OutputFreq,bboxlist);
     
     // Finalize simulation
     ierr = FinalizeSimulation(user, block_number, bboxlist,allowedFuncs,nAllowed,&logviewer); CHKERRQ(ierr);
