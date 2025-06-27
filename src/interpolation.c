@@ -1015,7 +1015,7 @@ PetscErrorCode InterpolateEulerFieldToSwarm(
 {
   PetscErrorCode ierr;
   DM             fda    = user->fda;      /* DM for cell‐center field data */
-  DM             da     = user->da;       /* DM for grid information (local indices) */
+  //  DM             da     = user->da;       /* DM for grid information (local indices) */
   DM             swarm  = user->swarm;    /* DMSwarm for particles */
   PetscInt       bs;                  /* Block size: 1 (scalar) or 3 (vector) */
   DMDALocalInfo  info;                /* Local grid info */

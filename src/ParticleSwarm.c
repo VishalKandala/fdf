@@ -941,6 +941,131 @@ PetscErrorCode UpdateSwarmFields(PetscInt i, const Particle *particle,
 }
 
 /**
+<<<<<<< HEAD
+=======
+ * @brief Locates all particles within the grid and calculates their interpolation weights.
+ * @ingroup ParticleLocation
+ *
+ * This function iterates through all particles currently local to this MPI rank.
+ * For each particle, it first checks if the particle is within the rank's
+ * pre-calculated bounding box (`user->bbox`). If it is, it calls the
+ * `LocateParticleInGrid` function to perform the walking search.
+ *
+ * `LocateParticleInGrid` is responsible for finding the containing cell `(i,j,k)`
+ * and calculating the corresponding interpolation weights `(w1,w2,w3)`. It updates
+ * the `particle->cell` and `particle->weights` fields directly upon success.
+ * If the search fails (particle not found within MAX_TRAVERSAL, goes out of bounds,
+ * or gets stuck without resolution), `LocateParticleInGrid` sets the particle's
+ * `cell` to `{-1,-1,-1}` and `weights` to `{0.0, 0.0, 0.0}`.
+ *
+ * After attempting location, this function updates the corresponding entries in the
+ * DMSwarm's "DMSwarm_CellID" and "weight" fields using the potentially modified
+ * data from the `particle` struct.
+ *
+ * @param[in] user Pointer to the UserCtx structure containing grid, swarm, and bounding box info.
+ *
+ * @return PetscErrorCode Returns `0` on success, non-zero on failure (e.g., errors accessing DMSwarm fields).
+ *
+ * @note Assumes `user->bbox` is correctly initialized for the local rank.
+ * @note Assumes `InitializeParticle` correctly populates the temporary `particle` struct.
+ * @note Assumes `UpdateSwarmFields` correctly writes data back to the DMSwarm.
+ */
+PetscErrorCode LocateAllParticlesInGrid(UserCtx *user) {
+    PetscErrorCode ierr;
+    PetscMPIInt rank, size;
+    PetscInt localNumParticles;
+    PetscReal *positions = NULL, *weights = NULL; // Pointers to DMSwarm data arrays
+    PetscInt *cellIndices = NULL;
+    PetscInt64 *PIDs = NULL;      // Pointers to DMSwarm data arrays
+    DM swarm = user->swarm;                 // Convenience pointer to the swarm DM
+    Particle particle;                      // Reusable temporary Particle struct for processing
+
+    PetscFunctionBeginUser;
+    LOG_FUNC_TIMER_BEGIN_EVENT(EVENT_walkingsearch, LOCAL);
+
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "LocateAllParticlesInGrid - Start on Rank %d/%d.\n", rank, size);
+
+    // Optional barrier for debugging synchronization
+    // ierr = MPI_Barrier(PETSC_COMM_WORLD); CHKERRQ(ierr);
+
+    // --- Access DMSwarm Data Arrays ---
+    ierr = DMSwarmGetLocalSize(swarm, &localNumParticles); CHKERRQ(ierr);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "LocateAllParticlesInGrid - Number of local particles: %d.\n", localNumParticles);
+
+    // Get direct pointers to the underlying data arrays for efficiency
+    ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr); // Array to write weights back to
+    ierr = DMSwarmGetField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIndices); CHKERRQ(ierr); // Array to write cell indices back to
+    ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&PIDs); CHKERRQ(ierr);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "LocateAllParticlesInGrid - DMSwarm fields accessed successfully.\n");
+
+    // --- Iterate over each local particle ---
+    for (PetscInt i = 0; i < localNumParticles; ++i) {
+        // Load current particle data into the temporary struct
+      ierr = InitializeParticle(i,PIDs, weights, positions, cellIndices, &particle); CHKERRQ(ierr);
+
+      LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG,i, 10, "LocateAllParticlesInGrid - Processing Particle [%d]: PID=%ld.\n", i, particle.PID);
+
+        // --- Coarse Check: Is particle within this rank's bounding box? ---
+        // This is a quick check; particle could still be in a ghost cell managed by this rank.
+        PetscBool particle_detected = IsParticleInsideBoundingBox(&(user->bbox), &particle);
+        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "LocateAllParticlesInGrid - Particle [%d] (PID %ld) inside local bbox: %s.\n",
+                       i, particle.PID, particle_detected ? "YES" : "NO");
+
+        if (particle_detected) {
+            // --- Perform Detailed Location Search ---
+            LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "LocateAllParticlesInGrid - Locating Particle [%d] (PID %ld) in grid...\n", i, particle.PID);
+
+            // Call the walking search. This function will update particle.cell and particle.weights
+            // internally if successful, or set them to -1 / 0 if it fails.
+            ierr = LocateParticleInGrid(user, &particle); CHKERRQ(ierr); // Pass only user and particle struct
+
+            // Log the outcome of the search for this particle
+            if (particle.cell[0] >= 0) {
+                 LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10,
+                                "LocateAllParticlesInGrid - Particle [%d] (PID %ld) located/assigned to cell [%d, %d, %d].\n",
+                                i, particle.PID, particle.cell[0], particle.cell[1], particle.cell[2]);
+            } else {
+                 LOG_LOOP_ALLOW(LOCAL, LOG_WARNING, i, 1, // Log all failures
+                                "LocateAllParticlesInGrid - Particle [%d] (PID %ld) FAILED TO LOCATE (CellID = -1).\n",
+                                i, particle.PID);
+            }
+            // --- Weight calculation is now handled inside LocateParticleInGrid ---
+
+        } else {
+            // Particle was outside the local bounding box - mark as invalid for this rank
+            LOG_LOOP_ALLOW(LOCAL, LOG_WARNING, i, 1,
+                           "LocateAllParticlesInGrid - Particle [%d] (PID %ld) outside local bbox. Marking invalid (CellID = -1).\n",
+                           i, particle.PID);
+            particle.cell[0] = -1;
+            particle.cell[1] = -1;
+            particle.cell[2] = -1;
+        } // end if (particle_detected)
+
+        // --- Update DMSwarm Data ---
+        // Write the potentially modified cell index and weights from the 'particle' struct
+        // back into the main DMSwarm data arrays.
+        ierr = UpdateSwarmFields(i, &particle, weights, cellIndices); CHKERRQ(ierr);
+
+    } // --- End particle loop ---
+
+    // --- Restore DMSwarm Data Arrays ---
+    ierr = DMSwarmRestoreField(swarm, "position", NULL, NULL, (void**)&positions); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "weight", NULL, NULL, (void**)&weights); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "DMSwarm_CellID", NULL, NULL, (void**)&cellIndices); CHKERRQ(ierr);
+    ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid", NULL, NULL, (void**)&PIDs); CHKERRQ(ierr);
+    LOG_ALLOW_SYNC(LOCAL, LOG_INFO, "LocateAllParticlesInGrid - DMSwarm fields restored successfully on Rank %d.\n", rank);
+
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "LocateAllParticlesInGrid - Completed function on Rank %d.\n", rank);
+    LOG_FUNC_TIMER_END_EVENT(EVENT_walkingsearch, LOCAL);
+    PetscFunctionReturn(0);
+}
+
+
+/**
+>>>>>>> main
  * @brief Checks if a particle's location is within a specified bounding box.
  *
  * This function determines whether the given particle's location lies inside the provided bounding box.

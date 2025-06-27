@@ -882,9 +882,32 @@ PetscErrorCode UpdateLocalGhosts(UserCtx* user, const char *fieldName)
                PetscInt j_int = info_check.ys + (info_check.ym > 1 ? 1 : 0); // Global j index
                PetscInt i_int = info_check.xs + (info_check.xm > 1 ? 1 : 0); // Global i index
                 // Ensure indices are within global bounds if domain is very small
-               if (k_int >= info_check.mz-1) k_int = info_check.mz-2; if (k_int < 1) k_int = 1;
-               if (j_int >= info_check.my-1) j_int = info_check.my-2; if (j_int < 1) j_int = 1;
-               if (i_int >= info_check.mx-1) i_int = info_check.mx-2; if (i_int < 1) i_int = 1;
+               //if (k_int >= info_check.mz-1) k_int = info_check.mz-2; if (k_int < 1) k_int = 1;
+               //if (j_int >= info_check.my-1) j_int = info_check.my-2; if (j_int < 1) j_int = 1;
+	       // if (i_int >= info_check.mx-1) i_int = info_check.mx-2; if (i_int < 1) i_int = 1;
+	       // clamp k_int to [1 .. mz-2] 
+	       if (k_int >= info_check.mz - 1) {
+		 k_int = info_check.mz - 2;
+	       }
+	       if (k_int < 1) {
+		 k_int = 1;
+	       }
+
+	       // clamp j_int to [1 .. my-2] 
+	       if (j_int >= info_check.my - 1) {
+		 j_int = info_check.my - 2;
+	       }
+	       if (j_int < 1) {
+		 j_int = 1;
+	       }
+
+	       // clamp i_int to [1 .. mx-2]
+	       if (i_int >= info_check.mx - 1) {
+		 i_int = info_check.mx - 2;
+	       }
+	       if (i_int < 1) {
+		 i_int = 1;
+	       }
 
                // Only attempt read if indices are actually owned (relevant for multi-rank)
                if (k_int >= info_check.zs && k_int < info_check.zs + info_check.zm &&
@@ -1267,7 +1290,7 @@ PetscErrorCode Contra2Cart(UserCtx *user)
                 // estimated by averaging metrics from adjacent faces.
                 PetscReal mat[3][3];
 
-		PetscReal aj_center = laj_arr[k_cell+1][j_cell+1][i_cell+1];
+		//	PetscReal aj_center = laj_arr[k_cell+1][j_cell+1][i_cell+1];
 		
                 mat[0][0] = 0.5 * (lcsi_arr[k_cell][j_cell][i_cell-1].x + lcsi_arr[k_cell][j_cell][i_cell].x); //* aj_center;
                 mat[0][1] = 0.5 * (lcsi_arr[k_cell][j_cell][i_cell-1].y + lcsi_arr[k_cell][j_cell][i_cell].y); //* aj_center;
