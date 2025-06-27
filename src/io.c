@@ -454,7 +454,7 @@ PetscErrorCode WriteFieldData(UserCtx *user, const char *field_name, Vec field_v
     PetscReal vmin, vmax;
     ierr = VecMin(field_vec, NULL, &vmin); CHKERRQ(ierr);
     ierr = VecMax(field_vec, NULL, &vmax); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL,LOG_DEBUG,"% s step %d  min=%.6e  max=%.6e\n",field_name, ti, (double)vmin, (double)vmax);
+    LOG_ALLOW(GLOBAL,LOG_DEBUG,"%s step %d  min=%.6e  max=%.6e\n",field_name, ti, (double)vmin, (double)vmax);
 
     
     // Write data from the vector
@@ -2208,15 +2208,15 @@ PetscErrorCode ParseAllBoundaryConditions(UserCtx *user, const char *bcs_input_f
         if (rank == 0) {
             user->boundary_faces[i] = configs_rank0[i]; // Rank 0 populates its final struct
         }
-        MPI_Bcast(&user->boundary_faces[i].mathematical_type, 1, MPI_INT, 0, PETSC_COMM_WORLD);
-        MPI_Bcast(&user->boundary_faces[i].handler_type, 1, MPI_INT, 0, PETSC_COMM_WORLD);
+        ierr = MPI_Bcast(&user->boundary_faces[i].mathematical_type, 1, MPI_INT, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
+        ierr = MPI_Bcast(&user->boundary_faces[i].handler_type, 1, MPI_INT, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
         
         // --- Serialize and Broadcast the parameter linked list ---
         PetscInt n_params = 0;
         if (rank == 0) { // On rank 0, count the number of parameters to send
             for (BC_Param *p = user->boundary_faces[i].params; p; p = p->next) n_params++;
         }
-        MPI_Bcast(&n_params, 1, MPI_INT, 0, PETSC_COMM_WORLD);
+        ierr = MPI_Bcast(&n_params, 1, MPI_INT, 0, PETSC_COMM_WORLD);CHKERRQ(ierr);
         
         if (rank != 0) { // Non-root ranks need to receive and build the list
             FreeBC_ParamList(user->boundary_faces[i].params); // Ensure list is empty before building
@@ -2235,8 +2235,8 @@ PetscErrorCode ParseAllBoundaryConditions(UserCtx *user, const char *bcs_input_f
                 strncpy(val_buf, p->value, 255);
             }
 
-            MPI_Bcast(key_buf, 256, MPI_CHAR, 0, PETSC_COMM_WORLD);
-            MPI_Bcast(val_buf, 256, MPI_CHAR, 0, PETSC_COMM_WORLD);
+            ierr = MPI_Bcast(key_buf, 256, MPI_CHAR, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
+            ierr = MPI_Bcast(val_buf, 256, MPI_CHAR, 0, PETSC_COMM_WORLD); CHKERRQ(ierr);
 
             if (rank != 0) {
                 // On non-root ranks, deserialize: create a new node and append it

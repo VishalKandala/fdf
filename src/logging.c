@@ -149,11 +149,12 @@ void set_allowed_functions(const char** functionList, int count)
  */
 PetscBool is_function_allowed(const char* functionName)
 {
+    /* no list ⇒ allow all */
+    if (gNumAllowed == 0) {
+        return PETSC_TRUE;
+    }
 
-  if (gNumAllowed == 0)          /* no list ⇒ allow all */
-    return PETSC_TRUE;
-
-    // If no allow-list entries, default to disallow all
+    /* otherwise only the listed functions are allowed */
     for (int i = 0; i < gNumAllowed; ++i) {
         if (strcmp(gAllowedFunctions[i], functionName) == 0) {
             return PETSC_TRUE;

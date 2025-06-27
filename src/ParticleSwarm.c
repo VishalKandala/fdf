@@ -982,17 +982,17 @@ PetscErrorCode LocateAllParticlesInGrid(UserCtx *user) {
         // Load current particle data into the temporary struct
       ierr = InitializeParticle(i,PIDs, weights, positions, cellIndices, &particle); CHKERRQ(ierr);
 
-        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "LocateAllParticlesInGrid - Processing Particle [%d]: PID=%lld.\n", i, particle.PID);
+      LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG,i, 10, "LocateAllParticlesInGrid - Processing Particle [%d]: PID=%ld.\n", i, particle.PID);
 
         // --- Coarse Check: Is particle within this rank's bounding box? ---
         // This is a quick check; particle could still be in a ghost cell managed by this rank.
         PetscBool particle_detected = IsParticleInsideBoundingBox(&(user->bbox), &particle);
-        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "LocateAllParticlesInGrid - Particle [%d] (PID %lld) inside local bbox: %s.\n",
+        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "LocateAllParticlesInGrid - Particle [%d] (PID %ld) inside local bbox: %s.\n",
                        i, particle.PID, particle_detected ? "YES" : "NO");
 
         if (particle_detected) {
             // --- Perform Detailed Location Search ---
-            LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "LocateAllParticlesInGrid - Locating Particle [%d] (PID %lld) in grid...\n", i, particle.PID);
+            LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10, "LocateAllParticlesInGrid - Locating Particle [%d] (PID %ld) in grid...\n", i, particle.PID);
 
             // Call the walking search. This function will update particle.cell and particle.weights
             // internally if successful, or set them to -1 / 0 if it fails.
@@ -1001,11 +1001,11 @@ PetscErrorCode LocateAllParticlesInGrid(UserCtx *user) {
             // Log the outcome of the search for this particle
             if (particle.cell[0] >= 0) {
                  LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, i, 10,
-                                "LocateAllParticlesInGrid - Particle [%d] (PID %lld) located/assigned to cell [%d, %d, %d].\n",
+                                "LocateAllParticlesInGrid - Particle [%d] (PID %ld) located/assigned to cell [%d, %d, %d].\n",
                                 i, particle.PID, particle.cell[0], particle.cell[1], particle.cell[2]);
             } else {
                  LOG_LOOP_ALLOW(LOCAL, LOG_WARNING, i, 1, // Log all failures
-                                "LocateAllParticlesInGrid - Particle [%d] (PID %lld) FAILED TO LOCATE (CellID = -1).\n",
+                                "LocateAllParticlesInGrid - Particle [%d] (PID %ld) FAILED TO LOCATE (CellID = -1).\n",
                                 i, particle.PID);
             }
             // --- Weight calculation is now handled inside LocateParticleInGrid ---
@@ -1013,7 +1013,7 @@ PetscErrorCode LocateAllParticlesInGrid(UserCtx *user) {
         } else {
             // Particle was outside the local bounding box - mark as invalid for this rank
             LOG_LOOP_ALLOW(LOCAL, LOG_WARNING, i, 1,
-                           "LocateAllParticlesInGrid - Particle [%d] (PID %lld) outside local bbox. Marking invalid (CellID = -1).\n",
+                           "LocateAllParticlesInGrid - Particle [%d] (PID %ld) outside local bbox. Marking invalid (CellID = -1).\n",
                            i, particle.PID);
             particle.cell[0] = -1;
             particle.cell[1] = -1;
