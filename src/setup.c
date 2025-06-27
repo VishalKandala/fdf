@@ -355,16 +355,16 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
     }
 
      // Create an ASCII viewer to write log output to file
-    //   ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, "simulationlog.txt", logviewer); CHKERRQ(ierr);
+       ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, "simulationlog.txt", logviewer); CHKERRQ(ierr);
     
-    //  ierr = PetscLogIsActive(&logActive); CHKERRQ(ierr);
-    // if (logActive) {
-    //   ierr = PetscLogView(*logviewer); CHKERRQ(ierr);
-    // }
+      ierr = PetscLogIsActive(&logActive); CHKERRQ(ierr);
+     if (logActive) {
+       ierr = PetscLogView(*logviewer); CHKERRQ(ierr);
+     }
     
-    // ierr = PetscViewerDestroy(logviewer); CHKERRQ(ierr);
+     ierr = PetscViewerDestroy(logviewer); CHKERRQ(ierr);
 
-    // LOG_ALLOW(GLOBAL,LOG_INFO," PETSC Logs written \n");   
+     LOG_ALLOW(GLOBAL,LOG_INFO," PETSC Logs written \n");   
     
     // Now free bboxlist on all ranks since all allocated their own copy
     if (bboxlist) {

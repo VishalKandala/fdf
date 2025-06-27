@@ -490,7 +490,7 @@ LogLevel get_log_level();
  *
  * @see get_log_level()
  */
-void print_log_level();
+PetscErrorCode print_log_level(void);
 
 /**
  * @brief Sets the global list of function names that are allowed to log.

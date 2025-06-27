@@ -1572,7 +1572,7 @@ PetscErrorCode LocateParticleOrFindMigrationTarget_TEST(UserCtx *user,
         }
     }
 
-     LOG_ALLOW(GLOBAL,LOG_DEBUG,"[PID %lld] Search complete.\n",particle->PID);
+     LOG_ALLOW(GLOBAL,LOG_DEBUG,"[PID %ld] Search complete.\n",particle->PID);
 
     // --- 4. Report the Final Outcome ---
     ierr = ReportSearchOutcome(particle, *status_out, traversal_steps); CHKERRQ(ierr);
