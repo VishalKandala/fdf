@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
 
     LOG_ALLOW_SYNC(GLOBAL,LOG_INFO," Grid & Fields Setup on rank %d! \n",rank);
 
-    LOG_ALLOW(GLOBAL,LOG_INFO," Simulation Fields %s \n",readFields ? "read":"generated");    
+    // LOG_ALLOW(GLOBAL,LOG_INFO," Simulation Fields %s \n",readFields ? "read":"generated");    
 
     // Setup the Domain Rank Information.
     ierr = SetupDomainRankInfo(user, &bboxlist);
@@ -90,23 +90,22 @@ int main(int argc, char **argv) {
     
     // DEBUG --------
 
-    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"Boundary Condition system setup on rank %d! \n",rank);
+       LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"Boundary Condition system setup on rank %d! \n",rank);
     
-
+    ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
     
     if(get_log_level() == LOG_INFO && is_function_allowed(__func__)){
        print_log_level();
        // Compute and print maximum velocity magnitude
-       ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
        LOG_ALLOW(GLOBAL,LOG_INFO,"Maximum velocity magnitude:%f \n", umax);
       }
     
     
     // Initialize particle swarm with bboxlist knowledge on all ranks
-    ierr = InitializeParticleSwarm(user, np, bboxlist); CHKERRQ(ierr);
+       ierr = InitializeParticleSwarm(user, np, bboxlist); CHKERRQ(ierr);
 
     // Display Banner for simulation
-    ierr = DisplayBanner(user, StartTime, StartStep, StepsToRun, size, np, bboxlist); CHKERRQ(ierr);
+        ierr = DisplayBanner(user, StartTime, StartStep, StepsToRun, size, np, bboxlist); CHKERRQ(ierr);
 
 
     // Setup Only Condition

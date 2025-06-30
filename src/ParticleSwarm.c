@@ -114,7 +114,7 @@ PetscErrorCode InitializeRandomGenerators(UserCtx* user, PetscRandom *randx, Pet
     MPI_Comm_rank(PETSC_COMM_WORLD, &rank);
 
     // Initialize RNG for x-coordinate
-    ierr = PetscRandomCreate(PETSC_COMM_WORLD, randx); CHKERRQ(ierr);
+    ierr = PetscRandomCreate(PETSC_COMM_SELF, randx); CHKERRQ(ierr);
     ierr = PetscRandomSetType((*randx), PETSCRAND48); CHKERRQ(ierr);
     ierr = PetscRandomSetInterval(*randx, user->bbox.min_coords.x, user->bbox.max_coords.x); CHKERRQ(ierr);
     ierr = PetscRandomSetSeed(*randx, rank + 12345); CHKERRQ(ierr);  // Unique seed per rank
@@ -122,7 +122,7 @@ PetscErrorCode InitializeRandomGenerators(UserCtx* user, PetscRandom *randx, Pet
     LOG_ALLOW_SYNC(LOCAL,LOG_DEBUG, "InitializeRandomGenerators - Initialized RNG for X-axis.\n");
 
     // Initialize RNG for y-coordinate
-    ierr = PetscRandomCreate(PETSC_COMM_WORLD, randy); CHKERRQ(ierr);
+    ierr = PetscRandomCreate(PETSC_COMM_SELF, randy); CHKERRQ(ierr);
     ierr = PetscRandomSetType((*randy), PETSCRAND48); CHKERRQ(ierr);
     ierr = PetscRandomSetInterval(*randy, user->bbox.min_coords.y, user->bbox.max_coords.y); CHKERRQ(ierr);
     ierr = PetscRandomSetSeed(*randy, rank + 67890); CHKERRQ(ierr);  // Unique seed per rank
@@ -130,7 +130,7 @@ PetscErrorCode InitializeRandomGenerators(UserCtx* user, PetscRandom *randx, Pet
     LOG_ALLOW_SYNC(LOCAL,LOG_DEBUG, "InitializeRandomGenerators - Initialized RNG for Y-axis.\n");
 
     // Initialize RNG for z-coordinate
-    ierr = PetscRandomCreate(PETSC_COMM_WORLD, randz); CHKERRQ(ierr);
+    ierr = PetscRandomCreate(PETSC_COMM_SELF, randz); CHKERRQ(ierr);
     ierr = PetscRandomSetType((*randz), PETSCRAND48); CHKERRQ(ierr);
     ierr = PetscRandomSetInterval(*randz, user->bbox.min_coords.z, user->bbox.max_coords.z); CHKERRQ(ierr);
     ierr = PetscRandomSetSeed(*randz, rank + 54321); CHKERRQ(ierr);  // Unique seed per rank
@@ -162,28 +162,28 @@ PetscErrorCode InitializeLogicalSpaceRNGs(PetscRandom *rand_logic_i, PetscRandom
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
 
     // --- RNG for i-logical dimension ---
-    ierr = PetscRandomCreate(PETSC_COMM_WORLD, rand_logic_i); CHKERRQ(ierr);
+    ierr = PetscRandomCreate(PETSC_COMM_SELF, rand_logic_i); CHKERRQ(ierr);
     ierr = PetscRandomSetType((*rand_logic_i), PETSCRAND48); CHKERRQ(ierr);
     ierr = PetscRandomSetInterval(*rand_logic_i, 0.0, 1.0); CHKERRQ(ierr); // Key change: [0,1)
     ierr = PetscRandomSetSeed(*rand_logic_i, rank + 202401); CHKERRQ(ierr); // Unique seed
     ierr = PetscRandomSeed(*rand_logic_i); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC(LOCAL,LOG_DEBUG, "InitializeLogicalSpaceRNGs - Initialized RNG for i-logical dimension [0,1).\n");
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "InitializeLogicalSpaceRNGs - Initialized RNG for i-logical dimension [0,1).\n");
 
     // --- RNG for j-logical dimension ---
-    ierr = PetscRandomCreate(PETSC_COMM_WORLD, rand_logic_j); CHKERRQ(ierr);
+    ierr = PetscRandomCreate(PETSC_COMM_SELF, rand_logic_j); CHKERRQ(ierr);
     ierr = PetscRandomSetType((*rand_logic_j), PETSCRAND48); CHKERRQ(ierr);
     ierr = PetscRandomSetInterval(*rand_logic_j, 0.0, 1.0); CHKERRQ(ierr); // Key change: [0,1)
     ierr = PetscRandomSetSeed(*rand_logic_j, rank + 202402); CHKERRQ(ierr);
     ierr = PetscRandomSeed(*rand_logic_j); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC(LOCAL,LOG_DEBUG, "InitializeLogicalSpaceRNGs - Initialized RNG for j-logical dimension [0,1).\n");
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "InitializeLogicalSpaceRNGs - Initialized RNG for j-logical dimension [0,1).\n");
 
     // --- RNG for k-logical dimension ---
-    ierr = PetscRandomCreate(PETSC_COMM_WORLD, rand_logic_k); CHKERRQ(ierr);
+    ierr = PetscRandomCreate(PETSC_COMM_SELF, rand_logic_k); CHKERRQ(ierr);
     ierr = PetscRandomSetType((*rand_logic_k), PETSCRAND48); CHKERRQ(ierr);
     ierr = PetscRandomSetInterval(*rand_logic_k, 0.0, 1.0); CHKERRQ(ierr); // Key change: [0,1)
     ierr = PetscRandomSetSeed(*rand_logic_k, rank + 202403); CHKERRQ(ierr);
     ierr = PetscRandomSeed(*rand_logic_k); CHKERRQ(ierr);
-    LOG_ALLOW_SYNC(LOCAL,LOG_DEBUG, "InitializeLogicalSpaceRNGs - Initialized RNG for k-logical dimension [0,1).\n");
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "InitializeLogicalSpaceRNGs - Initialized RNG for k-logical dimension [0,1).\n");
 
     PetscFunctionReturn(0);
 }
@@ -833,54 +833,57 @@ PetscErrorCode UnpackSwarmFields(PetscInt i, const PetscInt64 *PIDs, const Petsc
 				 const PetscReal *positions, const PetscInt *cellIndices,
 				 PetscReal *velocities,PetscInt *LocStatus,Particle *particle) {
     PetscFunctionBeginUser;
+    PetscMPIInt rank;
+    PetscErrorCode ierr;
+
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD,&rank); CHKERRQ(ierr);
     
     if (particle == NULL) {
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Output Particle pointer is NULL. \n");
     }
     
     // logging the start of particle initialization
-    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO, "Unpacking Particle [%d] with PID: %ld.\n", i, PIDs[i]);
+    LOG_ALLOW(LOCAL,LOG_INFO, "[Rank %d]Unpacking Particle [%d] with PID: %ld.\n",rank, i, PIDs[i]);
     
     // Initialize PID
     particle->PID = PIDs[i];
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG, "Particle [%d] PID set to: %ld.\n", i, particle->PID);
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "[Rank %d]Particle [%d] PID set to: %ld.\n", rank,i, particle->PID);
     
     // Initialize weights
     particle->weights.x = weights[3 * i];
     particle->weights.y = weights[3 * i + 1];
     particle->weights.z = weights[3 * i + 2];
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "Particle [%d] weights set to: (%.6f, %.6f, %.6f).\n", 
-        i, particle->weights.x, particle->weights.y, particle->weights.z);
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "[Rank %d]Particle [%d] weights set to: (%.6f, %.6f, %.6f).\n", 
+	      rank,i, particle->weights.x, particle->weights.y, particle->weights.z);
     
     // Initialize locations
     particle->loc.x = positions[3 * i];
     particle->loc.y = positions[3 * i + 1];
     particle->loc.z = positions[3 * i + 2];
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG, "Particle [%d] location set to: (%.6f, %.6f, %.6f).\n", 
-        i, particle->loc.x, particle->loc.y, particle->loc.z);
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "[Rank %d]Particle [%d] location set to: (%.6f, %.6f, %.6f).\n", 
+	      rank,i, particle->loc.x, particle->loc.y, particle->loc.z);
     
     // Initialize velocities (assuming default zero; modify if necessary)
     particle->vel.x = velocities[3 * i];
     particle->vel.y = velocities[3 * i + 1];
     particle->vel.z = velocities[3 * i + 2];
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"Particle [%d] velocities unpacked to: [%.6f,%.6f,%.6f].\n", i,particle->vel.x,particle->vel.y,particle->vel.z);
+    LOG_ALLOW(LOCAL,LOG_DEBUG,"[Rank %d]Particle [%d] velocities unpacked to: [%.6f,%.6f,%.6f].\n",rank, i,particle->vel.x,particle->vel.y,particle->vel.z);
     
     // Initialize cell indices
     particle->cell[0] = cellIndices[3 * i];
     particle->cell[1] = cellIndices[3 * i + 1];
     particle->cell[2] = cellIndices[3 * i + 2];
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"Particle [%d] cell indices set to: [%d, %d, %d].\n", 
-        i, particle->cell[0], particle->cell[1], particle->cell[2]);
+    LOG_ALLOW(LOCAL,LOG_DEBUG,"[Rank %d]Particle [%d] cell indices set to: [%d, %d, %d].\n",rank,i, particle->cell[0], particle->cell[1], particle->cell[2]);
 
     particle->location_status = (ParticleLocationStatus)LocStatus[i];
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG, "Particle [%d] Status set to: %d.\n", i, particle->location_status);
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "[Rank %d]Particle [%d] Status set to: %d.\n",rank, i, particle->location_status);
 
     // The destination_rank is only set by the location search, not read from the swarm,
     // so we initialize it to a known invalid state.
     particle->destination_rank = MPI_PROC_NULL;
     
     // logging the completion of particle initialization
-    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"Completed initialization of Particle [%d]. \n", i);
+    LOG_ALLOW(LOCAL,LOG_INFO,"[Rank %d]Completed initialization of Particle [%d]. \n", rank,i);
     
     PetscFunctionReturn(0);
 }
@@ -907,28 +910,28 @@ PetscErrorCode UpdateSwarmFields(PetscInt i, const Particle *particle,
     }
     
     // logging the start of swarm fields update
-    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"Updating DMSwarm fields for Particle [%d].\n", i);
+    LOG_ALLOW(LOCAL,LOG_INFO,"Updating DMSwarm fields for Particle [%d].\n", i);
     
     // Update weights
     weights[3 * i]     = particle->weights.x;
     weights[3 * i + 1] = particle->weights.y;
     weights[3 * i + 2] = particle->weights.z;
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG,"Updated weights for Particle [%d]: (%.6f, %.6f, %.6f).\n", 
+    LOG_ALLOW(LOCAL,LOG_DEBUG,"Updated weights for Particle [%d]: (%.6f, %.6f, %.6f).\n", 
         i, weights[3 * i], weights[3 * i + 1], weights[3 * i + 2]);
     
     // Update cell indices
     cellIndices[3 * i]     = particle->cell[0];
     cellIndices[3 * i + 1] = particle->cell[1];
     cellIndices[3 * i + 2] = particle->cell[2];
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG, "Updated cell indices for Particle [%d]: [%d, %d, %d].\n", 
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "Updated cell indices for Particle [%d]: [%d, %d, %d].\n", 
         i, cellIndices[3 * i], cellIndices[3 * i + 1], cellIndices[3 * i + 2]);
 
     status_field[i] = particle->location_status;
-    LOG_ALLOW_SYNC(GLOBAL,LOG_DEBUG, "Updated location status for Particle [%d]: [%d].\n", 
+    LOG_ALLOW(LOCAL,LOG_DEBUG, "Updated location status for Particle [%d]: [%d].\n", 
         i, status_field[i]);
     
     // logging the completion of swarm fields update
-    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"Completed updating DMSwarm fields for Particle [%d].\n", i);
+    LOG_ALLOW(LOCAL,LOG_INFO,"Completed updating DMSwarm fields for Particle [%d].\n", i);
     
     PetscFunctionReturn(0);
 }
@@ -1016,7 +1019,7 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
     // Validate distances
     for (PetscInt i = LEFT; i < NUM_FACES; i++) {
         if (d[i] <= INTERPOLATION_DISTANCE_TOLERANCE) {
-            LOG_ALLOW_SYNC(GLOBAL, LOG_WARNING,
+            LOG_ALLOW(LOCAL, LOG_WARNING,
                 "UpdateParticleWeights - face distance d[%d] = %f <= %f; "
                 "clamping to 1e-14 to avoid zero/negative.\n",
                 i, (double)d[i], INTERPOLATION_DISTANCE_TOLERANCE);
@@ -1025,7 +1028,7 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
     }
 
     // LOG_ALLOW the input distances
-    LOG_ALLOW_SYNC(LOCAL, LOG_DEBUG,
+    LOG_ALLOW(LOCAL, LOG_DEBUG,
         "UpdateParticleWeights - Calculating weights with distances: "
         "[LEFT=%f, RIGHT=%f, BOTTOM=%f, TOP=%f, FRONT=%f, BACK=%f].\n",
         d[LEFT], d[RIGHT], d[BOTTOM], d[TOP], d[FRONT], d[BACK]);
@@ -1036,7 +1039,7 @@ PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle) {
     particle->weights.z = d[BACK] / (d[FRONT] + d[BACK]);
 
     // LOG_ALLOW the updated weights
-    LOG_ALLOW_SYNC(LOCAL,LOG_DEBUG,
+    LOG_ALLOW(LOCAL,LOG_DEBUG,
         "UpdateParticleWeights - Updated particle weights: x=%f, y=%f, z=%f.\n",
         particle->weights.x, particle->weights.y, particle->weights.z);
 

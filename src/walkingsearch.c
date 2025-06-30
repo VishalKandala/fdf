@@ -575,7 +575,7 @@ PetscErrorCode InitializeTraversalParameters(UserCtx *user, Particle *particle, 
 
     // Validate input pointers
     if (user == NULL || particle == NULL || idx == NULL || idy == NULL || idz == NULL || traversal_steps == NULL) {
-      LOG_ALLOW(GLOBAL,LOG_ERROR, "InitializeTraversalParameters - One or more input pointers are NULL.\n");
+      LOG_ALLOW(LOCAL,LOG_ERROR, "InitializeTraversalParameters - One or more input pointers are NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "InitializeTraversalParameters - One or more input pointers are NULL.");
     }
 
@@ -888,7 +888,7 @@ PetscErrorCode EvaluateParticlePosition(const Cell *cell, PetscReal *d, const Cm
 
     // Catch degenerate-plane error manually:
     if (ierr == PETSC_ERR_USER) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING,
+        LOG_ALLOW(LOCAL, LOG_WARNING,
                   "EvaluateParticlePosition - Skipping cell due to degenerate face.\n");
         // We can set *position = -1 here
         *position = -1; // treat as outside
@@ -1127,7 +1127,7 @@ PetscErrorCode FinalizeTraversal(UserCtx *user, Particle *particle, PetscInt tra
 {
     // Validate input pointers
     if (user == NULL || particle == NULL) {
-      LOG_ALLOW(GLOBAL,LOG_ERROR, "FinalizeTraversal - One or more input pointers are NULL.\n");
+      LOG_ALLOW(LOCAL,LOG_ERROR, "FinalizeTraversal - One or more input pointers are NULL.\n");
         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "FinalizeTraversal - One or more input pointers are NULL.");
     }
 
@@ -1142,7 +1142,7 @@ PetscErrorCode FinalizeTraversal(UserCtx *user, Particle *particle, PetscInt tra
         particle->cell[2] = -1;
     }
 
-    LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "FinalizeTraversal - Completed final traversal sync across all ranks.\n");
+    LOG_ALLOW(LOCAL, LOG_INFO, "FinalizeTraversal - Completed final traversal sync across all ranks.\n");
 
 
     return 0;
@@ -1481,7 +1481,7 @@ PetscErrorCode LocateParticleOrFindMigrationTarget_TEST(UserCtx *user,
 
         // --- 2a. GLOBAL Domain Boundary Check ---
         if (idx < 0 || idx >= user->IM || idy < 0 || idy >= user->JM || idz < 0 || idz >= user->KM) {
-            LOG_ALLOW(LOCAL, LOG_WARNING, "LocateOrMigrate [PID %lld]: Walked outside GLOBAL domain boundaries to invalid cell (%d,%d,%d). Search fails.\n",
+            LOG_ALLOW(LOCAL, LOG_WARNING, "[PID %lld]: Walked outside GLOBAL domain boundaries to invalid cell (%d,%d,%d). Search fails.\n",
                       (long long)particle->PID, idx, idy, idz);
             idx = -1; // Invalidate the result to signal failure
             break;    // Exit the loop immediately
@@ -1572,7 +1572,7 @@ PetscErrorCode LocateParticleOrFindMigrationTarget_TEST(UserCtx *user,
         }
     }
 
-     LOG_ALLOW(GLOBAL,LOG_DEBUG,"[PID %ld] Search complete.\n",particle->PID);
+    LOG_ALLOW(LOCAL,LOG_DEBUG,"[Rank %d][PID %ld] Search complete.\n",rank,particle->PID);
 
     // --- 4. Report the Final Outcome ---
     ierr = ReportSearchOutcome(particle, *status_out, traversal_steps); CHKERRQ(ierr);

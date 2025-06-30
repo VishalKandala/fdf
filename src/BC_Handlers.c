@@ -62,8 +62,8 @@ static PetscErrorCode Apply_WallNoSlip(BoundaryCondition *self, BCContext *ctx)
     // guaranteed to be correct on the local representation after a ghost update.
     DMDALocalInfo  *info = &user->info;
     Cmpnts       ***ucat, ***ucont;
-    ierr = DMDAVecGetArray(user->fda, user->Ucat, &ucat); CHKERRQ(ierr);
-    ierr = DMDAVecGetArray(user->fda, user->Ucont, &ucont); CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(user->fda, user->lUcat, &ucat); CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(user->fda, user->lUcont, &ucont); CHKERRQ(ierr);
 
     // Step 3: Apply the no-slip condition based on which face is being processed.
     // The loop bounds are for the *owned* nodes on this rank (xs to xe, etc.).
@@ -151,8 +151,8 @@ static PetscErrorCode Apply_WallNoSlip(BoundaryCondition *self, BCContext *ctx)
     }
 
     // Step 4: Restore safe access to the PETSc vector arrays.
-    ierr = DMDAVecRestoreArray(user->fda, user->Ucat, &ucat); CHKERRQ(ierr);
-    ierr = DMDAVecRestoreArray(user->fda, user->Ucont, &ucont); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArray(user->fda, user->lUcat, &ucat); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArray(user->fda, user->lUcont, &ucont); CHKERRQ(ierr);
 
     PetscFunctionReturn(0);
 }
@@ -336,8 +336,8 @@ static PetscErrorCode Apply_InletConstantVelocity(BoundaryCondition *self, BCCon
     DMDALocalInfo  *info = &user->info;
     Cmpnts       ***ucat, ***ucont;
     Cmpnts       ***l_csi, ***l_eta, ***l_zet;
-    ierr = DMDAVecGetArray(user->fda, user->Ucat, &ucat); CHKERRQ(ierr);
-    ierr = DMDAVecGetArray(user->fda, user->Ucont, &ucont); CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(user->fda, user->lUcat, &ucat); CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(user->fda, user->lUcont, &ucont); CHKERRQ(ierr);
     ierr = DMDAVecGetArrayRead(user->fda, user->lCsi, &l_csi); CHKERRQ(ierr);
     ierr = DMDAVecGetArrayRead(user->fda, user->lEta, &l_eta); CHKERRQ(ierr);
     ierr = DMDAVecGetArrayRead(user->fda, user->lZet, &l_zet); CHKERRQ(ierr);
@@ -387,8 +387,8 @@ static PetscErrorCode Apply_InletConstantVelocity(BoundaryCondition *self, BCCon
     }
     
     // Step 4: Restore safe access to the PETSc vector arrays.
-    ierr = DMDAVecRestoreArray(user->fda, user->Ucat, &ucat); CHKERRQ(ierr);
-    ierr = DMDAVecRestoreArray(user->fda, user->Ucont, &ucont); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArray(user->fda, user->lUcat, &ucat); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArray(user->fda, user->lUcont, &ucont); CHKERRQ(ierr);
     ierr = DMDAVecRestoreArrayRead(user->fda, user->lCsi, &l_csi); CHKERRQ(ierr);
     ierr = DMDAVecRestoreArrayRead(user->fda, user->lEta, &l_eta); CHKERRQ(ierr);
     ierr = DMDAVecRestoreArrayRead(user->fda, user->lZet, &l_zet); CHKERRQ(ierr);
@@ -465,8 +465,8 @@ static PetscErrorCode Apply_NogradCopyGhost(BoundaryCondition *self,
 
     /* Arrays */
     Cmpnts ***ucat, ***ucont;
-    ierr = DMDAVecGetArray(u->fda, u->Ucat , &ucat ); CHKERRQ(ierr);
-    ierr = DMDAVecGetArray(u->fda, u->Ucont, &ucont); CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(u->fda, u->lUcat , &ucat ); CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(u->fda, u->lUcont, &ucont); CHKERRQ(ierr);
 
     const PetscInt xs = inf->xs, xe = inf->xs + inf->xm;
     const PetscInt ys = inf->ys, ye = inf->ys + inf->ym;
@@ -578,8 +578,8 @@ static PetscErrorCode Apply_NogradCopyGhost(BoundaryCondition *self,
         break;
     }
 
-    ierr = DMDAVecRestoreArray(u->fda, u->Ucat , &ucat ); CHKERRQ(ierr);
-    ierr = DMDAVecRestoreArray(u->fda, u->Ucont, &ucont); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArray(u->fda, u->lUcat , &ucat ); CHKERRQ(ierr);
+    ierr = DMDAVecRestoreArray(u->fda, u->lUcont, &ucont); CHKERRQ(ierr);
     return 0;
 }
 

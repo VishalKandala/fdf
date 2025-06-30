@@ -33,7 +33,7 @@ PetscErrorCode CanRankServiceInletFace(UserCtx *user, const DMDALocalInfo *info,
     *can_service_inlet_out = PETSC_FALSE; // Default to no service
 
     if (!user->inletFaceDefined) {
-        LOG_ALLOW(LOCAL, LOG_DEBUG, "CanRankServiceInletFace - Rank %d: Inlet face not defined in user context. Cannot service.", rank_for_logging);
+        LOG_ALLOW(LOCAL, LOG_DEBUG, "[Rank %d]: Inlet face not defined in user context. Cannot service.\n", rank_for_logging);
         PetscFunctionReturn(0);
     }
 
@@ -84,7 +84,7 @@ PetscErrorCode CanRankServiceInletFace(UserCtx *user, const DMDALocalInfo *info,
                 *can_service_inlet_out = PETSC_TRUE;
             }
             break;
-        case BC_FACE_NEG_Z: // Your example case
+        case BC_FACE_NEG_Z:
             if (info->zs == 0 && num_owned_cells_on_rank_k > 0 &&
                 num_owned_cells_on_rank_i > 0 && num_owned_cells_on_rank_j > 0) {
                 *can_service_inlet_out = PETSC_TRUE;
@@ -98,11 +98,11 @@ PetscErrorCode CanRankServiceInletFace(UserCtx *user, const DMDALocalInfo *info,
             }
             break;
         default:
-             LOG_ALLOW(LOCAL, LOG_WARNING, "CanRankServiceInletFace - Rank %d: Unknown inlet face enum %d.", rank_for_logging, user->identifiedInletBCFace);
+             LOG_ALLOW(LOCAL, LOG_WARNING, "[Rank %d]: Unknown inlet face enum %d.\n", rank_for_logging, user->identifiedInletBCFace);
             break;
     }
 
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "CanRankServiceInletFace - Rank %d: Inlet face enum %d. Owns cells (i,j,k):(%d,%d,%d) starting at cell (%d,%d,%d). Global nodes(I,J,K):(%d,%d,%d). ==> Can service: %s.",
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "[Rank %d] Inlet face enum %d. Owns cells (i,j,k):(%d,%d,%d) starting at cell (%d,%d,%d). Global nodes(I,J,K):(%d,%d,%d). ==> Can service: %s.\n",
         rank_for_logging, user->identifiedInletBCFace,
         num_owned_cells_on_rank_i, num_owned_cells_on_rank_j, num_owned_cells_on_rank_k,
         owned_start_cell_i, owned_start_cell_j, owned_start_cell_k,
@@ -257,7 +257,7 @@ PetscErrorCode GetRandomCellAndLogicOnInletFace(
     PetscInt last_global_cell_idx_j = (JM_nodes_global > 1) ? (JM_nodes_global - 2) : -1;
     PetscInt last_global_cell_idx_k = (KM_nodes_global > 1) ? (KM_nodes_global - 2) : -1;
     
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Inlet face %d. Owned cells(i,j,k):(%d,%d,%d). GlobNodes(I,J,K):(%d,%d,%d). Rank's DA node starts (xs_g,ys_g,zs_g): (%d,%d,%d).",
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Inlet face %d. Owned cells(i,j,k):(%d,%d,%d). GlobNodes(I,J,K):(%d,%d,%d). Rank's DA node starts (xs_g,ys_g,zs_g): (%d,%d,%d).\n",
         rank_for_logging, user->identifiedInletBCFace, num_owned_cells_on_rank_i,num_owned_cells_on_rank_j,num_owned_cells_on_rank_k,
         IM_nodes_global,JM_nodes_global,KM_nodes_global, xs_gnode_rank,ys_gnode_rank,zs_gnode_rank);
 
@@ -365,7 +365,7 @@ PetscErrorCode GetRandomCellAndLogicOnInletFace(
             ierr = PetscRandomGetValueReal(*rand_logic_j_ptr, eta_metric_logic_out); CHKERRQ(ierr);
             break;
         default:
-             SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG, "GetRandomCellAndLogicOnInletFace: Invalid user->identifiedInletBCFace %d", user->identifiedInletBCFace);
+             SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG, "GetRandomCellAndLogicOnInletFace: Invalid user->identifiedInletBCFace %d. \n", user->identifiedInletBCFace);
     }
 
     PetscReal eps = 1.0e-7;
@@ -380,7 +380,7 @@ PetscErrorCode GetRandomCellAndLogicOnInletFace(
         *eta_metric_logic_out = PetscMin(PetscMax(0.0, *eta_metric_logic_out), 1.0 - eps);
     }
     
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Target CellNode(loc lnode idx)=(%d,%d,%d). Logic(xi,et,zt)=(%.2e,%.2f,%.2f)",
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Target CellNode(loc lnode idx)=(%d,%d,%d). Logic(xi,et,zt)=(%.2e,%.2f,%.2f). \n",
         rank_for_logging, *ci_metric_lnode_out, *cj_metric_lnode_out, *ck_metric_lnode_out,
         *xi_metric_logic_out, *eta_metric_logic_out, *zta_metric_logic_out);
 
@@ -505,7 +505,31 @@ PetscErrorCode BoundarySystem_Create(UserCtx *user, const char *bcs_filename)
             LOG_ALLOW(LOCAL, LOG_DEBUG, "Handler for Face %d (%s) has no Initialize() method, skipping.\n", i, face_name);
         }
     }
+    // ====================================================================================
+    // --- NEW: Step 4: Synchronize Vectors After Initialization ---
+    // This is the CRITICAL fix. The Initialize() calls have modified local vector
+    // arrays on some ranks but not others. We must now update the global vector state
+    // and then update all local ghost regions to be consistent.
+    // ====================================================================================
 
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Committing local boundary initializations to global vectors.\n");
+
+    // Commit changes from the local vectors (lUcat, lUcont) to the global vectors (Ucat, Ucont)
+    // NOTE: The Apply functions modified Ucat and Ucont via GetArray, which works on the local
+    // representation. So we commit from the *global* vectors which now have dirty local parts.
+    ierr = DMLocalToGlobalBegin(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
+    ierr = DMLocalToGlobalEnd(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
+    
+    ierr = DMLocalToGlobalBegin(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
+    ierr = DMLocalToGlobalEnd(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
+
+    // Now, update all local vectors (including ghost cells) from the newly consistent global vectors
+    ierr = DMGlobalToLocalBegin(user->fda, user->Ucat, INSERT_VALUES, user->lUcat); CHKERRQ(ierr);
+    ierr = DMGlobalToLocalEnd(user->fda, user->Ucat, INSERT_VALUES, user->lUcat); CHKERRQ(ierr);
+    
+    ierr = DMGlobalToLocalBegin(user->fda, user->Ucont, INSERT_VALUES, user->lUcont); CHKERRQ(ierr);
+    ierr = DMGlobalToLocalEnd(user->fda, user->Ucont, INSERT_VALUES, user->lUcont); CHKERRQ(ierr);
+    
     LOG_ALLOW(GLOBAL, LOG_INFO, "All boundary handlers created and initialized successfully.\n");
     PetscFunctionReturn(0);
 }
@@ -592,17 +616,22 @@ PetscErrorCode BoundarySystem_ExecuteStep(UserCtx *user)
     // This is the crucial new step. It takes the changes made to the local
     // vectors during the Apply phase and inserts them into the global vectors.
 
-    //  LOG_ALLOW(GLOBAL, LOG_DEBUG, "Committing local boundary changes to global vectors.\n");
+      LOG_ALLOW(GLOBAL, LOG_DEBUG, "Committing local boundary changes to global vectors.\n");
 
     // Commit changes from lUcat to Ucat
-    // ierr = DMLocalToGlobalBegin(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
-    // ierr = DMLocalToGlobalEnd(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
+     ierr = DMLocalToGlobalBegin(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
+     ierr = DMLocalToGlobalEnd(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
     
     // Commit changes from lUcont to Ucont
-    // ierr = DMLocalToGlobalBegin(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
-    //ierr = DMLocalToGlobalEnd(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
+     ierr = DMLocalToGlobalBegin(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
+    ierr = DMLocalToGlobalEnd(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
 
-    // LOG_ALLOW(GLOBAL, LOG_INFO, "BoundarySystem: Local changes for Ucat and Ucont committed to global state.\n");
+    ierr = DMGlobalToLocalBegin(user->fda, user->Ucat, INSERT_VALUES, user->lUcat); CHKERRQ(ierr);
+    ierr = DMGlobalToLocalEnd(user->fda, user->Ucat, INSERT_VALUES, user->lUcat); CHKERRQ(ierr);
+    
+    ierr = DMGlobalToLocalBegin(user->fda, user->Ucont, INSERT_VALUES, user->lUcont); CHKERRQ(ierr);
+    ierr = DMGlobalToLocalEnd(user->fda, user->Ucont, INSERT_VALUES, user->lUcont); CHKERRQ(ierr);
+     LOG_ALLOW(GLOBAL, LOG_INFO, "BoundarySystem: Local changes for Ucat and Ucont committed to global state.\n");
     // =========================================================================
     
     PetscFunctionReturn(0);

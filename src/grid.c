@@ -891,6 +891,7 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
  *
  * @return PetscErrorCode Returns `0` on success, non-zero on failure.
  */
+/*
 PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
 {
     PetscErrorCode ierr;
@@ -971,7 +972,7 @@ ierr = MPI_Gather(&localBBox, sizeof(BoundingBox), MPI_BYTE,
     LOG_ALLOW(GLOBAL, LOG_INFO, "Exiting the function successfully.\n");
     return 0;
 }
-
+*/
 /**
  * @brief Broadcasts the bounding box information collected on rank 0 to all other ranks.
  *
@@ -986,6 +987,7 @@ ierr = MPI_Gather(&localBBox, sizeof(BoundingBox), MPI_BYTE,
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on MPI or PETSc-related errors.
  */
+/*
 PetscErrorCode BroadcastAllBoundingBoxes(UserCtx *user, BoundingBox **bboxlist) {
     PetscErrorCode ierr;
     PetscMPIInt rank, size;
@@ -1011,4 +1013,110 @@ PetscErrorCode BroadcastAllBoundingBoxes(UserCtx *user, BoundingBox **bboxlist) 
     LOG_ALLOW(LOCAL, LOG_INFO, "Broadcasted bounding box information from rank 0.\n");    
 
     return 0;
+}
+*/
+
+/**
+ * @brief Gathers local bounding boxes from all MPI processes to rank 0.
+ *
+ * Each rank computes its local bounding box, then all ranks
+ * participate in an MPI_Gather to send their BoundingBox to rank 0.
+ * Rank 0 allocates the result array and returns it via allBBoxes.
+ *
+ * @param[in]  user       Pointer to UserCtx (must be non-NULL).
+ * @param[out] allBBoxes  On rank 0, receives malloc’d array of size `size`.
+ *                        On other ranks, set to NULL.
+ * @return PetscErrorCode
+ */
+PetscErrorCode GatherAllBoundingBoxes(UserCtx *user, BoundingBox **allBBoxes)
+{
+  PetscErrorCode ierr;
+  PetscMPIInt    rank, size;
+  BoundingBox    *bboxArray = NULL;
+  BoundingBox     localBBox;
+
+  /* Validate */
+  if (!user || !allBBoxes) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL,
+                                    "GatherAllBoundingBoxes: NULL pointer");
+
+  ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRMPI(ierr);
+  ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRMPI(ierr);
+
+  /* Compute local bbox */
+  ierr = ComputeLocalBoundingBox(user, &localBBox); CHKERRQ(ierr);
+
+  /* Ensure everyone is synchronized before the gather */
+  MPI_Barrier(PETSC_COMM_WORLD);
+  LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
+    "Rank %d: about to MPI_Gather(localBBox)\n", rank);
+
+  /* Allocate on root */
+  if (rank == 0) {
+    bboxArray = (BoundingBox*)malloc(size * sizeof(BoundingBox));
+    if (!bboxArray) SETERRABORT(PETSC_COMM_WORLD, PETSC_ERR_MEM,
+                                "GatherAllBoundingBoxes: malloc failed");
+  }
+
+  /* Collective: every rank must call */
+  ierr = MPI_Gather(&localBBox, sizeof(BoundingBox), MPI_BYTE,
+                    bboxArray, sizeof(BoundingBox), MPI_BYTE,
+                    0, PETSC_COMM_WORLD);
+  CHKERRMPI(ierr);
+
+  MPI_Barrier(PETSC_COMM_WORLD);
+  LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
+    "Rank %d: completed MPI_Gather(localBBox)\n", rank);
+
+  /* Return result */
+  if (rank == 0) {
+    *allBBoxes = bboxArray;
+  } else {
+    *allBBoxes = NULL;
+  }
+
+  return 0;
+}
+
+/**
+ * @brief Broadcasts the bounding box list from rank 0 to all ranks.
+ *
+ * After GatherAllBoundingBoxes, rank 0 has an array of `size` boxes.
+ * This routine makes sure every rank ends up with its own malloc’d copy.
+ *
+ * @param[in]  user      Pointer to UserCtx (unused here, but kept for signature).
+ * @param[in,out] bboxlist  On entry: rank 0’s array; on exit: every rank’s array.
+ * @return PetscErrorCode
+ */
+PetscErrorCode BroadcastAllBoundingBoxes(UserCtx *user, BoundingBox **bboxlist)
+{
+  PetscErrorCode ierr;
+  PetscMPIInt    rank, size;
+
+  if (!bboxlist) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL,
+                          "BroadcastAllBoundingBoxes: NULL pointer");
+
+  ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRMPI(ierr);
+  ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRMPI(ierr);
+
+  /* Non-root ranks must allocate before the Bcast */
+  if (rank != 0) {
+    *bboxlist = (BoundingBox*)malloc(size * sizeof(BoundingBox));
+    if (!*bboxlist) SETERRABORT(PETSC_COMM_WORLD, PETSC_ERR_MEM,
+                                "BroadcastAllBoundingBoxes: malloc failed");
+  }
+
+  MPI_Barrier(PETSC_COMM_WORLD);
+  LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
+    "Rank %d: about to MPI_Bcast(%d boxes)\n", rank, size);
+
+  /* Collective: every rank must call */
+  ierr = MPI_Bcast(*bboxlist, size * sizeof(BoundingBox), MPI_BYTE,
+                   0, PETSC_COMM_WORLD);
+  CHKERRMPI(ierr);
+
+  MPI_Barrier(PETSC_COMM_WORLD);
+  LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,
+    "Rank %d: completed MPI_Bcast(%d boxes)\n", rank, size);
+
+  return 0;
 }
