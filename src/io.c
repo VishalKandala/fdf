@@ -1,4 +1,4 @@
-/**
+  /**
  * @file io.c
  * @brief Handles input/output operations for velocity, pressure, grid, and other simulation fields.
  *
@@ -286,16 +286,49 @@ PetscErrorCode ReadFieldData(UserCtx *user,
    {
       PetscViewer viewer;
       PetscBool   found;
+      Vec temp_vec;
+      PetscInt expectedSize,loadedSize;
 
       ierr = PetscTestFile(filename,'r',&found);CHKERRQ(ierr);
       if(!found) SETERRQ(comm,PETSC_ERR_FILE_OPEN,
                          "Restart file not found: %s",filename);
 
-      ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF,filename,
-                                   FILE_MODE_READ,&viewer);CHKERRQ(ierr);
-      ierr = VecLoad(field_vec,viewer);CHKERRQ(ierr);
+      ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF,filename,FILE_MODE_READ,&viewer);CHKERRQ(ierr);
+// ---- START MODIFICATION ----
+      // DO NOT load directly into field_vec, as this can resize it, which is
+      // illegal for DMSwarm "view" vectors. Instead, load into a temporary vector.
+      ierr = VecCreate(PETSC_COMM_SELF, &temp_vec); CHKERRQ(ierr);
+      ierr = VecLoad(temp_vec,viewer);CHKERRQ(ierr);
       ierr = PetscViewerDestroy(&viewer);CHKERRQ(ierr);
 
+      // Sanity check: ensure the file size matches the expected vector size.
+      ierr = VecGetSize(field_vec, &expectedSize);CHKERRQ(ierr);
+      ierr = VecGetSize(temp_vec, &loadedSize);CHKERRQ(ierr);
+      if (loadedSize != expectedSize) {
+         SETERRQ(comm,PETSC_ERR_FILE_UNEXPECTED,
+                 "File %s holds %d entries – expected %d for field '%s'",
+                 filename, loadedSize, expectedSize, field_name);
+      }
+
+      // Now, safely copy the data from the temporary vector to the final destination.
+      ierr = VecCopy(temp_vec, field_vec);CHKERRQ(ierr);
+
+      // Clean up the temporary vector.
+      ierr = VecDestroy(&temp_vec);CHKERRQ(ierr);
+
+      // ---- END MODIFICATION ----
+      
+      /* create EMPTY sequential Vec – VecLoad() will size it correctly   */
+      /*
+      ierr = VecCreate(PETSC_COMM_SELF,&seq_vec);CHKERRQ(ierr);
+      ierr = VecSetType(seq_vec,VECSEQ);CHKERRQ(ierr);
+
+      ierr = PetscViewerBinaryOpen(PETSC_COMM_SELF,filename,
+                                   FILE_MODE_READ,&viewer);CHKERRQ(ierr);
+
+      ierr = VecLoad(field_vec,viewer);CHKERRQ(ierr);
+      ierr = PetscViewerDestroy(&viewer);CHKERRQ(ierr);
+      */
       LOG_ALLOW(GLOBAL,LOG_INFO,
                 "ReadFieldData - Loaded <%s> (serial path)\n",filename);
       PetscFunctionReturn(0);
@@ -993,7 +1026,7 @@ PetscErrorCode WriteSwarmField(UserCtx *user, const char *field_name, PetscInt t
   Vec            fieldVec;
   DM     swarm;  
 
-  PetscFunctionBegin; /* PETSc macro indicating start of function */
+  PetscFunctionBeginUser; /* PETSc macro indicating start of function */
 
   /* 
    * 1) Retrieve the PetscSwarm from the user context.
@@ -1228,32 +1261,31 @@ PetscInt ReadDataFileToArray(const char   *filename,
  *
  * @return PetscInt  Returns 0 if successful, non-zero otherwise.
  */
-PetscInt WriteVTKAppendedBlock(FILE *fp, const void *data, PetscInt num_elements, size_t element_size) {
+PetscErrorCode WriteVTKAppendedBlock(FILE *fp, const void *data, PetscInt num_elements, size_t element_size) {
 
     // Log the function call with parameters
-  LOG_ALLOW_SYNC(LOCAL,LOG_INFO,"WriteVTKAppendedBlock - Called with %d elements, each of size %zu bytes.\n",
-                   num_elements, element_size);
+  // LOG_ALLOW_SYNC(LOCAL,LOG_INFO,"WriteVTKAppendedBlock - Called with %d elements, each of size %zu bytes.\n",num_elements, element_size);
 
     // Calculate the block size
     PetscInt block_size = num_elements * (PetscInt)element_size;
-    LOG_ALLOW_SYNC(LOCAL, LOG_DEBUG, "WriteVTKAppendedBlock - Calculated block size: %d bytes.\n", block_size);
+// LOG_ALLOW_SYNC(LOCAL, LOG_DEBUG, "WriteVTKAppendedBlock - Calculated block size: %d bytes.\n", block_size);
 
     // Write the block size as a 4-byte integer
     if (fwrite(&block_size, sizeof(PetscInt), 1, fp) != 1) {
         fprintf(stderr, "[ERROR] Failed to write block size.\n");
-        LOG_ALLOW_SYNC(LOCAL, LOG_ERROR, "WriteVTKAppendedBlock - Error writing block size.\n");
+	//    LOG_ALLOW_SYNC(LOCAL, LOG_ERROR, "WriteVTKAppendedBlock - Error writing block size.\n");
         return 1;
     }
 
     // Write the actual data
     if (fwrite(data, element_size, num_elements, fp) != (size_t)num_elements) {
         fprintf(stderr, "[ERROR] Failed to write data block.\n");
-        LOG_ALLOW_SYNC(LOCAL, LOG_ERROR, "WriteVTKAppendedBlock - Error writing data block.\n");
+	//   LOG_ALLOW_SYNC(LOCAL, LOG_ERROR, "WriteVTKAppendedBlock - Error writing data block.\n");
         return 1;
     }
 
     // Log success
-    LOG_ALLOW_SYNC(LOCAL, LOG_INFO, "WriteVTKAppendedBlock - Successfully wrote block of %d bytes.\n", block_size);
+// LOG_ALLOW_SYNC(LOCAL, LOG_INFO, "WriteVTKAppendedBlock - Successfully wrote block of %d bytes.\n", block_size);
 
     return 0; // Success
 }
@@ -1789,6 +1821,8 @@ PetscErrorCode VecToArrayOnRank0(Vec inVec, PetscInt *N, double **arrayOut)
     PetscInt          globalSize, localSize;
     const PetscScalar *localArr = NULL;
 
+    PetscFunctionBeginUser;
+    
     // Log entry into the function
     LOG_ALLOW(GLOBAL, LOG_DEBUG, "VecToArrayOnRank0 - Start gathering vector onto rank 0.\n");
 
@@ -1943,7 +1977,7 @@ PetscErrorCode ReadAllSwarmFields(UserCtx *user, PetscInt ti)
   PetscInt nGlobal;
   PetscBool fileExists;
 
-  PetscFunctionBegin;
+  PetscFunctionBeginUser;
   ierr = DMSwarmGetSize(user->swarm, &nGlobal); CHKERRQ(ierr); // Get final size
   LOG_ALLOW(GLOBAL, LOG_INFO, "ReadAllSwarmFields - Reading DMSwarm fields for timestep %d (expected size %d).\n", ti, nGlobal);
 

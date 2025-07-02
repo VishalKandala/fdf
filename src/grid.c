@@ -3,7 +3,7 @@
 
 #include "grid.h"
 
-#define BBOX_TOLERANCE 1e-9
+#define BBOX_TOLERANCE 1e-6
 
 //extern PetscInt block_number;
 

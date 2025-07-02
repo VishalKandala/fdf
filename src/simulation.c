@@ -224,6 +224,7 @@ PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartSte
             LOG_ALLOW(GLOBAL, LOG_DEBUG, "TIME ADVANCE: Updating INTERIOR fields for step %d.\n", step);
             // This is the hook for the actual fluid dynamics solver.
             // ierr = YourNavierStokesSolver(user, user->dt); CHKERRQ(ierr);
+	    // ierr = SetInitialInteriorField(user, "Ucont"); CHKERRQ(ierr);
         }
 
         // The following logic is common to both fresh starts and time advancement,

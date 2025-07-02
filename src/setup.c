@@ -338,15 +338,18 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
 	LOG_ALLOW(GLOBAL,LOG_DEBUG," Zet Destroyed \n");
 	ierr = VecDestroy(&(user[bi].Aj)); CHKERRQ(ierr);
         ierr = VecDestroy(&(user[bi].lAj)); CHKERRQ(ierr);
-	LOG_ALLOW(GLOBAL,LOG_DEBUG," Ucont Destroyed \n");
+	LOG_ALLOW(GLOBAL,LOG_DEBUG," Aj Destroyed \n");
 	
 	//  ierr = DMDestroy(&(user[bi].fda)); CHKERRQ(ierr);
 	//	LOG_ALLOW(GLOBAL,LOG_DEBUG," fda Destroyed \n");
 
-	LOG_ALLOW(GLOBAL, LOG_INFO, "Finalizing simulation, destroying boundary system.\n");
 	ierr = BoundarySystem_Destroy(&user[bi]); CHKERRQ(ierr);
 
+	LOG_ALLOW(GLOBAL, LOG_INFO, "Boundary system destroyed.\n");
+	
+	if(user[bi].RankCellInfoMap){
 	ierr = PetscFree(user[bi].RankCellInfoMap); CHKERRQ(ierr);
+	}
 	
         ierr = DMDestroy(&(user[bi].da)); CHKERRQ(ierr);
 	LOG_ALLOW(GLOBAL,LOG_DEBUG," da Destroyed \n");

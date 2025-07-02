@@ -512,24 +512,27 @@ PetscErrorCode BoundarySystem_Create(UserCtx *user, const char *bcs_filename)
     // and then update all local ghost regions to be consistent.
     // ====================================================================================
 
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Committing local boundary initializations to global vectors.\n");
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Committing global boundary initializations to local vectors.\n");
 
-    // Commit changes from the local vectors (lUcat, lUcont) to the global vectors (Ucat, Ucont)
-    // NOTE: The Apply functions modified Ucat and Ucont via GetArray, which works on the local
-    // representation. So we commit from the *global* vectors which now have dirty local parts.
+    // Commit changes from the global vectors (Ucat, Ucont) to the local vectors (lUcat, lUcont)
+    // NOTE: The Apply functions modified Ucat and Ucont via GetArray, which works on the global
+    // representation.
+    ierr = DMGlobalToLocalBegin(user->fda, user->Ucat, INSERT_VALUES, user->lUcat); CHKERRQ(ierr);
+    ierr = DMGlobalToLocalEnd(user->fda, user->Ucat, INSERT_VALUES, user->lUcat); CHKERRQ(ierr);
+    
+    ierr = DMGlobalToLocalBegin(user->fda, user->Ucont, INSERT_VALUES, user->lUcont); CHKERRQ(ierr);
+    ierr = DMGlobalToLocalEnd(user->fda, user->Ucont, INSERT_VALUES, user->lUcont); CHKERRQ(ierr);
+
+     // Now, update all local vectors (including ghost cells) from the newly consistent global vectors
+
     ierr = DMLocalToGlobalBegin(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
     ierr = DMLocalToGlobalEnd(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
     
     ierr = DMLocalToGlobalBegin(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
     ierr = DMLocalToGlobalEnd(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
 
-    // Now, update all local vectors (including ghost cells) from the newly consistent global vectors
-    ierr = DMGlobalToLocalBegin(user->fda, user->Ucat, INSERT_VALUES, user->lUcat); CHKERRQ(ierr);
-    ierr = DMGlobalToLocalEnd(user->fda, user->Ucat, INSERT_VALUES, user->lUcat); CHKERRQ(ierr);
-    
-    ierr = DMGlobalToLocalBegin(user->fda, user->Ucont, INSERT_VALUES, user->lUcont); CHKERRQ(ierr);
-    ierr = DMGlobalToLocalEnd(user->fda, user->Ucont, INSERT_VALUES, user->lUcont); CHKERRQ(ierr);
-    
+
+
     LOG_ALLOW(GLOBAL, LOG_INFO, "All boundary handlers created and initialized successfully.\n");
     PetscFunctionReturn(0);
 }
@@ -611,27 +614,26 @@ PetscErrorCode BoundarySystem_ExecuteStep(UserCtx *user)
     LOG_ALLOW(LOCAL, LOG_DEBUG, "Apply phase complete. \n");
 
     // =========================================================================
-    // --- NEW PHASE 4: COMMIT LOCAL CHANGES TO GLOBAL VECTORS ---
+    // ---PHASE 4: COMMIT GLOBAL CHANGES TO LOCAL VECTORS ---
     // =========================================================================
-    // This is the crucial new step. It takes the changes made to the local
-    // vectors during the Apply phase and inserts them into the global vectors.
 
-      LOG_ALLOW(GLOBAL, LOG_DEBUG, "Committing local boundary changes to global vectors.\n");
-
-    // Commit changes from lUcat to Ucat
-     ierr = DMLocalToGlobalBegin(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
-     ierr = DMLocalToGlobalEnd(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
-    
-    // Commit changes from lUcont to Ucont
-     ierr = DMLocalToGlobalBegin(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
-    ierr = DMLocalToGlobalEnd(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
+      LOG_ALLOW(GLOBAL, LOG_DEBUG, "Committing global boundary changes to local vectors.\n");
 
     ierr = DMGlobalToLocalBegin(user->fda, user->Ucat, INSERT_VALUES, user->lUcat); CHKERRQ(ierr);
     ierr = DMGlobalToLocalEnd(user->fda, user->Ucat, INSERT_VALUES, user->lUcat); CHKERRQ(ierr);
     
     ierr = DMGlobalToLocalBegin(user->fda, user->Ucont, INSERT_VALUES, user->lUcont); CHKERRQ(ierr);
     ierr = DMGlobalToLocalEnd(user->fda, user->Ucont, INSERT_VALUES, user->lUcont); CHKERRQ(ierr);
-     LOG_ALLOW(GLOBAL, LOG_INFO, "BoundarySystem: Local changes for Ucat and Ucont committed to global state.\n");
+          
+    // Commit changes from lUcat to Ucat
+     ierr = DMLocalToGlobalBegin(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
+     ierr = DMLocalToGlobalEnd(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
+    
+    // Commit changes from lUcont to Ucont
+     ierr = DMLocalToGlobalBegin(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
+     ierr = DMLocalToGlobalEnd(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
+
+     LOG_ALLOW(GLOBAL, LOG_INFO, "changes for Ucat and Ucont committed to global and local states.\n");
     // =========================================================================
     
     PetscFunctionReturn(0);
@@ -660,7 +662,9 @@ PetscErrorCode BoundarySystem_Destroy(UserCtx *user)
     PetscErrorCode ierr;
     PetscFunctionBeginUser;
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "BoundarySystem: Starting destruction of all boundary handlers. \n");
+    
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Starting destruction of all boundary handlers. \n");
 
     for (int i = 0; i < 6; i++) {
         BoundaryFaceConfig *face_cfg = &user->boundary_faces[i];
