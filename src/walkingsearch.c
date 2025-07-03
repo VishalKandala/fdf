@@ -8,7 +8,7 @@
 
 // Define maximum traversal steps to prevent infinite loops
 #define MAX_TRAVERSAL 1000
-#define DISTANCE_THRESHOLD 1e-14
+#define DISTANCE_THRESHOLD 1e-6
 #define REPEAT_COUNT_THRESHOLD 5
 
 
@@ -1473,6 +1473,8 @@ PetscErrorCode LocateParticleOrFindMigrationTarget_TEST(UserCtx *user,
     // --- 1. Initialize the Search ---
     ierr = InitializeTraversalParameters(user, particle, &idx, &idy, &idz, &traversal_steps); CHKERRQ(ierr);
 
+    LOG_ALLOW(LOCAL,LOG_INFO, " The Threshold for considering a particle to be at a face is %.9f.\n",DISTANCE_THRESHOLD);
+    
     LOG_ALLOW(LOCAL,LOG_DEBUG," [PID %lld]Traversal Initiated at : i = %d, j = %d, k = %d.\n",(long long)particle->PID,idx,idy,idz); 
     
     // --- 2. Main Walking Search Loop ---
