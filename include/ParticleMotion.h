@@ -64,6 +64,31 @@ PetscErrorCode CheckAndRemoveOutOfBoundsParticles(UserCtx *user,
 					      const BoundingBox *bboxlist);
 
 /**
+ * @brief Removes particles that have been definitively flagged as LOST by the location algorithm.
+ *
+ * This function is the designated cleanup utility. It should be called after the
+ * `LocateAllParticlesInGrid` orchestrator has run and every particle's status
+ * has been definitively determined.
+ *
+ * It iterates through all locally owned particles and checks their `DMSwarm_location_status`
+ * field. If a particle's status is `LOST`, it is permanently removed from the simulation
+ * using `DMSwarmRemovePointAtIndex`.
+ *
+ * This approach centralizes the removal logic, making the `DMSwarm_location_status`
+ * the single source of truth for a particle's validity, which is more robust than
+ * relying on secondary geometric checks (like bounding boxes).
+ *
+ * @param[in,out]  user              Pointer to the UserCtx structure containing the swarm.
+ * @param[out]     removedCountLocal Pointer to store the number of particles removed on this rank.
+ * @param[out]     removedCountGlobal Pointer to store the total number of particles removed across all ranks.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ */
+PetscErrorCode CheckAndRemoveLostParticles(UserCtx *user,
+                                           PetscInt *removedCountLocal,
+                                           PetscInt *removedCountGlobal);
+
+/**
  * @brief Defines the basic migration pattern for particles within the swarm.
  *
  * This function establishes the migration pattern that dictates how particles

@@ -754,7 +754,7 @@ const char* BCHandlerTypeToString(BCHandlerType handler_type) {
         // Inlet Handlers
         case BC_HANDLER_INLET_CONSTANT_VELOCITY: return "constant_velocity";
         case BC_HANDLER_INLET_PULSANTILE_FLUX:   return "pulsatile_flux";
-        case BC_HANDLER_INLET_DEVELOPED_PROFILE: return "developed_profile";
+        case BC_HANDLER_INLET_PARABOLIC: return "parabolic";
 
         // Outlet Handlers
         case BC_HANDLER_OUTLET_CONSERVATION:     return "conservation";

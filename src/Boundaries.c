@@ -437,6 +437,10 @@ static PetscErrorCode BoundaryCondition_Create(BCHandlerType handler_type, Bound
 	    ierr = Create_InletConstantVelocity(bc); CHKERRQ(ierr);
             break;
 
+    case BC_HANDLER_INLET_PARABOLIC:
+            LOG_ALLOW(LOCAL, LOG_DEBUG, "Dispatching to Create_InletParabolicProfile().\n");
+	    ierr = Create_InletParabolicProfile(bc); CHKERRQ(ierr);
+            break;
         /* Add cases for other handlers here in future phases */
         
         default:
@@ -511,7 +515,7 @@ PetscErrorCode BoundarySystem_Create(UserCtx *user, const char *bcs_filename)
     // arrays on some ranks but not others. We must now update the global vector state
     // and then update all local ghost regions to be consistent.
     // ====================================================================================
-
+     
     LOG_ALLOW(GLOBAL, LOG_DEBUG, "Committing global boundary initializations to local vectors.\n");
 
     // Commit changes from the global vectors (Ucat, Ucont) to the local vectors (lUcat, lUcont)
@@ -522,7 +526,7 @@ PetscErrorCode BoundarySystem_Create(UserCtx *user, const char *bcs_filename)
     
     ierr = DMGlobalToLocalBegin(user->fda, user->Ucont, INSERT_VALUES, user->lUcont); CHKERRQ(ierr);
     ierr = DMGlobalToLocalEnd(user->fda, user->Ucont, INSERT_VALUES, user->lUcont); CHKERRQ(ierr);
-
+    /*
      // Now, update all local vectors (including ghost cells) from the newly consistent global vectors
 
     ierr = DMLocalToGlobalBegin(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
@@ -530,8 +534,8 @@ PetscErrorCode BoundarySystem_Create(UserCtx *user, const char *bcs_filename)
     
     ierr = DMLocalToGlobalBegin(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
     ierr = DMLocalToGlobalEnd(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
-
-
+    */
+    
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "All boundary handlers created and initialized successfully.\n");
     PetscFunctionReturn(0);
@@ -617,14 +621,16 @@ PetscErrorCode BoundarySystem_ExecuteStep(UserCtx *user)
     // ---PHASE 4: COMMIT GLOBAL CHANGES TO LOCAL VECTORS ---
     // =========================================================================
 
-      LOG_ALLOW(GLOBAL, LOG_DEBUG, "Committing global boundary changes to local vectors.\n");
-
+    
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Committing global boundary changes to local vectors.\n");
+      
     ierr = DMGlobalToLocalBegin(user->fda, user->Ucat, INSERT_VALUES, user->lUcat); CHKERRQ(ierr);
     ierr = DMGlobalToLocalEnd(user->fda, user->Ucat, INSERT_VALUES, user->lUcat); CHKERRQ(ierr);
     
     ierr = DMGlobalToLocalBegin(user->fda, user->Ucont, INSERT_VALUES, user->lUcont); CHKERRQ(ierr);
     ierr = DMGlobalToLocalEnd(user->fda, user->Ucont, INSERT_VALUES, user->lUcont); CHKERRQ(ierr);
-          
+
+    /*     
     // Commit changes from lUcat to Ucat
      ierr = DMLocalToGlobalBegin(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
      ierr = DMLocalToGlobalEnd(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
@@ -635,7 +641,7 @@ PetscErrorCode BoundarySystem_ExecuteStep(UserCtx *user)
 
      LOG_ALLOW(GLOBAL, LOG_INFO, "changes for Ucat and Ucont committed to global and local states.\n");
     // =========================================================================
-    
+    */
     PetscFunctionReturn(0);
 }
 

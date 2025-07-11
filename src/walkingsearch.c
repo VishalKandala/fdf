@@ -8,7 +8,7 @@
 
 // Define maximum traversal steps to prevent infinite loops
 #define MAX_TRAVERSAL 1000
-#define DISTANCE_THRESHOLD 1e-6
+#define DISTANCE_THRESHOLD 1e-9
 #define REPEAT_COUNT_THRESHOLD 5
 
 
@@ -621,79 +621,6 @@ PetscErrorCode InitializeTraversalParameters(UserCtx *user, Particle *particle, 
 }
 
 /**
- * @brief Checks if the current CELL indices are within the LOCAL GHOSTED grid boundaries.
- *
- * This function determines if the provided global cell indices fall within the
- * range accessible by the current process, including its ghost cell layers.
- *
- * @param[in]  user       Pointer to the user-defined context containing grid information (needs fda for node info).
- * @param[in]  idx        The global i-index of the current cell.
- * @param[in]  idy        The global j-index of the current cell.
- * @param[in]  idz        The global k-index of the current cell.
- * @param[out] is_within  Pointer to a PetscBool that will be set to PETSC_TRUE if within ghosted bounds, else PETSC_FALSE.
- *
- * @return PetscErrorCode  Returns 0 on success, non-zero on failure.
- */
-/*
-PetscErrorCode CheckCellWithinLocalGrid(UserCtx *user, PetscInt idx, PetscInt idy, PetscInt idz, PetscBool *is_within)
-{
-    PetscErrorCode ierr;
-    DMDALocalInfo info_nodes;
-    PetscInt stencil_width;
-
-    // Validate inputs
-    if (user == NULL || is_within == NULL) {
-      LOG_ALLOW(LOCAL,LOG_ERROR, "Input pointer is NULL.\n");
-      SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Input pointer is NULL.");
-    }
-
-    // Get node info from fda (to derive cell info)
-    ierr = DMDAGetLocalInfo(user->fda, &info_nodes); CHKERRQ(ierr);
-    // Get stencil width used for fda (and implicitly for da's ghosts)
-    ierr = DMDAGetInfo(user->fda, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, &stencil_width, NULL, NULL, NULL, NULL); CHKERRQ(ierr);
-
-
-    // Get owned cell ranges using the helper
-    PetscInt xs_cell, xm_cell, xe_cell;
-    PetscInt ys_cell, ym_cell, ye_cell;
-    PetscInt zs_cell, zm_cell, ze_cell;
-    ierr = GetOwnedCellRange(&info_nodes, 0, &xs_cell, &xm_cell); CHKERRQ(ierr);
-    ierr = GetOwnedCellRange(&info_nodes, 1, &ys_cell, &ym_cell); CHKERRQ(ierr);
-    ierr = GetOwnedCellRange(&info_nodes, 2, &zs_cell, &zm_cell); CHKERRQ(ierr);
-    xe_cell = xs_cell + xm_cell; // Exclusive end of owned cells
-    ye_cell = ys_cell + ym_cell;
-    ze_cell = zs_cell + zm_cell;
-
-    // Define ghosted cell ranges (inclusive start, exclusive end)
-    PetscInt gxs_cell = xs_cell - stencil_width;
-    PetscInt gxe_cell = xe_cell + stencil_width;
-    PetscInt gys_cell = ys_cell - stencil_width;
-    PetscInt gye_cell = ye_cell + stencil_width;
-    PetscInt gzs_cell = zs_cell - stencil_width;
-    PetscInt gze_cell = ze_cell + stencil_width;
-
-    // Check if cell index (idx, idy, idz) is within the ghosted range
-    // Ensure we also check against physical domain bounds (0 to IM-1 etc.)
-    // Although typically ghost indices outside might be valid temporarily before migration.
-    // Let's keep the check relative to the ghosted region accessible by this process.
-    if (idx >= gxs_cell && idx < gxe_cell &&
-        idy >= gys_cell && idy < gye_cell &&
-        idz >= gzs_cell && idz < gze_cell) {
-        *is_within = PETSC_TRUE; // It's within the area this proc can access (owned + ghost)
-    }
-    else {
-        *is_within = PETSC_FALSE; // It's outside the accessible ghosted region
-    }
-
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "Cell (%d, %d, %d) is %s the ghosted local grid (x:%d..%d, y:%d..%d, z:%d..%d).\n",
-        idx, idy, idz, (*is_within) ? "within" : "outside",
-        gxs_cell, gxe_cell, gys_cell, gye_cell, gzs_cell, gze_cell);
-
-    return 0;
-}
-*/
-
-/**
  * @brief Checks if the current GLOBAL CELL indices are within the LOCAL GHOSTED grid boundaries
  *        accessible by this MPI process.
  *
@@ -801,6 +728,8 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
     ierr = DMGetCoordinatesLocal(user->da, &Coor); CHKERRQ(ierr);
     ierr = DMDAVecGetArrayRead(user->fda, Coor, &coor_array); CHKERRQ(ierr);
 
+    LOG_ALLOW(LOCAL,LOG_DEBUG," Getting vertex coordinates for cell: %d,%d,%d.\n",idx,idy,idz);
+    
     // Get the current cell's vertices
     ierr = GetCellVerticesFromGrid(coor_array, idx, idy, idz, cell); CHKERRQ(ierr);
 
@@ -933,101 +862,6 @@ PetscErrorCode EvaluateParticlePosition(const Cell *cell, PetscReal *d, const Cm
  *
  * @return PetscErrorCode Returns 0 on success, non-zero on failure.
  */
-PetscErrorCode UpdateCellIndicesBasedOnDistances( PetscReal d[NUM_FACES], PetscInt *idx, PetscInt *idy, PetscInt *idz, DMDALocalInfo *info)
-{
-    PetscInt cxm,cxs;  // maximum & minimum cell ID in x
-    PetscInt cym,cys;  // maximum & minimum cell ID in y
-    PetscInt czm,czs;  // maximum & minimum cell ID in z
-
-    cxs = info->xs; cxm = cxs + info->xm - 2;
-    cys = info->ys; cym = cys + info->ym - 2;
-    czs = info->zs; czm = czs + info->zm - 2; 
-
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Received d: "
-	      "d[LEFT=%d]=%.3e, d[RIGHT=%d]=%.3e, d[BOTTOM=%d]=%.3e, "
-	      "d[TOP=%d]=%.3e, d[FRONT=%d]=%.3e, d[BACK=%d]=%.3e\n",
-	      LEFT, d[LEFT], RIGHT, d[RIGHT], BOTTOM, d[BOTTOM],
-	      TOP, d[TOP], FRONT, d[FRONT], BACK, d[BACK]);
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Raw d: "
-	      "[%.3e, %.3e, %.3e, %.3e, %.3e, %.3e]\n",
-	      d[0], d[1], d[2], d[3], d[4], d[5]);
-    
-    // Validate input pointers
-    if (d == NULL) {
-      LOG_ALLOW(LOCAL,LOG_ERROR, "UpdateCellIndicesBasedOnDistances - 'd' is NULL.\n");
-        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UpdateCellIndicesBasedOnDistances - Input array 'd' is NULL.");
-    }
-    if (idx == NULL || idy == NULL || idz == NULL) {
-      LOG_ALLOW(LOCAL,LOG_ERROR, "UpdateCellIndicesBasedOnDistances - One or more index pointers are NULL.\n");
-        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UpdateCellIndicesBasedOnDistances - One or more index pointers are NULL.");
-    }
-
-    // Debug: Print current face distances
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Current Face Distances:\n");
-    if(get_log_level() == LOG_DEBUG && is_function_allowed(__func__)) LOG_FACE_DISTANCES(d);
-
-    // Update k-direction based on FRONT and BACK distances
-    if (d[FRONT] < 0.0) {
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[FRONT] < 0.0, incrementing idz.\n");
-        (*idz) += 1;
-    }
-    else if(d[BACK] < 0.0){
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[BACK] < 0.0, decrementing idz.\n");
-        (*idz) -= 1;
-    }
-
-    // Update i-direction based on LEFT and RIGHT distances
-    if (d[LEFT] < 0.0) {
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[LEFT] < 0.0, decrementing idx.\n");
-        (*idx) -= 1;
-    }
-    else if (d[RIGHT] < 0.0) {
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[RIGHT] < 0.0, incrementing idx.\n");
-        (*idx) += 1;
-    }
-
-    // Update j-direction based on BOTTOM and TOP distances
-    if (d[BOTTOM] < 0.0) {
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[BOTTOM] < 0.0, decrementing idy.\n");
-        (*idy) -= 1;
-    }
-    else if (d[TOP] < 0.0) {
-      LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Condition met: d[TOP] < 0.0, incrementing idy.\n");
-        (*idy) += 1;
-    }
-
-    // The 'cell' corners you can reference go from [xs .. xs+xm-1], but
-    // to form a valid cell in x, you need (idx+1) in range, so max is (xs+xm-2).
-    *idx = PetscMax(cxs,               PetscMin(*idx, cxm));
-    *idy = PetscMax(cys,               PetscMin(*idy, cym));
-    *idz = PetscMax(czs,               PetscMin(*idz, czm));
-
-    LOG_ALLOW(LOCAL,LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Updated Indices after clamping (inside domain bounds)  - idx, idy, idz: %d, %d, %d\n", *idx, *idy, *idz);
-
-    return 0; // Indicate successful execution
-}
-
-/**
- * @brief Updates the cell indices based on the signed distances to each face.
- *
- * This function modifies the cell indices (`idx`, `idy`, `idz`) to move towards the direction
- * where the particle is likely to be located, based on positive distances indicating
- * that the particle is outside in that particular direction.
- *
- * @param[in]  d    An array of six `PetscReal` values representing the signed distances to each face:
- *                  - d[LEFT]: Left Face
- *                  - d[RIGHT]: Right Face
- *                  - d[BOTTOM]: Bottom Face
- *                  - d[TOP]: Top Face
- *                  - d[FRONT]: Front Face
- *                  - d[BACK]: Back Face
- * @param[out] idx  Pointer to the i-index of the cell to be updated.
- * @param[out] idy  Pointer to the j-index of the cell to be updated.
- * @param[out] idz  Pointer to the k-index of the cell to be updated.
- * @param[in]  info DMDALocalInfo structure that holds local & global domain bounds.
- *
- * @return PetscErrorCode Returns 0 on success, non-zero on failure.
- */
 PetscErrorCode UpdateCellIndicesBasedOnDistancesTEST( PetscReal d[NUM_FACES], PetscInt *idx, PetscInt *idy, PetscInt *idz)
 {
 
@@ -1041,14 +875,14 @@ PetscErrorCode UpdateCellIndicesBasedOnDistancesTEST( PetscReal d[NUM_FACES], Pe
     czs = info->zs; czm = czs + info->zm - 2; 
   */
 
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Received d: "
-	      "d[LEFT=%d]=%.3e, d[RIGHT=%d]=%.3e, d[BOTTOM=%d]=%.3e, "
-	      "d[TOP=%d]=%.3e, d[FRONT=%d]=%.3e, d[BACK=%d]=%.3e\n",
-	      LEFT, d[LEFT], RIGHT, d[RIGHT], BOTTOM, d[BOTTOM],
-	      TOP, d[TOP], FRONT, d[FRONT], BACK, d[BACK]);
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Raw d: "
-	      "[%.3e, %.3e, %.3e, %.3e, %.3e, %.3e]\n",
-	      d[0], d[1], d[2], d[3], d[4], d[5]);
+  //    LOG_ALLOW(LOCAL, LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Received d: "
+  //    "d[LEFT=%d]=%.3e, d[RIGHT=%d]=%.3e, d[BOTTOM=%d]=%.3e, "
+  //	      "d[TOP=%d]=%.3e, d[FRONT=%d]=%.3e, d[BACK=%d]=%.3e\n",
+		//	      LEFT, d[LEFT], RIGHT, d[RIGHT], BOTTOM, d[BOTTOM],
+		//  TOP, d[TOP], FRONT, d[FRONT], BACK, d[BACK]);
+    //  LOG_ALLOW(LOCAL, LOG_DEBUG, "UpdateCellIndicesBasedOnDistances - Raw d: "
+  //	      "[%.3e, %.3e, %.3e, %.3e, %.3e, %.3e]\n",
+  //	      d[0], d[1], d[2], d[3], d[4], d[5]);
     
     // Validate input pointers
     if (d == NULL) {
@@ -1148,215 +982,6 @@ PetscErrorCode FinalizeTraversal(UserCtx *user, Particle *particle, PetscInt tra
     return 0;
 }
 
-
-/**
- * @brief Locates the grid cell containing a particle using a walking search.
- * @ingroup ParticleLocation
- *
- * This function implements a walking search algorithm to find the specific cell
- * (identified by global indices i, j, k) that encloses the particle's physical
- * location (`particle->loc`).
- *
- * The search starts from an initial guess cell (either the particle's previously known
- * cell or the corner of the local process domain) and iteratively steps to adjacent
- * cells based on the signed distances from the particle to the faces of the current
- * cell.
- *
- * Upon successful location (`position == 0`), the particle's `cell` field is updated
- * with the found indices (i,j,k), and the corresponding interpolation `weights`
- * are calculated and stored using the distances (`d`) relative to the final cell.
- *
- * Handles particles exactly on cell boundaries by attempting a tie-breaker if the
- * search gets stuck oscillating between adjacent cells due to the boundary condition.
- *
- * @param[in]  user     Pointer to the UserCtx structure containing grid information (DMDA, coordinates)
- *                      and domain boundaries.
- * @param[in,out] particle Pointer to the Particle structure. Its `loc` field provides the
- *                      target position. On successful return, its `cell` and `weights`
- *                      fields are updated. On failure, `cell` is set to `{-1, -1, -1}`
- *                      and `weights` to `{0.0, 0.0, 0.0}`.
- *
- * @return PetscErrorCode 0 on success. Non-zero error codes may indicate issues during
- *                        coordinate access, distance calculation, or other internal errors.
- *                        A return code of 0 does not guarantee the particle was found;
- *                        check `particle->cell[0] >= 0` afterward.
- *
- * @note Relies on helper functions like `InitializeTraversalParameters`, `CheckCellWithinLocalGrid`,
- *       `RetrieveCurrentCell`, `EvaluateParticlePosition`, `UpdateCellIndicesBasedOnDistances`,
- *       `UpdateParticleWeights`, and `FinalizeTraversal`.
- * @warning Ensure `particle->loc` is set correctly before calling.
- * @warning The function may fail to find the particle if it lies outside the domain accessible
- *          by the current process (including ghost cells) or if `MAX_TRAVERSAL` steps are exceeded.
- */
-PetscErrorCode LocateParticleInGrid(UserCtx *user, Particle *particle)
-{
-    PetscErrorCode ierr;
-    PetscInt idx, idy, idz;           // Current search cell indices
-    PetscInt traversal_steps;         // Counter for search steps
-    PetscBool cell_found = PETSC_FALSE;// Flag indicating success
-    const Cmpnts p = particle->loc;   // Particle position (local copy)
-    Cell current_cell;                // Geometry of the cell being checked
-    const PetscReal threshold = DISTANCE_THRESHOLD; // Base threshold for distance checks
-    DMDALocalInfo info;               // Local grid info (for bounds)
-    PetscInt repeatedIndexCount = 0;  // Counter for consecutive iterations at the same index
-    PetscInt prevIdx = PETSC_MIN_INT; // Previous iteration's index i (for repeat check)
-    PetscInt prevIdy = PETSC_MIN_INT; // Previous iteration's index j (for repeat check)
-    PetscInt prevIdz = PETSC_MIN_INT; // Previous iteration's index k (for repeat check)
-    PetscInt last_position = -999;    // Position result (-1, 0, >=1) from *previous* iteration
-
-    PetscFunctionBeginUser;
-    LOG_FUNC_TIMER_BEGIN_EVENT(EVENT_Individualwalkingsearch, LOCAL);
-
-    // Get local grid information (needed for bounds and index updates)
-    ierr = DMDAGetLocalInfo(user->da, &info); CHKERRQ(ierr);
-
-    // Determine starting cell indices (previous cell or local corner)
-    ierr = InitializeTraversalParameters(user, particle, &idx, &idy, &idz, &traversal_steps); CHKERRQ(ierr);
-
-    // --- Main Walking Search Loop ---
-    while (!cell_found && traversal_steps < MAX_TRAVERSAL) {
-        traversal_steps++;
-
-        // Log current state for debugging
-        LOG_LOOP_ALLOW(LOCAL, LOG_DEBUG, traversal_steps, 1,
-                       "LocateParticleInGrid [PID %lld, Step %d]: Checking cell (%d, %d, %d). Pos (%.6f, %.6f, %.6f)\n",
-                       (long long)particle->PID, traversal_steps, idx, idy, idz, p.x, p.y, p.z);
-
-        // --- Check for Stuck Loop / Oscillation ---
-        if (idx == prevIdx && idy == prevIdy && idz == prevIdz) {
-            repeatedIndexCount++;
-            LOG_ALLOW(LOCAL, LOG_DEBUG,"LocateParticleInGrid [PID %lld, Step %d]: Repeated index (%d,%d,%d) count = %d\n",
-                        (long long)particle->PID, traversal_steps, idx, idy, idz, repeatedIndexCount);
-
-            if (repeatedIndexCount > REPEAT_COUNT_THRESHOLD) {
-                // --- Option B Tie-Breaker Logic ---
-                if (last_position >= 1) { // Was the last step result 'on boundary'? Likely oscillation.
-                    LOG_ALLOW(LOCAL, LOG_WARNING,
-                              "LocateParticleInGrid [PID %lld]: Stuck at index (%d,%d,%d) after being on boundary for >%d steps. Applying boundary tie-break.\n",
-                              (long long)particle->PID, idx, idy, idz, REPEAT_COUNT_THRESHOLD);
-
-                    // Attempt to assign to the cell where we are stuck.
-                    // Need to ensure the cell is valid and re-get distances for weights.
-                    Cell final_cell;
-                    PetscReal final_d[NUM_FACES];
-                    PetscInt final_position; // Result not used, just need distances
-                    PetscBool is_stuck_cell_valid;
-
-                    ierr = CheckCellWithinLocalGrid(user, idx, idy, idz, &is_stuck_cell_valid); CHKERRQ(ierr);
-                    if (is_stuck_cell_valid) {
-                         ierr = RetrieveCurrentCell(user, idx, idy, idz, &final_cell); CHKERRQ(ierr);
-                         // Re-evaluate to get distances 'final_d' relative to this specific cell
-                         ierr = EvaluateParticlePosition(&final_cell, final_d, p, &final_position, threshold);
-                         if (ierr == 0) { // Check if evaluation succeeded
-                            ierr = UpdateParticleWeights(final_d, particle); CHKERRQ(ierr); // Calculate weights
-                            particle->cell[0] = idx; // Assign the stuck cell index
-                            particle->cell[1] = idy;
-                            particle->cell[2] = idz;
-                            cell_found = PETSC_TRUE; // Mark as found via tie-break
-                            LOG_ALLOW(LOCAL, LOG_INFO,
-                                      "LocateParticleInGrid [PID %lld]: Assigned via tie-break to cell (%d,%d,%d).\n",
-                                      (long long)particle->PID, idx, idy, idz);
-                         } else {
-                             // Error during final evaluation
-                             LOG_ALLOW(LOCAL, LOG_ERROR,
-                                       "LocateParticleInGrid [PID %lld]: Error %d during final evaluation for tie-break at cell (%d,%d,%d). Search fails.\n",
-                                       (long long)particle->PID, ierr, idx, idy, idz);
-                             cell_found = PETSC_FALSE; // Ensure failure
-                         }
-                    } else {
-                         LOG_ALLOW(LOCAL, LOG_WARNING,
-                                   "LocateParticleInGrid [PID %lld]: Stuck at invalid cell index (%d,%d,%d) during tie-break attempt. Search fails.\n",
-                                   (long long)particle->PID, idx, idy, idz);
-                         cell_found = PETSC_FALSE; // Mark as failed
-                    }
-                    break; // Exit loop after attempting tie-break
-                } else {
-                    // Stuck for > threshold steps, but last known state wasn't 'on boundary'.
-                    LOG_ALLOW(LOCAL, LOG_WARNING,
-                              "LocateParticleInGrid [PID %lld]: Stuck at index (%d,%d,%d) for >%d steps (last_pos=%d). Breaking search (failed).\n",
-                              (long long)particle->PID, idx, idy, idz, REPEAT_COUNT_THRESHOLD, last_position);
-                    cell_found = PETSC_FALSE; // Mark as failure
-                    break; // Exit loop (failed)
-                }
-            } // end if (repeatedIndexCount > threshold)
-        } else { // Index changed from previous iteration
-            repeatedIndexCount = 0;
-        }
-        // --- End Stuck Loop Check ---
-
-        // --- Update previous index state for the *next* iteration's check ---
-        prevIdx = idx;
-        prevIdy = idy;
-        prevIdz = idz;
-
-        // --- Check if current cell index is within accessible grid bounds ---
-        PetscBool is_within;
-        ierr = CheckCellWithinLocalGrid(user, idx, idy, idz, &is_within); CHKERRQ(ierr);
-        if (!is_within) {
-            LOG_ALLOW(LOCAL, LOG_WARNING,
-                      "LocateParticleInGrid [PID %lld]: Search moved outside local ghosted grid boundaries at cell (%d, %d, %d). Breaking search.\n",
-                      (long long)particle->PID, idx, idy, idz);
-            cell_found = PETSC_FALSE; // Mark as failed
-            break; // Exit loop
-        }
-
-        // --- Retrieve geometry and evaluate particle position ---
-        ierr = RetrieveCurrentCell(user, idx, idy, idz, &current_cell); CHKERRQ(ierr);
-        PetscReal current_d[NUM_FACES]; // Holds distances relative to current_cell
-        PetscInt position;              // Holds result: -1 (outside), 0 (inside), >=1 (boundary)
-        ierr = EvaluateParticlePosition(&current_cell, current_d, p, &position, threshold); CHKERRQ(ierr);
-
-        // Store the position result for the *next* iteration's stuck check
-        last_position = position;
-
-        LOG_ALLOW(LOCAL, LOG_DEBUG,
-                   "LocateParticleInGrid [PID %lld, Step %d]: Evaluated pos in cell (%d,%d,%d): position=%d\n",
-                   (long long)particle->PID, traversal_steps, idx, idy, idz, position);
-
-        // --- Main Logic: Handle position result ---
-        if (position == 0) { // Strictly INSIDE the cell
-            cell_found = PETSC_TRUE;
-            particle->cell[0] = idx; // Assign the indices of the cell we just evaluated
-            particle->cell[1] = idy;
-            particle->cell[2] = idz;
-            // Calculate weights using the distances 'current_d' from this successful evaluation
-            ierr = UpdateParticleWeights(current_d, particle); CHKERRQ(ierr);
-            LOG_ALLOW(LOCAL, LOG_INFO,
-                      "LocateParticleInGrid [PID %lld]: Found INSIDE cell (%d, %d, %d) after %d steps. Weights calculated.\n",
-                      (long long)particle->PID, idx, idy, idz, traversal_steps);
-            break; // Found the correct cell, exit loop
-
-        } else { // Particle is OUTSIDE (position == -1) or ON BOUNDARY (position >= 1)
-            LOG_ALLOW(LOCAL, LOG_DEBUG,
-                      "LocateParticleInGrid [PID %lld, Step %d]: Particle OUTSIDE or ON BOUNDARY of cell (%d, %d, %d), position = %d. Updating indices.\n",
-                      (long long)particle->PID, traversal_steps, idx, idy, idz, position);
-            // Both cases require stepping to the next potential cell.
-            // Update search indices (idx, idy, idz) based on the distances 'current_d'
-            ierr = UpdateCellIndicesBasedOnDistances(current_d, &idx, &idy, &idz, &info); CHKERRQ(ierr);
-            // Loop continues to the next iteration with potentially updated idx, idy, idz
-        }
-    } // --- End while loop ---
-
-    // --- Handle cases where the loop terminated WITHOUT finding the cell ---
-    // (Could be MAX_TRAVERSAL, out of bounds, or non-boundary stuck state)
-    if (!cell_found) {
-        LOG_ALLOW(LOCAL, LOG_WARNING,
-                  "LocateParticleInGrid [PID %lld]: Search FAILED after %d steps. Final check was at cell (%d,%d,%d). Resetting cell/weights.\n",
-                  (long long)particle->PID, traversal_steps, idx, idy, idz);
-        // Ensure particle state reflects failure explicitly
-        particle->cell[0] = -1;
-        particle->cell[1] = -1;
-        particle->cell[2] = -1;
-    }
-
-    // Finalize traversal by reporting the results (logs success/failure message)
-    // Note: idx, idy, idz passed here are the *last checked* indices for logging purposes.
-    // The actual found cell index is stored in particle->cell if cell_found is true.
-    ierr = FinalizeTraversal(user, particle, traversal_steps, cell_found, idx, idy, idz); CHKERRQ(ierr);
-
-    LOG_FUNC_TIMER_END_EVENT(EVENT_Individualwalkingsearch, LOCAL);
-    PetscFunctionReturn(0);
-}
 
 /**
  * @brief Finds the MPI rank that owns a given global cell index.
@@ -1510,13 +1135,13 @@ PetscErrorCode LocateParticleOrFindMigrationTarget_TEST(UserCtx *user,
                         ierr = UpdateParticleWeights(final_d, particle); CHKERRQ(ierr);
                         search_concluded = PETSC_TRUE; // Conclude search, accepting this cell.
                     } else { // Evaluation failed (e.g., degenerate cell)
-                        LOG_ALLOW(LOCAL, LOG_ERROR, "LocateOrMigrate [PID %lld]: Tie-breaker failed during final evaluation at cell (%d,%d,%d). Search fails.\n",
+                        LOG_ALLOW(LOCAL, LOG_ERROR, "[PID %lld]: Tie-breaker failed during final evaluation at cell (%d,%d,%d). Search fails.\n",
                                   (long long)particle->PID, idx, idy, idz);
                         idx = -1; // Invalidate result
                         search_concluded = PETSC_TRUE;
                     }
                 } else { // Stuck for the wrong reason (not on a boundary)
-                    LOG_ALLOW(LOCAL, LOG_ERROR, "LocateOrMigrate [PID %lld]: Search is stuck at cell (%d,%d,%d) but not on a boundary. This indicates a logic error. Failing search.\n",
+                    LOG_ALLOW(LOCAL, LOG_ERROR, "[PID %lld]: Search is stuck at cell (%d,%d,%d) but not on a boundary. This indicates a logic error. Failing search.\n",
                               (long long)particle->PID, idx, idy, idz);
                     idx = -1; // Invalidate result
                     search_concluded = PETSC_TRUE;
@@ -1559,6 +1184,8 @@ PetscErrorCode LocateParticleOrFindMigrationTarget_TEST(UserCtx *user,
         PetscMPIInt owner_rank;
         ierr = FindOwnerOfCell(user, idx, idy, idz, &owner_rank); CHKERRQ(ierr);
 
+	LOG_ALLOW(LOCAL,LOG_DEBUG," [PID %ld] Owner rank : %d.\n",particle->PID,owner_rank);
+	
         // Always update the particle's cell index. It's a good guess for the receiving rank.
         particle->cell[0] = idx; particle->cell[1] = idy; particle->cell[2] = idz;
 
