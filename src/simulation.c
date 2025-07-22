@@ -39,11 +39,12 @@ PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartSte
 {
     PetscErrorCode ierr;
     PetscFunctionBeginUser;
+    
     LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Preparing complete Eulerian state.\n", time, step);
 
-    PetscReal umax=0.0;
-    PetscReal ucont_max=0.0;
-    PetscReal umin=0.0;
+    PetscReal unorm=0.0;
+    // PetscReal ucont_max=0.0;
+    //   PetscReal umin=0.0;
 
     // ==============================================================================
     // --- STEP 1: Update the INTERIOR of the domain based on the simulation phase ---
@@ -98,7 +99,10 @@ PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartSte
         ierr = UpdateLocalGhosts(user, "Ucat"); CHKERRQ(ierr);
     }
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Complete Eulerian state is now finalized and consistent.\n", time, step);
+    ierr = VecNorm(user->Ucat,NORM_INFINITY,&unorm);
+    //unorm = unorm/(3*(user->IM*user->JM*user->KM));
+    LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Complete Eulerian state is now finalized and consistent. Max Ucat = %.6f \n", time, step,unorm);
+    
     PetscFunctionReturn(0);
 }
 
@@ -144,6 +148,9 @@ PetscErrorCode PerformInitialSetup_TEST(UserCtx *user, PetscReal currentTime, Pe
         LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Re-initializing particles on inlet surface now that they are on correct ranks.\n", currentTime, step);
         ierr = ReinitializeParticlesOnInletSurface(user, currentTime, step); CHKERRQ(ierr);
 
+	LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Resetting statuses for post-reinitialization settlement.\n", currentTime, step);
+        ierr = ResetAllParticleStatuses(user); CHKERRQ(ierr);
+	
         // --- CRITICAL: After re-placing particles, we MUST locate them again. ---
         LOG_ALLOW(GLOBAL, LOG_INFO, "[T=%.4f, Step=%d] Post-Reinitialization Settlement: Finding host cells for newly placed inlet particles.\n", currentTime, step);
         ierr = LocateAllParticlesInGrid_TEST(user,bboxlist); CHKERRQ(ierr);
@@ -255,8 +262,9 @@ PetscErrorCode AdvanceSimulation_TEST(UserCtx *user,
         // 5a) Remove Lost Particles
 	ierr = CheckAndRemoveLostParticles(user,&removed_local_lost,&removed_global_lost);CHKERRQ(ierr);
 	// 5b) Remove Out-of-Bounds Particles
-        ierr = CheckAndRemoveOutOfBoundsParticles(user, &removed_local_ob, &removed_global_ob, bboxlist);
+	ierr = CheckAndRemoveOutOfBoundsParticles(user, &removed_local_ob, &removed_global_ob, bboxlist);
 	// 5c) Accumulate all removed particles
+	
 	removed_local = removed_local_lost + removed_local_ob;
 	removed_global = removed_global_lost + removed_global_ob; 
         CHKERRQ(ierr);
@@ -267,6 +275,17 @@ PetscErrorCode AdvanceSimulation_TEST(UserCtx *user,
         }
 
 
+       // ============================================ ============================
+        // After particles migrate, the new host rank may need ghost data from its
+        // neighbor to interpolate to its new particles. We must refresh the ghost
+        // regions of the field we are about to interpolate FROM.
+	//  LOG_ALLOW(GLOBAL, LOG_DEBUG, "Refreshing ghost regions post-migration.\n");
+	// ierr = UpdateLocalGhosts(user, "Ucat"); CHKERRQ(ierr);
+	//ierr = UpdateLocalGhosts(user, "Ucont"); CHKERRQ(ierr);
+        // If you were interpolating other fields, you would refresh them here too.
+        // ierr = UpdateLocalGhosts(user, "Tcat"); CHKERRQ(ierr); 
+        // =========================================================================
+	
         // 6) Interpolate & scatter
         LOG_ALLOW(GLOBAL, LOG_DEBUG, "[T=%.4f] Interpolating to settled particles.\n", currentTime + dt);
         ierr = InterpolateAllFieldsToSwarm(user);            CHKERRQ(ierr);

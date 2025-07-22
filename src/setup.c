@@ -525,19 +525,29 @@ PetscErrorCode Allocate3DArrayVector(Cmpnts ****array, PetscInt nz, PetscInt ny,
   Cmpnts         ***data;
   Cmpnts         *dataContiguous;
   PetscInt       k, j;
+  PetscMPIInt    rank;
 
   PetscFunctionBegin;
+
+  ierr = MPI_Comm_rank(PETSC_COMM_WORLD,&rank);
+  
   /* Step 1: Allocate memory for nz layer pointers (zeroed) */
   ierr = PetscCalloc1(nz, &data); CHKERRQ(ierr);
 
+  LOG_ALLOW(LOCAL,LOG_DEBUG," [Rank %d] memory allocated for outermost layer (%d k-layer pointers).\n",rank,nz);
+  
   /* Step 2: Allocate memory for all row pointers (nz * ny pointers) */
   ierr = PetscCalloc1(nz * ny, &data[0]); CHKERRQ(ierr);
   for (k = 1; k < nz; k++) {
     data[k] = data[0] + k * ny;
   }
 
+  LOG_ALLOW(LOCAL,LOG_DEBUG,"[Rank %d] memory allocated for %dx%d row pointers.\n",rank,nz,ny);
+  
   /* Step 3: Allocate one contiguous block for nz*ny*nx Cmpnts structures (zeroed) */
   ierr = PetscCalloc1(nz * ny * nx, &dataContiguous); CHKERRQ(ierr);
+
+  LOG_ALLOW(GLOBAL,LOG_DEBUG,"[Rank %d] memory allocated for contigous block of %dx%dx%d Cmpnts structures).\n",rank,nz,ny,nx); 
 
   /* Build the 3D pointer structure for vector data */
   for (k = 0; k < nz; k++) {
@@ -546,6 +556,9 @@ PetscErrorCode Allocate3DArrayVector(Cmpnts ****array, PetscInt nz, PetscInt ny,
       /* The PetscCalloc1 call has already initialized each Cmpnts to zero. */
     }
   }
+
+  LOG_ALLOW(GLOBAL,LOG_DEBUG,"[Rank %d] 3D pointer structure for vector data created. \n",rank);
+  
   *array = data;
   PetscFunctionReturn(0);
 }
@@ -749,6 +762,53 @@ PetscErrorCode GetOwnedCellRange(const DMDALocalInfo *info_nodes,
         }
     }
     PetscFunctionReturn(ierr);
+}
+
+/**
+ * @brief Gets the global cell range for a rank, including boundary cells.
+ *
+ * This function first calls GetOwnedCellRange to get the conservative range of
+ * fully-contained cells. It then extends this range by applying the
+ * "Lower-Rank-Owns-Boundary" principle. A rank claims ownership of the
+ * boundary cells it shares with neighbors in the positive (+x, +y, +z)
+ * directions.
+ *
+ * This results in a final cell range that is gap-free and suitable for building
+ * the definitive particle ownership map.
+ *
+ * @param[in]  info_nodes       Pointer to the DMDALocalInfo struct.
+ * @param[in]  neighbors        Pointer to the RankNeighbors struct containing neighbor info.
+ * @param[in]  dim              The dimension (0 for i/x, 1 for j/y, 2 for k/z).
+ * @param[out] xs_cell_global_out Pointer to store the final starting cell index.
+ * @param[out] xm_cell_local_out  Pointer to store the final number of cells.
+ *
+ * @return PetscErrorCode 0 on success, or an error code on failure.
+ */
+PetscErrorCode GetGhostedCellRange(const DMDALocalInfo *info_nodes,
+                                   const RankNeighbors *neighbors,
+                                   PetscInt dim,
+                                   PetscInt *xs_cell_global_out,
+                                   PetscInt *xm_cell_local_out)
+{
+    PetscErrorCode ierr;
+
+    PetscFunctionBeginUser;
+
+    // --- 1. Get the base, conservative range from the original function ---
+    ierr = GetOwnedCellRange(info_nodes, dim, xs_cell_global_out, xm_cell_local_out); CHKERRQ(ierr);
+
+    // --- 2. Apply the "Lower-Rank-Owns-Boundary" correction ---
+    // A rank owns the boundary if it has a neighbor in the positive direction.
+    // We check if the neighbor's rank is valid (not MPI_PROC_NULL, which is < 0).
+    if (dim == 0 && neighbors->rank_xp > -1) {
+        (*xm_cell_local_out)++;
+    } else if (dim == 1 && neighbors->rank_yp > -1) {
+        (*xm_cell_local_out)++;
+    } else if (dim == 2 && neighbors->rank_zp > -1) {
+        (*xm_cell_local_out)++;
+    }
+
+    PetscFunctionReturn(0);
 }
 
 /**
@@ -1022,7 +1082,7 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
     PetscMPIInt temp_neighbor;
 
     temp_neighbor = neighbor_ranks_ptr[12]; // xm
-    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
+    if (temp_neighbor < 0  || temp_neighbor >= size) {
         LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid xm neighbor %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_xm = MPI_PROC_NULL;
     } else {
@@ -1030,7 +1090,7 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
     }
 
     temp_neighbor = neighbor_ranks_ptr[14]; // xp
-    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
+    if (temp_neighbor < 0 || temp_neighbor >= size) {
         LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid xp neighbor %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_xp = MPI_PROC_NULL;
     } else {
@@ -1038,7 +1098,7 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
     }
 
     temp_neighbor = neighbor_ranks_ptr[10]; // ym
-    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
+    if (temp_neighbor < 0 || temp_neighbor >= size) {
         LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid ym neighbor %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_ym = MPI_PROC_NULL;
     } else {
@@ -1046,7 +1106,7 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
     }
 
     temp_neighbor = neighbor_ranks_ptr[16]; // yp
-    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
+    if (temp_neighbor < 0 || temp_neighbor >= size) {
         // The log for index 16 was "zm" in your output, should be yp
         LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid yp neighbor (raw index 16) %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_yp = MPI_PROC_NULL;
@@ -1055,7 +1115,7 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
     }
 
     temp_neighbor = neighbor_ranks_ptr[4]; // zm
-    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
+    if (temp_neighbor < 0 || temp_neighbor >= size) {
         LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid zm neighbor %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_zm = MPI_PROC_NULL;
     } else {
@@ -1063,7 +1123,7 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
     }
 
     temp_neighbor = neighbor_ranks_ptr[22]; // zp
-    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
+    if (temp_neighbor < 0 || temp_neighbor >= size) {
         LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid zp neighbor %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_zp = MPI_PROC_NULL;
     } else {
@@ -1465,10 +1525,16 @@ PetscErrorCode SetupDomainCellDecompositionMap(UserCtx *user)
 
     // Use the robust helper function to convert node ownership to cell ownership.
     // A cell's index is defined by its origin node.
+    
+    ierr = GetGhostedCellRange(&local_node_info, &user->neighbors, 0, &my_cell_info.xs_cell, &my_cell_info.xm_cell); CHKERRQ(ierr);
+    ierr = GetGhostedCellRange(&local_node_info, &user->neighbors, 1, &my_cell_info.ys_cell, &my_cell_info.ym_cell); CHKERRQ(ierr);
+    ierr = GetGhostedCellRange(&local_node_info, &user->neighbors, 2, &my_cell_info.zs_cell, &my_cell_info.zm_cell); CHKERRQ(ierr);
+    
+    /*
     ierr = GetOwnedCellRange(&local_node_info, 0, &my_cell_info.xs_cell, &my_cell_info.xm_cell); CHKERRQ(ierr);
     ierr = GetOwnedCellRange(&local_node_info, 1, &my_cell_info.ys_cell, &my_cell_info.ym_cell); CHKERRQ(ierr);
     ierr = GetOwnedCellRange(&local_node_info, 2, &my_cell_info.zs_cell, &my_cell_info.zm_cell); CHKERRQ(ierr);
-
+    */
     // Log the calculated local ownership for debugging purposes.
     LOG_ALLOW(LOCAL, LOG_DEBUG, "[Rank %d] Owns cells: i[%d, %d), j[%d, %d), k[%d, %d)\n",
               rank, my_cell_info.xs_cell, my_cell_info.xs_cell + my_cell_info.xm_cell,

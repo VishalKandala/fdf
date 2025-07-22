@@ -1,4 +1,4 @@
- // walkingsearch.c
+// walkingsearch.c
 
 #include "walkingsearch.h"
 #include "logging.h"
@@ -8,7 +8,7 @@
 
 // Define maximum traversal steps to prevent infinite loops
 #define MAX_TRAVERSAL 1000
-#define DISTANCE_THRESHOLD 1e-9
+#define DISTANCE_THRESHOLD 1e-11
 #define REPEAT_COUNT_THRESHOLD 5
 
 
@@ -585,21 +585,29 @@ PetscErrorCode InitializeTraversalParameters(UserCtx *user, Particle *particle, 
     // --- Check if the particle has a valid previous cell ID ---
     // Assuming particle->cell stores the *global* indices
     if (particle->cell[0] >= 0 && particle->cell[1] >= 0 && particle->cell[2] >= 0) {
-        // Previous cell ID is valid, start search from there.
+
+      // It sees a valid cell ID exists.
+      // Before using it, it explicitly checks if this cell is accessible.
+      PetscBool is_handoff_cell_valid;
+      ierr = CheckCellWithinLocalGrid(user, particle->cell[0], particle->cell[1], particle->cell[2], &is_handoff_cell_valid); CHKERRQ(ierr);
+
+      if (is_handoff_cell_valid) {
+        // FAST PATH: The check passed. The cell is safe. Use it.
         *idx = particle->cell[0];
         *idy = particle->cell[1];
         *idz = particle->cell[2];
 
-        // Optional: Add a check/clamp to ensure the previous cell ID is at least
-        // within reasonable global bounds, though LocateParticleInGrid should handle
-        // out-of-local-bounds cases.
-        // Example clamp (adjust based on your global grid indexing, 0..IM-1):
-        // *idx = PetscMax(0, PetscMin(info.mx - 2, *idx));
-        // *idy = PetscMax(0, PetscMin(info.my - 2, *idy));
-        // *idz = PetscMax(0, PetscMin(info.mz - 2, *idz));
-
-        LOG_ALLOW(LOCAL,LOG_DEBUG, "InitializeTraversalParameters - Particle %lld has previous cell (%d, %d, %d). Starting search there.\n",
-                  (long long)particle->PID, *idx, *idy, *idz); // Cast id to long long for printing PetscInt64
+	 LOG_ALLOW(LOCAL,LOG_DEBUG, "InitializeTraversalParameters - Particle %lld has previous cell (%d, %d, %d). Starting search there.\n",
+		   (long long)particle->PID, *idx, *idy, *idz); // Cast id to long long for printing PetscInt64
+	
+      } else {
+        // SAFE FALLBACK: The check failed! The handoff cell is NOT safe.
+        // Discard the unsafe handoff cell and revert to starting at the
+        // guaranteed-safe local corner.
+        *idx = info.xs;
+        *idy = info.ys;
+        *idz = info.zs;
+      }
     } else {
         // No valid previous cell ID (e.g., -1,-1,-1 or first time).
         // Start from the first cell in the local owned grid domain.
@@ -674,7 +682,7 @@ PetscErrorCode CheckCellWithinLocalGrid(UserCtx *user, PetscInt idx, PetscInt id
     PetscInt gym_cell_local_count = (info_nodes.gym > 0) ? info_nodes.gym - 1 : 0;
     PetscInt gzm_cell_local_count = (info_nodes.gzm > 0) ? info_nodes.gzm - 1 : 0;
 
-    // Global exclusive end index for cells whose origins are in the ghosted nodal region.
+    // Global exclusive end index for cells whose origins are in the ghosted nodal region. 
     PetscInt gxe_cell_global_end_exclusive = gxs_cell_global_start + gxm_cell_local_count;
     PetscInt gye_cell_global_end_exclusive = gys_cell_global_start + gym_cell_local_count;
     PetscInt gze_cell_global_end_exclusive = gzs_cell_global_start + gzm_cell_local_count;
@@ -717,6 +725,7 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
     Vec Coor;
     Cmpnts ***coor_array;
     PetscMPIInt rank;
+    DMDALocalInfo info_nodes;
 
     // Validate input pointers
     if (user == NULL || cell == NULL) {
@@ -728,10 +737,18 @@ PetscErrorCode RetrieveCurrentCell(UserCtx *user, PetscInt idx, PetscInt idy, Pe
     ierr = DMGetCoordinatesLocal(user->da, &Coor); CHKERRQ(ierr);
     ierr = DMDAVecGetArrayRead(user->fda, Coor, &coor_array); CHKERRQ(ierr);
 
-    LOG_ALLOW(LOCAL,LOG_DEBUG," Getting vertex coordinates for cell: %d,%d,%d.\n",idx,idy,idz);
+    // Get the local grid information FOR THE GHOSTED ARRAY from user->fda
+    // This info contains the mapping between global and local indices.
+    ierr = DMDAGetLocalInfo(user->fda, &info_nodes); CHKERRQ(ierr);
+
+    PetscInt  idx_local = idx; // - info_nodes.gxs;
+    PetscInt  idy_local = idy; // - info_nodes.gys;
+    PetscInt  idz_local = idz; // - info_nodes.gzs;
+    
+    LOG_ALLOW(LOCAL,LOG_DEBUG," [Rank %d] Getting vertex coordinates for cell: %d,%d,%d whose local coordinates are %d,%d,%d.\n",rank,idx,idy,idz,idx_local,idy_local,idz_local);
     
     // Get the current cell's vertices
-    ierr = GetCellVerticesFromGrid(coor_array, idx, idy, idz, cell); CHKERRQ(ierr);
+    ierr = GetCellVerticesFromGrid(coor_array, idx_local, idy_local, idz_local, cell); CHKERRQ(ierr);
 
     // Restore array
     ierr = DMDAVecRestoreArrayRead(user->fda, Coor, &coor_array); CHKERRQ(ierr);
@@ -1113,8 +1130,22 @@ PetscErrorCode LocateParticleOrFindMigrationTarget_TEST(UserCtx *user,
             idx = -1; // Invalidate the result to signal failure
             break;    // Exit the loop immediately
         }
-        
-        // --- 2b. Stuck Loop Detection & Enhanced Tie-Breaker ---
+
+        // --- 2b. LOCAL GHOST REGION CHECK (PREVENTS SEGV) ---
+        // Before trying to access cell data, check if we have it.
+        PetscBool is_cell_local;
+        ierr = CheckCellWithinLocalGrid(user, idx, idy, idz, &is_cell_local); CHKERRQ(ierr);
+        if (!is_cell_local) {
+            // We have walked outside the local rank's ghost region.
+            // This definitively means the particle belongs to another rank.
+            // Conclude the search here; the current (idx,idy,idz) is the handoff cell.
+            LOG_ALLOW(LOCAL, LOG_INFO, "[PID %lld]: Walked outside local ghost region to cell (%d,%d,%d). Concluding search for handoff.\n",
+                      (long long)particle->PID, idx, idy, idz);
+            search_concluded = PETSC_TRUE;
+            continue; // Skip the rest of the loop; proceed to finalization.
+        }
+	
+        // --- 2c. Stuck Loop Detection & Enhanced Tie-Breaker ---
         if (idx == prevIdx && idy == prevIdy && idz == prevIdz) {
             repeatedIndexCount++;
             if (repeatedIndexCount > REPEAT_COUNT_THRESHOLD) {
@@ -1153,7 +1184,7 @@ PetscErrorCode LocateParticleOrFindMigrationTarget_TEST(UserCtx *user,
         }
         prevIdx = idx; prevIdy = idy; prevIdz = idz;
 
-        // --- 2c. Geometric Evaluation ---
+        // --- 2d. Geometric Evaluation ---
         Cell      current_cell;
         PetscReal distances[NUM_FACES];
         PetscInt  position_in_cell;
@@ -1162,7 +1193,7 @@ PetscErrorCode LocateParticleOrFindMigrationTarget_TEST(UserCtx *user,
         ierr = EvaluateParticlePosition(&current_cell, distances, particle->loc, &position_in_cell, DISTANCE_THRESHOLD); CHKERRQ(ierr);
         last_position_result = position_in_cell;
 
-        // --- 2d. Decision Making ---
+        // --- 2e. Decision Making ---
         if (position_in_cell >= 0) { // Particle is INSIDE or ON THE BOUNDARY
             search_concluded = PETSC_TRUE;
             ierr = UpdateParticleWeights(distances, particle); CHKERRQ(ierr);
@@ -1220,7 +1251,7 @@ PetscErrorCode ReportSearchOutcome(const Particle *particle,
     PetscFunctionBeginUser;
     switch (status) {
         case ACTIVE_AND_LOCATED:
-            LOG_ALLOW(LOCAL, LOG_INFO, "Search SUCCESS [PID %lld]: Located in local cell (%d, %d, %d) after %d steps.\n",
+            LOG_ALLOW(LOCAL, LOG_INFO, "Search SUCCESS [PID %lld]: Located in global cell (%d, %d, %d) after %d steps.\n",
                       (long long)particle->PID, particle->cell[0], particle->cell[1], particle->cell[2], traversal_steps);
             break;
         case MIGRATING_OUT:

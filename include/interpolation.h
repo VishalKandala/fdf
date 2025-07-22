@@ -40,12 +40,33 @@
       Cmpnts ***:    InterpolateFieldFromCornerToCenter_Vector                                \
     )(field, centfield, user) )
 
-
+/*
 #define InterpolateFieldFromCenterToCorner(centfield, field, info)         \
   _Generic((centfield),                                                    \
     PetscReal ***: InterpolateFieldFromCenterToCorner_Scalar,                \
     Cmpnts ***:    InterpolateFieldFromCenterToCorner_Vector                  \
   )(centfield, field, info)
+*/
+  
+/**
+ * @brief Macro to dispatch to the correct scalar or vector center-to-corner function
+ *        based on a runtime block size variable.
+ *
+ * This macro uses a ternary operator to inspect the runtime value of 'blockSize' and
+ * select the appropriate implementation. It expects the input and output pointers to be void*
+ * and handles casting them to the correct, strongly-typed pointers.
+ *
+ * @param blockSize     The runtime block size (1 for scalar, 3 for vector).
+ * @param centfield_ptr The input void* pointer to the 3D cell-centered data array.
+ * @param corner_ptr    The output void* pointer to the 3D corner data array.
+ * @param user_ctx      The UserCtx structure.
+ */
+#define InterpolateFieldFromCenterToCorner(blockSize, centfield_ptr, corner_ptr, user_ctx) \
+    ( (blockSize) == 1 ? \
+        InterpolateFieldFromCenterToCorner_Scalar_Petsc((PetscReal***)(centfield_ptr), (PetscReal***)(corner_ptr), (user_ctx)) : \
+        InterpolateFieldFromCenterToCorner_Vector_Petsc((Cmpnts***)(centfield_ptr), (Cmpnts***)(corner_ptr), (user_ctx)) \
+    )
+
 
 /**
  * @brief A type-generic macro that interpolates a field from corner nodes to all face centers.
@@ -163,24 +184,41 @@ PetscErrorCode TrilinearInterpolation_Vector(
     Cmpnts       *vec);
 
 /**
- * @brief High-level function to interpolate one field (either scalar or vector) onto all local particles.
+ * @brief Interpolates a cell-centered field (scalar or vector) onto DMSwarm particles,
+ *        using a robust, PETSc-idiomatic two-stage process.
  *
- * Steps:
- *  1) Get blockSize from fieldGlobal (1 => scalar, 3 => vector).
- *  2) Retrieve local pointer from DMDAVecGetArray().
- *  3) Retrieve "DMSwarm_CellID", "weight", and swarmOutFieldName from the DMSwarm.
- *  4) Loop over local particles. For each:
- *     - read iCell,jCell,kCell
- *     - clamp or skip if out of range
- *     - read a1,a2,a3
- *     - call InterpolateSingleFieldForParticle(...) with the typed pointer
- *  5) Restore arrays and fields
+ * This function first converts the cell-centered input data to corner-node data,
+ * storing this intermediate result in a PETSc Vec to correctly handle the communication
+ * of ghost-point information across parallel ranks. It then performs a final trilinear
+ * interpolation from the ghosted corner data to each particle's location.
+ *
+ * Workflow:
+ *   1.  Create temporary PETSc Vecs (`cornerGlobal`, `cornerLocal`) to manage the
+ *       intermediate corner-node data, using the existing nodal DMDA (`user->fda`).
+ *   2.  Call a dispatch macro that uses the runtime block size (`bs`) to select the
+ *       correct underlying center-to-corner function, writing results into `cornerGlobal`.
+ *   3.  Perform a ghost-point exchange (`DMGlobalToLocal`) to transfer the boundary
+ *       data from `cornerGlobal` into the ghost regions of `cornerLocal`.
+ *   4.  Loop over all local particles. For each particle:
+ *       a. Convert its global cell index to a local index relative to the ghosted array.
+ *       b. Check if the particle's interpolation stencil is fully contained within
+ *          the owned+ghost region. If not, log a warning and set the result to zero.
+ *       c. Perform the final trilinear interpolation using the ghosted `cornerLocal` data.
+ *   5.  Restore all PETSc objects to prevent memory leaks.
+ *
+ * @param[in]  user                     User context with DMDA, DMSwarm, etc.
+ * @param[in]  fieldGlobal_cellCentered Vec (from fda) with cell-centered data (e.g., Ucat).
+ * @param[in]  fieldName                Human-readable field name for logging (e.g., "Ucat").
+ * @param[in]  swarmOutFieldName        Name of the DMSwarm field where interpolation results go.
+ *
+ * @return PetscErrorCode 0 on success.
  */
 PetscErrorCode InterpolateEulerFieldToSwarm(
     UserCtx    *user,
-    Vec         fieldGlobal,       /* DMDA Vec for the field */
-    const char *fieldName,         /* e.g., "velocity", "temp" */
-    const char *swarmOutFieldName); /* DMSwarm field for storing results */
+    Vec         fieldLocal_cellCentered,
+    const char *fieldName,
+    const char *swarmOutFieldName);
+
 
 /**
  * @brief Interpolates all relevant fields from the DMDA to the DMSwarm.
@@ -305,7 +343,41 @@ PetscErrorCode InterpolateFieldFromCenterToCorner_Vector(Cmpnts ***field_arr,
                                                   Cmpnts ***centfield_arr,
                                                   UserCtx *user);
 
+/**
+ * @brief Interpolates a vector field from cell centers to corner nodes.
+ *
+ * This version is adapted to write directly into a ghosted local array obtained from DMDAVecGetArray(),
+ * which allows using GLOBAL indices for writing to the OWNED portion of the array.
+ *
+ * @param[in]  centfield_arr  Input: 3D array (ghosted) of cell-centered data, accessed via GLOBAL indices.
+ * @param[out] corner_arr     Output: 3D array (ghosted) where interpolated node values are stored,
+ *                            also accessed via GLOBAL indices for the owned part.
+ * @param[in]  user           User context containing DMDA information.
+ *
+ * @return PetscErrorCode 0 on success.
+ */
+PetscErrorCode InterpolateFieldFromCenterToCorner_Vector_Petsc(
+    Cmpnts ***centfield_arr, /* Input: Ghosted local array from Vec (read) */
+    Cmpnts ***corner_arr,    /* Output: Ghosted local array from Vec (write) */
+    UserCtx *user);
 
+/**
+ * @brief Interpolates a scalar field from cell centers to corner nodes.
+ *
+ * This version is adapted to write directly into a ghosted local array obtained from DMDAVecGetArray(),
+ * which allows using GLOBAL indices for writing to the OWNED portion of the array.
+ *
+ * @param[in]  centfield_arr  Input: 3D array (ghosted) of scalar data at cell centers, accessed via GLOBAL indices.
+ * @param[out] corner_arr     Output: 3D array (ghosted) where interpolated node values are stored,
+ *                            also accessed via GLOBAL indices for the owned part.
+ * @param[in]  user           User context containing DMDA information.
+ *
+ * @return PetscErrorCode 0 on success.
+ */
+PetscErrorCode InterpolateFieldFromCenterToCorner_Scalar_Petsc(
+    PetscReal ***centfield_arr, /* Input: Ghosted local array from Vec (read) */
+    PetscReal ***corner_arr,    /* Output: Ghosted local array from Vec (write) */
+    UserCtx *user);
 
 /**
  * @brief Determines the target Eulerian DM and expected DOF for scattering a given particle field.

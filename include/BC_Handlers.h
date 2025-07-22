@@ -27,9 +27,12 @@ PetscErrorCode Create_WallNoSlip(BoundaryCondition *bc);
  */
 PetscErrorCode Create_InletConstantVelocity(BoundaryCondition *bc);
 
+PetscErrorCode Create_InletParabolicProfile(BoundaryCondition *bc);
+
 PetscErrorCode Create_NogradCopyGhost(BoundaryCondition *bc);
 
 //PetscErrorCode Create_OutletConservation(BoundaryCondition *bc);
+
 
 
 #endif // BC_HANDLERS_H

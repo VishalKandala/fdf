@@ -311,6 +311,33 @@ do {                                                                            
         }                                                                      \
     } while (0)
 
+/**
+ * @brief Logs a custom message if a variable equals a specific value.
+ *
+ * This is a variadic macro for logging a single event when a condition is met.
+ * It is extremely useful for printing debug information at a specific iteration
+ * of a loop or when a state variable reaches a certain value.
+ *
+ * @param scope   Either LOCAL or GLOBAL.
+ * @param level   The logging level.
+ * @param var     The variable to check (e.g., a loop counter 'k').
+ * @param val     The value that triggers the log (e.g., 6). The log prints if var == val.
+ * @param ...     A printf-style format string and its corresponding arguments.
+ */
+#define LOG_LOOP_ALLOW_EXACT(scope, level, var, val, ...)                         \
+    do {                                                                       \
+        /* First, perform the cheap, standard gatekeeper checks. */            \
+        if (is_function_allowed(__func__) && (int)(level) <= (int)get_log_level()) { \
+            /* Only if those pass, check the user's specific condition. */      \
+            if ((var) == (val)) {                                              \
+                MPI_Comm comm = ((scope) == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
+                /* Print the standard prefix, then the user's custom message. */ \
+                PetscPrintf(comm, "[%s] ", __func__);                           \
+                PetscPrintf(comm, __VA_ARGS__);                                \
+            }                                                                  \
+        }                                                                      \
+    } while (0)
+
 /*
 #define LOG_LOOP_ALLOW(scope,level, iterVar, interval, fmt, ...)              \
     do {                                                                       \
@@ -390,7 +417,6 @@ do {                                                                            
             }                                                                 \
         }                                                                     \
     } while (0)
-
 
 /**
  * @brief Begins timing a function by:

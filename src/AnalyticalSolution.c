@@ -1016,10 +1016,15 @@ PetscErrorCode SetInitialInteriorField(UserCtx *user, const char *fieldName)
     PetscInt xs_cell=0, xm_cell=0, ys_cell=0, ym_cell=0, zs_cell=0, zm_cell=0;
     
     if (user->FieldInitialization == 2) { // Profile 2 (Poiseuille) requires cell centers.
+      /*
         ierr = GetOwnedCellRange(&info, 0, &xs_cell, &xm_cell); CHKERRQ(ierr);
         ierr = GetOwnedCellRange(&info, 1, &ys_cell, &ym_cell); CHKERRQ(ierr);
         ierr = GetOwnedCellRange(&info, 2, &zs_cell, &zm_cell); CHKERRQ(ierr);
-
+      */
+      ierr = GetGhostedCellRange(&info,&user->neighbors,0, &xs_cell, &xm_cell); CHKERRQ(ierr);
+      ierr = GetGhostedCellRange(&info,&user->neighbors,1, &ys_cell, &ym_cell); CHKERRQ(ierr);
+      ierr = GetGhostedCellRange(&info,&user->neighbors,2, &zs_cell, &zm_cell); CHKERRQ(ierr);
+      
         if (xm_cell > 0 && ym_cell > 0 && zm_cell > 0) {
             ierr = Allocate3DArray(&cent_coor, zm_cell, ym_cell, xm_cell); CHKERRQ(ierr);
             ierr = InterpolateFieldFromCornerToCenter(coor_arr, cent_coor, user); CHKERRQ(ierr);

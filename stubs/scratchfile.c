@@ -3317,3 +3317,278 @@ PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal St
 
     PetscFunctionReturn(0);
 }
+
+
+////////////////////////////////////////////////
+
+
+
+/**
+ * @brief Checks for particles outside the physical domain boundaries and removes them
+ *        using DMSwarmRemovePointAtIndex.
+ *
+ * This function iterates through all particles local to the current MPI rank.
+ * It checks if a particle's position (x, y, or z) is outside the specified
+ * physical domain boundaries [xMin, xMax], [yMin, yMax], [zMin, zMax].
+ *
+ * If a particle is found out of bounds, it is removed using DMSwarmRemovePointAtIndex.
+ * NOTE: Removing points changes the indices of subsequent points in the iteration.
+ *       Therefore, it's crucial to iterate BACKWARDS or carefully manage indices
+ *       after a removal. Iterating backwards is generally safer.
+ *
+ * @param user    Pointer to the UserCtx structure.
+ * @param[out] removedCountLocal Pointer to store the number of particles removed *on this rank*.
+ * @param[out] removedCountGlobal Pointer to store the total number of particles removed *across all ranks*.
+ * @param[in]      bboxlist       An array of BoundingBox structures for ALL MPI ranks, indexed 0 to (size-1).
+ *                                This array must be up-to-date and available on all ranks.
+ *
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+/*
+PetscErrorCode CheckAndRemoveOutOfBoundsParticles(UserCtx *user,
+                                              PetscInt *removedCountLocal,
+					      PetscInt *removedCountGlobal,
+					      const BoundingBox *bboxlist )
+{
+    PetscErrorCode ierr;
+    DM             swarm = user->swarm;
+    PetscInt       nLocalInitial, p;
+    PetscReal        *pos = NULL;
+    //   PetscInt64       *PIDs = NULL;
+    // You only *need* the position field to check bounds
+    PetscInt       local_removed_count = 0;
+    PetscMPIInt       global_removed_count = 0;
+    PetscMPIInt    rank,size;
+    
+    PetscFunctionBeginUser;
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
+    LOG_ALLOW(LOCAL, LOG_INFO, "[Rank %d]Checking for out-of-bounds particles (using RemovePointAtIndex)...\n", rank);
+
+    *removedCountLocal = 0;
+    *removedCountGlobal = 0; // Will be summed later
+    
+    ierr = DMSwarmGetLocalSize(swarm, &nLocalInitial); CHKERRQ(ierr);
+
+    // Get read-only access to positions
+    // Note: We get it before the loop because removal might invalidate pointers
+    // if the swarm reallocates internally, although Get/Restore is generally safe.
+    // For maximum safety with removal, access inside the loop might be better,
+    // but less efficient. Let's try getting it once first.
+
+    if(nLocalInitial == 0){
+      LOG_ALLOW(LOCAL,LOG_DEBUG," [Rank %d] No  Particles in this rank!.\n",rank);
+    }
+    
+    else{
+      
+    ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void **)&pos); CHKERRQ(ierr);
+    //   ierr = DMSwarmGetField(swarm, "DMSwarm_pid", NULL, NULL, (void **)&PIDs);CHKERRQ(ierr);
+     if (!pos) {
+         SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONGSTATE, "Could not access position field.");
+     }
+    // --- Iterate BACKWARDS to handle index changes during removal ---
+    local_removed_count = 0;
+    
+    for (p = nLocalInitial - 1; p >= 0; p--) { // Loop from n-1 down to 0
+
+        Particle temp_particle;
+        temp_particle.loc.x = pos[3*p + 0];
+        temp_particle.loc.y = pos[3*p + 1];
+        temp_particle.loc.z = pos[3*p + 2];
+        temp_particle.PID   = -1; // PID isn't needed for this check
+      
+        PetscBool isOutOfBounds = PETSC_FALSE;
+
+	PetscInt  IsParticleInLocalBboxCount = 0;
+	
+        //if (pos[p].x < xMin || pos[p].x > xMax ||
+        //    pos[p].y < yMin || pos[p].y > yMax ||
+        //    pos[p].z < zMin || pos[p].z > zMax)
+
+	// Going through the bbox of each rank, if a particle is found to be in it's bbox, we increment IsParticleInLocalBboxCount
+	// IsParticleInLocalBboxCount should be always 1 (as only one rank will contain the particle) or 0 (no rank contains the particle, so it is not incremented).
+	for (PetscMPIInt proc = 0; proc < size; proc++){
+	  if(IsParticleInsideBoundingBox(&bboxlist[proc],&temp_particle)){
+	    IsParticleInLocalBboxCount++;
+	  }
+	}
+
+	if(IsParticleInLocalBboxCount == 0){
+	  isOutOfBounds = PETSC_TRUE;
+	}
+
+        if (isOutOfBounds) {
+            LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Removing at local index %d at (%g,%g,%g).\n",
+                      rank, p, temp_particle.loc.x, temp_particle.loc.y,temp_particle.loc.z);
+            // Restore position field BEFORE removing point, as removal modifies the swarm state
+            ierr = DMSwarmRestoreField(swarm, "position", NULL, NULL, (void **)&pos); CHKERRQ(ierr);
+	    //  ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid", NULL, NULL, (void **)&PIDs); CHKERRQ(ierr);
+            pos = NULL; // Invalidate pointer.
+	    
+            // --- Remove the particle at the current local index 'p' ---
+            ierr = DMSwarmRemovePointAtIndex(swarm, p); CHKERRQ(ierr);
+            local_removed_count++;
+
+            // --- Re-get fields if we continue looping (or break) ---
+            // Since we removed a point, indices might have shifted if implementation
+            // involves compaction. Re-getting fields is safest if loop continues.
+            // However, since we iterate backwards, indices p-1, p-2 etc. remain valid
+            // relative to the *current* state after removal.
+            // Let's try without re-getting inside the loop first for efficiency.
+            // We need to re-get 'pos' for the next iteration check.
+            if (p > 0) { // Only re-get if there are more iterations
+	      PetscInt nLocalAfterRemoval;
+	      ierr = DMSwarmGetLocalSize(swarm,&nLocalAfterRemoval);
+	      if(nLocalAfterRemoval>0){
+		ierr = DMSwarmGetField(swarm, "position", NULL, NULL, (void **)&pos); CHKERRQ(ierr);
+               if (!pos) {
+                   SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONGSTATE, "Could not re-access position field after removal.");
+                   }
+	        }else{
+		  // All remaining particles were removed, or this was the last one
+                  // No need to get 'pos' again as the loop will terminate or p will be 0.
+		  break;
+	          }
+	    }
+	  }
+        } // End backwards loop
+
+       // Restore position field if it was gotten last time inside loop or if loop didn't run/remove
+       if (pos) {
+         ierr = DMSwarmRestoreField(swarm, "position", NULL, NULL, (void **)&pos); CHKERRQ(ierr);
+       }
+    } // nLocalInitial > 0
+
+    // Get the *final* local size after removals
+    PetscInt nLocalFinal;
+    ierr = DMSwarmGetLocalSize(swarm, &nLocalFinal); CHKERRQ(ierr);
+    LOG_ALLOW(LOCAL, LOG_INFO, "[Rank %d] Finished removing %d particles. Final local size: %d.\n", rank, local_removed_count, nLocalFinal);
+
+
+    // Calculate global removed count
+    *removedCountLocal = local_removed_count;
+    ierr = MPI_Allreduce(&local_removed_count, &global_removed_count, 1, MPIU_INT, MPI_SUM, PetscObjectComm((PetscObject)swarm)); CHKERRQ(ierr);
+    *removedCountGlobal = global_removed_count;
+
+    LOG_ALLOW(LOCAL, LOG_INFO, "[Rank %d]Removed %d particles globally.\n", rank,global_removed_count);
+
+    PetscFunctionReturn(0);
+}
+*/
+
+
+/**
+ * @brief Removes particles that have been definitively flagged as LOST by the location algorithm.
+ *
+ * This function is the designated cleanup utility. It should be called after the
+ * `LocateAllParticlesInGrid` orchestrator has run and every particle's status
+ * has been definitively determined.
+ *
+ * It iterates through all locally owned particles and checks their `DMSwarm_location_status`
+ * field. If a particle's status is `LOST`, it is permanently removed from the simulation
+ * using `DMSwarmRemovePointAtIndex`.
+ *
+ * This approach centralizes the removal logic, making the `DMSwarm_location_status`
+ * the single source of truth for a particle's validity, which is more robust than
+ * relying on secondary geometric checks (like bounding boxes).
+ *
+ * @param[in,out]  user              Pointer to the UserCtx structure containing the swarm.
+ * @param[out]     removedCountLocal Pointer to store the number of particles removed on this rank.
+ * @param[out]     removedCountGlobal Pointer to store the total number of particles removed across all ranks.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ */
+/*
+PetscErrorCode CheckAndRemoveLostParticles(UserCtx *user,
+                                           PetscInt *removedCountLocal,
+                                           PetscInt *removedCountGlobal)
+{
+    PetscErrorCode ierr;
+    DM             swarm = user->swarm;
+    PetscInt       nLocalInitial;
+    PetscInt       *status_p = NULL;
+    PetscInt64     *pid_p = NULL; // For better logging
+    PetscReal      *pos_p = NULL; // For better logging
+    PetscInt       local_removed_count = 0;
+    PetscMPIInt    global_removed_count_mpi = 0;
+    PetscMPIInt    rank;
+
+    PetscFunctionBeginUser;
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    LOG_ALLOW(LOCAL, LOG_INFO, "Rank %d: Checking for and removing LOST particles...\n", rank);
+
+    *removedCountLocal = 0;
+    if (removedCountGlobal) *removedCountGlobal = 0;
+
+    ierr = DMSwarmGetLocalSize(swarm, &nLocalInitial); CHKERRQ(ierr);
+    if (nLocalInitial == 0) {
+        PetscFunctionReturn(0); // Nothing to do
+    }
+
+    // We only need the status field for the check, but getting PID and position makes for better logs.
+    ierr = DMSwarmGetField(swarm, "DMSwarm_location_status", NULL, NULL, (void **)&status_p); CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "DMSwarm_pid",             NULL, NULL, (void **)&pid_p);    CHKERRQ(ierr);
+    ierr = DMSwarmGetField(swarm, "position",                NULL, NULL, (void **)&pos_p);    CHKERRQ(ierr);
+
+    // --- Iterate BACKWARDS to handle index changes safely during removal ---
+    for (PetscInt p = nLocalInitial - 1; p >= 0; p--) {
+        if (status_p[p] == LOST) {
+            LOG_ALLOW(LOCAL, LOG_DEBUG, "Rank %d: Removing LOST particle [PID %lld] at local index %d. Position: (%g, %g, %g).\n",
+                      rank, (long long)pid_p[p], p, pos_p[3*p], pos_p[3*p+1], pos_p[3*p+2]);
+
+            // Restore all fields BEFORE modifying the swarm structure.
+            // This is the safest pattern when removing points.
+            ierr = DMSwarmRestoreField(swarm, "DMSwarm_location_status", NULL, NULL, (void **)&status_p); CHKERRQ(ierr);
+            ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid",             NULL, NULL, (void **)&pid_p);    CHKERRQ(ierr);
+            ierr = DMSwarmRestoreField(swarm, "position",                NULL, NULL, (void **)&pos_p);    CHKERRQ(ierr);
+
+            // --- Remove the particle at the current local index 'p' ---
+            ierr = DMSwarmRemovePointAtIndex(swarm, p); CHKERRQ(ierr);
+            local_removed_count++;
+
+            // --- After removal, the swarm is modified. We MUST re-acquire pointers. ---
+            PetscInt nLocalCurrent;
+            ierr = DMSwarmGetLocalSize(swarm, &nLocalCurrent); CHKERRQ(ierr);
+            if (nLocalCurrent > 0 && p > 0) { // If there are still particles left to check
+                ierr = DMSwarmGetField(swarm, "DMSwarm_location_status", NULL, NULL, (void **)&status_p); CHKERRQ(ierr);
+                ierr = DMSwarmGetField(swarm, "DMSwarm_pid",             NULL, NULL, (void **)&pid_p);    CHKERRQ(ierr);
+                ierr = DMSwarmGetField(swarm, "position",                NULL, NULL, (void **)&pos_p);    CHKERRQ(ierr);
+            } else {
+                // All remaining particles were removed, or this was the last one.
+                // Invalidate pointers and break the loop since there's nothing left to check.
+                status_p = NULL;
+                pid_p = NULL;
+                pos_p = NULL;
+                break;
+            }
+        }
+    } // End of backwards loop
+
+    // Restore fields if the loop completed without a final removal (i.e., pointers are still valid)
+    if (status_p) {
+        ierr = DMSwarmRestoreField(swarm, "DMSwarm_location_status", NULL, NULL, (void **)&status_p); CHKERRQ(ierr);
+    }
+    if (pid_p) {
+        ierr = DMSwarmRestoreField(swarm, "DMSwarm_pid",             NULL, NULL, (void **)&pid_p);    CHKERRQ(ierr);
+    }
+    if (pos_p) {
+        ierr = DMSwarmRestoreField(swarm, "position",                NULL, NULL, (void **)&pos_p);    CHKERRQ(ierr);
+    }
+
+    // Get the *final* local size after removals for logging
+    PetscInt nLocalFinal;
+    ierr = DMSwarmGetLocalSize(swarm, &nLocalFinal); CHKERRQ(ierr);
+    LOG_ALLOW(LOCAL, LOG_INFO, "Rank %d: Finished removing %d LOST particles. Final local size: %d.\n", rank, local_removed_count, nLocalFinal);
+
+    // --- Synchronize counts across all ranks ---
+    *removedCountLocal = local_removed_count;
+    if (removedCountGlobal) {
+        ierr = MPI_Allreduce(&local_removed_count, &global_removed_count_mpi, 1, MPI_INT, MPI_SUM, PetscObjectComm((PetscObject)swarm)); CHKERRQ(ierr);
+        *removedCountGlobal = global_removed_count_mpi;
+        LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "[Rank %d] Removed %d particles globally.\n",rank, *removedCountGlobal);
+    }
+
+    PetscFunctionReturn(0);
+}
+*/

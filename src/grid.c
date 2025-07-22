@@ -771,15 +771,15 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
     Cmpnts minCoords, maxCoords;
 
     // Start of function execution
-    LOG_ALLOW(GLOBAL, LOG_INFO, "ComputeLocalBoundingBox: Entering the function.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Entering the function.\n");
 
     // Validate input Pointers
     if (!user) {
-        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Input 'user' Pointer is NULL.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "Input 'user' Pointer is NULL.\n");
         return PETSC_ERR_ARG_NULL;
     }
     if (!localBBox) {
-        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Output 'localBBox' Pointer is NULL.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "Output 'localBBox' Pointer is NULL.\n");
         return PETSC_ERR_ARG_NULL;
     }
 
@@ -789,38 +789,45 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
     // Get the local coordinates vector from the DMDA
     ierr = DMGetCoordinatesLocal(user->da, &coordinates);
     if (ierr) {
-        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Error getting local coordinates vector.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "Error getting local coordinates vector.\n");
         return ierr;
     }
 
     if (!coordinates) {
-        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Coordinates vector is NULL.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "Coordinates vector is NULL.\n");
         return PETSC_ERR_ARG_NULL;
     }
 
     // Access the coordinate array for reading
     ierr = DMDAVecGetArrayRead(user->fda, coordinates, &coordArray);
     if (ierr) {
-        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Error accessing coordinate array.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "Error accessing coordinate array.\n");
         return ierr;
     }
 
     // Get the local grid information (indices and sizes)
     ierr = DMDAGetLocalInfo(user->da, &info);
     if (ierr) {
-        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Error getting DMDA local info.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "Error getting DMDA local info.\n");
         return ierr;
     }
 
+    
+    xs = info.gxs; xe = xs + info.gxm;
+    ys = info.gys; ye = ys + info.gym;
+    zs = info.gzs; ze = zs + info.gzm;
+    
+    /*
     xs = info.xs; xe = xs + info.xm;
     ys = info.ys; ye = ys + info.ym;
     zs = info.zs; ze = zs + info.zm;
-
+    */
+    
     // Initialize min and max coordinates with extreme values
     minCoords.x = minCoords.y = minCoords.z = PETSC_MAX_REAL;
     maxCoords.x = maxCoords.y = maxCoords.z = PETSC_MIN_REAL;
 
-    LOG_ALLOW(LOCAL, LOG_DEBUG, "ComputeLocalBoundingBox: Grid indices: xs=%d, xe=%d, ys=%d, ye=%d, zs=%d, ze=%d.\n", xs, xe, ys, ye, zs, ze);
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "[Rank %d] Grid indices (Including Ghosts): xs=%d, xe=%d, ys=%d, ye=%d, zs=%d, ze=%d.\n",rank, xs, xe, ys, ye, zs, ze);
 
     // Iterate over the local grid to find min and max coordinates
     for (k = zs; k < ze; k++) {
@@ -853,14 +860,14 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
     LOG_ALLOW(LOCAL,LOG_INFO," Tolerance added to the limits: %.8e .\n",(PetscReal)BBOX_TOLERANCE);
        
     // Log the computed min and max coordinates
-     LOG_ALLOW(LOCAL, LOG_INFO,"Rank - %d - Computed bounding box - minCoords=(%.6f, %.6f, %.6f), maxCoords=(%.6f, %.6f, %.6f).\n",rank,minCoords.x, minCoords.y, minCoords.z, maxCoords.x, maxCoords.y, maxCoords.z);
+     LOG_ALLOW(LOCAL, LOG_INFO,"[Rank %d]minCoords=(%.6f, %.6f, %.6f), maxCoords=(%.6f, %.6f, %.6f).\n",rank,minCoords.x, minCoords.y, minCoords.z, maxCoords.x, maxCoords.y, maxCoords.z);
 
 
     
     // Restore the coordinate array
     ierr = DMDAVecRestoreArrayRead(user->fda, coordinates, &coordArray);
     if (ierr) {
-        LOG_ALLOW(LOCAL, LOG_ERROR, "ComputeLocalBoundingBox: Error restoring coordinate array.\n");
+        LOG_ALLOW(LOCAL, LOG_ERROR, "Error restoring coordinate array.\n");
         return ierr;
     }
 
@@ -871,7 +878,7 @@ PetscErrorCode ComputeLocalBoundingBox(UserCtx *user, BoundingBox *localBBox)
     // Update the bounding box inside the UserCtx for consistency
     user->bbox = *localBBox;
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "ComputeLocalBoundingBox: Exiting the function successfully.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Exiting the function successfully.\n");
     return 0;
 }
 

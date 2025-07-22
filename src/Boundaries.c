@@ -526,7 +526,7 @@ PetscErrorCode BoundarySystem_Create(UserCtx *user, const char *bcs_filename)
     
     ierr = DMGlobalToLocalBegin(user->fda, user->Ucont, INSERT_VALUES, user->lUcont); CHKERRQ(ierr);
     ierr = DMGlobalToLocalEnd(user->fda, user->Ucont, INSERT_VALUES, user->lUcont); CHKERRQ(ierr);
-    /*
+    
      // Now, update all local vectors (including ghost cells) from the newly consistent global vectors
 
     ierr = DMLocalToGlobalBegin(user->fda, user->lUcat, INSERT_VALUES, user->Ucat); CHKERRQ(ierr);
@@ -534,7 +534,7 @@ PetscErrorCode BoundarySystem_Create(UserCtx *user, const char *bcs_filename)
     
     ierr = DMLocalToGlobalBegin(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
     ierr = DMLocalToGlobalEnd(user->fda, user->lUcont, INSERT_VALUES, user->Ucont); CHKERRQ(ierr);
-    */
+    
     
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "All boundary handlers created and initialized successfully.\n");
