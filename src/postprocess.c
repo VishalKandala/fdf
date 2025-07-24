@@ -1,4 +1,4 @@
-/*****************************************************************************/
+//*****************************************************************************/
 /*   postprocess.c
 
    This file implements a simple post-processing executable that:
@@ -237,7 +237,7 @@ static PetscErrorCode CreateAndWriteVTKFile(const char   *outFile,
 
   int err = CreateVTKFileFromMetadata(outFile, meta, comm);
   if (err) {
-    LOG_ALLOW_SYNC(LOCAL, LOG_ERROR,
+    LOG_ALLOW(LOCAL, LOG_ERROR,
               "CreateAndWriteVTKFile - CreateVTKFileFromMetadata returned code=%d.\n", err);
     SETERRQ(comm, PETSC_ERR_FILE_WRITE,
             "CreateVTKFileFromMetadata returned an error. \n");
@@ -544,6 +544,8 @@ int main(int argc, char **argv)
 
     ierr = PetscInitialize(&argc, &argv, (char *)0, help); CHKERRQ(ierr);
 
+    //    PetscPushErrorHandler(PetscTraceBackErrorHandler, NULL);
+    
     // Parse the Post Processing parameters.
     ierr = ParsePostProcessingParams(&pps); CHKERRQ(ierr);
 
@@ -553,10 +555,9 @@ int main(int argc, char **argv)
 
     // Setup the computational grid (Still needed for DMSwarm association and context)
     ierr = SetupGridAndVectors(user, block_number); CHKERRQ(ierr);
-    
-    // Create the Particle Swarm (Essential)
+        // Create the Particle Swarm (Essential)
     if(pps.outputParticles){
-      ierr = CreateParticleSwarm(user,np,&particlesPerProcess,bboxlist); CHKERRQ(ierr);
+    ierr = CreateParticleSwarm(user,np,&particlesPerProcess,bboxlist); CHKERRQ(ierr);
     } else {
       LOG_ALLOW(GLOBAL, LOG_ERROR, "Particle output disabled (-outputParticles false?), but this run focuses on particles. Exiting.\n");
       SETERRQ(PETSC_COMM_WORLD, 1, "Particle output must be enabled for this mode.");
@@ -575,7 +576,7 @@ int main(int argc, char **argv)
     LOG_ALLOW(LOCAL, LOG_INFO, "Initial Eulerian fields read successfully.\n");
     // --- End Eulerian Read ---
 
-    // Write Eulerian field data to vts files
+    // Write Eulerian field data to vts files.
     ierr =  WriteEulerianVTK(user,pps.startTime, pps.eulerianExt,pps.eulerianPrefix);
     
     // Loop over timesteps for PARTICLE processing
@@ -585,8 +586,8 @@ int main(int argc, char **argv)
         LOG_ALLOW(LOCAL,LOG_INFO, "Processing Timestep : %d for particle data.\n",ti);
 
 	// --- Read Eulerian Fields ONCE at startTime ---
-	LOG_ALLOW(LOCAL, LOG_INFO, "Reading Eulerian fields for timestep %d.\n", ti);
-	ierr = ReadSimulationFields(user,ti);
+	//	LOG_ALLOW(LOCAL, LOG_INFO, "Reading Eulerian fields for timestep %d.\n", ti);
+	//	ierr = ReadSimulationFields(user,ti);
 	if (ierr) {
 	  LOG_ALLOW(GLOBAL, LOG_ERROR, "Failed to read Eulerian fields for timestep %d. Exiting.\n", ti);
 	  // Decide how to handle this - maybe exit? Using CHKERRQ will handle exit.
@@ -599,11 +600,11 @@ int main(int argc, char **argv)
 	ierr =  WriteEulerianVTK(user,ti, pps.eulerianExt,pps.eulerianPrefix);
 
         // Pre-check size using position file and resize swarm if needed
-        ierr = PreCheckAndResizeSwarm(user,ti, "dat"); CHKERRQ(ierr);
+	ierr = PreCheckAndResizeSwarm(user,ti, "dat"); CHKERRQ(ierr);
 	
         // --- Read Particle Data (EVERY timestep) ---
         // ReadAllSwarmFields should read position and velocity for timestep 'ti'
-        ierr = ReadAllSwarmFields(user, ti);
+	ierr = ReadAllSwarmFields(user, ti);
         if (ierr) {
             // Check if the error was specifically a file open error (missing file)
             if (ierr == PETSC_ERR_FILE_OPEN) {
@@ -611,7 +612,7 @@ int main(int argc, char **argv)
             } else {
                  LOG_ALLOW(GLOBAL, LOG_ERROR, "Failed to read swarm fields for timestep %d (Error code: %d). Skipping VTK output for this step.\n", ti, ierr);
             }
-            // Skip processing for this timestep if read failed
+            // Skip processing for this timestep if read failed.
             continue;
         }
         LOG_ALLOW(LOCAL,LOG_INFO, " Particle Fields Read for timestep %d\n", ti);
@@ -619,7 +620,7 @@ int main(int argc, char **argv)
 
         // --- Write Particle Data (EVERY timestep) ---
         // WriteParticleVTK calls GatherAndWriteField for "velocity" using the "position" data also read.
-        ierr = WriteParticleVTK(user, ti, pps.particleExt, pps.particlePrefix);
+	ierr = WriteParticleVTK(user, ti, pps.particleExt, pps.particlePrefix);
         if (ierr) {
             LOG_ALLOW(GLOBAL, LOG_ERROR, "Failed to write particle VTK for timestep %d (Error code: %d).\n", ti, ierr);
             // Decide whether to continue or stop on write error. Continuing for now.
@@ -633,6 +634,6 @@ int main(int argc, char **argv)
 cleanup: // Label for finalization jump
     // Finalize simulation
     ierr = FinalizeSimulation(user, block_number, bboxlist,allowedFuncs,nAllowed,&logviewer); CHKERRQ(ierr);
-    ierr = PetscFinalize(); // Ensure PETSc is finalized
-    return ierr; // Return final PETSc error code
+
+    return 0;
 }

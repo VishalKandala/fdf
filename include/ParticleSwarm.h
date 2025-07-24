@@ -178,13 +178,15 @@ PetscErrorCode FinalizeSwarmSetup(PetscRandom *randx, PetscRandom *randy, PetscR
  * @param[in]     weights      Pointer to the array of particle weights.
  * @param[in]     positions    Pointer to the array of particle positions.
  * @param[in]     cellIndices  Pointer to the array of particle cell indices.
+ * @param[in]     velocities   Pointer to the array of particle velocities.
+ * @param[in]     LocStatus    Pointer to the array of cell location status indicators.
  * @param[out]    particle     Pointer to the Particle struct to initialize.
  *
  * @return PetscErrorCode  Returns `0` on success, non-zero on failure.
  */
-PetscErrorCode InitializeParticle(PetscInt i, const PetscInt64 *PIDs, const PetscReal *weights,
-                                         const PetscReal *positions, const PetscInt *cellIndices,
-                                         Particle *particle);
+PetscErrorCode UnpackSwarmFields(PetscInt i, const PetscInt64 *PIDs, const PetscReal *weights,
+				 const PetscReal *positions, const PetscInt *cellIndices,
+				 PetscReal *velocities,PetscInt *LocStatus,Particle *particle);
 
 /**
  * @brief Updates DMSwarm fields with data from a Particle struct.
@@ -195,43 +197,12 @@ PetscErrorCode InitializeParticle(PetscInt i, const PetscInt64 *PIDs, const Pets
  * @param[in] particle     Pointer to the Particle struct containing updated data.
  * @param[in,out] weights  Pointer to the array of particle weights.
  * @param[in,out] cellIndices Pointer to the array of particle cell indices.
+ * @param[in,out] LocStatus   Pointer to the array of cell location status indicators.
  *
  * @return PetscErrorCode  Returns `0` on success, non-zero on failure.
  */
 PetscErrorCode UpdateSwarmFields(PetscInt i, const Particle *particle,
-                                        PetscReal *weights, PetscInt *cellIndices);
-
-
-/**
- * @brief Locates all particles within the grid and calculates their interpolation weights.
- * @ingroup ParticleLocation
- *
- * This function iterates through all particles currently local to this MPI rank.
- * For each particle, it first checks if the particle is within the rank's
- * pre-calculated bounding box (`user->bbox`). If it is, it calls the
- * `LocateParticleInGrid` function to perform the walking search.
- *
- * `LocateParticleInGrid` is responsible for finding the containing cell `(i,j,k)`
- * and calculating the corresponding interpolation weights `(w1,w2,w3)`. It updates
- * the `particle->cell` and `particle->weights` fields directly upon success.
- * If the search fails (particle not found within MAX_TRAVERSAL, goes out of bounds,
- * or gets stuck without resolution), `LocateParticleInGrid` sets the particle's
- * `cell` to `{-1,-1,-1}` and `weights` to `{0.0, 0.0, 0.0}`.
- *
- * After attempting location, this function updates the corresponding entries in the
- * DMSwarm's "DMSwarm_CellID" and "weight" fields using the potentially modified
- * data from the `particle` struct.
- *
- * @param[in] user Pointer to the UserCtx structure containing grid, swarm, and bounding box info.
- *
- * @return PetscErrorCode Returns `0` on success, non-zero on failure (e.g., errors accessing DMSwarm fields).
- *
- * @note Assumes `user->bbox` is correctly initialized for the local rank.
- * @note Assumes `InitializeParticle` correctly populates the temporary `particle` struct.
- * @note Assumes `UpdateSwarmFields` correctly writes data back to the DMSwarm.
- */
-PetscErrorCode LocateAllParticlesInGrid(UserCtx *user);
-
+				 PetscReal *weights, PetscInt *cellIndices, PetscInt *status_field);
 
 /**
  * @brief Checks if a particle's location is within a specified bounding box.
@@ -266,6 +237,31 @@ PetscBool IsParticleInsideBoundingBox(const BoundingBox *bbox, const Particle *p
  * @return PetscErrorCode Returns 0 on success, or a non-zero error code on failure.
  */
 PetscErrorCode UpdateParticleWeights(PetscReal *d, Particle *particle);
+
+/**
+ * @brief Resets the location-dependent state of a loaded swarm to force relocation.
+ * @ingroup ParticleRestart
+ *
+ * This function is a critical part of the simulation restart procedure. It must be
+ * called immediately after `ReadAllSwarmFields` has populated a swarm from restart
+ * files. Its purpose is to invalidate the "location" state of the loaded particles,
+ * ensuring that the `LocateAllParticlesInGrid_TEST` orchestrator performs a fresh,
+ * comprehensive search for every particle based on its loaded position.
+ *
+ * It does this by performing two actions on every locally-owned particle:
+ * 1.  It resets the `DMSwarm_CellID` field to a sentinel value of `(-1, -1, -1)`.
+ *     This invalidates any cell index that might have been loaded or defaulted to 0.
+ * 2.  It sets the `DMSwarm_location_status` field to `NEEDS_LOCATION`.
+ *
+ * This guarantees that the location logic will not mistakenly use a stale cell index
+ * from a previous run and will instead use the robust "Guess -> Verify" strategy
+ * appropriate for particles with unknown locations.
+ *
+ * @param[in,out] user Pointer to the UserCtx structure which contains the `DMSwarm` object
+ *                     that has just been loaded with data from restart files.
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code if field access fails.
+ */
+PetscErrorCode PrepareLoadedSwarmForRelocation(UserCtx *user);
 
 /**
  * @brief Perform particle swarm initialization, particle-grid interaction, and related operations.

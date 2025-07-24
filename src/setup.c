@@ -17,6 +17,8 @@
     // Register the event with a descriptive name
     ierr = PetscLogEventRegister("walkingsearch", PETSC_OBJECT_CLASSID, &EVENT_walkingsearch);
     ierr = PetscLogEventRegister("Individualwalkingsearch", PETSC_OBJECT_CLASSID, &EVENT_Individualwalkingsearch);
+    ierr = PetscLogEventRegister("GlobalParticleLocation", PETSC_OBJECT_CLASSID, &EVENT_GlobalParticleLocation);
+    ierr = PetscLogEventRegister("IndividualLocation", PETSC_OBJECT_CLASSID, &EVENT_IndividualLocation);
     CHKERRQ(ierr);
     return 0;
 }
@@ -200,7 +202,7 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
     if (!user) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx pointer is null.");
     // This function assumes it's handling a single block context passed from main.
     if (block_number != 1) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "SetupGridAndVectors is optimized for block_number=1 but was called with %d. The loop will run, but ensure `user` is an array.", block_number);
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "SetupGridAndVectors is optimized for block_number=1 but was called with %d. The loop will run, but ensure `user` is an array.\n", block_number);
     }
 
     // --- 1. Define Grid DMs and Assign Physical Coordinates ---
@@ -219,7 +221,7 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
     }
 
     // --- 3. Create and Initialize All Vectors ---
-    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Creating and initializing all simulation vectors.");
+    LOG_ALLOW(GLOBAL, LOG_DEBUG, "Creating and initializing all simulation vectors.\n");
     // Primary Field Vecs
     ierr = DMCreateGlobalVector(user->fda, &user->Ucat); CHKERRQ(ierr);
     ierr = DMCreateGlobalVector(user->fda, &user->Ucont); CHKERRQ(ierr);
@@ -278,13 +280,13 @@ PetscErrorCode SetupGridAndVectors(UserCtx *user, PetscInt block_number) {
     ierr = ComputeCellCenteredJacobianInverse(user); CHKERRQ(ierr);
     ierr = CheckAndFixGridOrientation(user); CHKERRQ(ierr);
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "Primary metrics (Csi, Eta, Zet, Aj) computed and prepared.");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Primary metrics (Csi, Eta, Zet, Aj) computed and prepared.\n");
 
     // --- (Optional) Compute face-centered metrics ---
     // ierr = ComputeFaceCenteredMetrics(user); CHKERRQ(ierr);
 
     LOG_ALLOW_SYNC(GLOBAL, LOG_INFO, "Grid and vectors setup completed on all ranks.\n");
-    PetscFunctionReturn(0);
+    PetscFunctionReturn(0); 
 }
 
 /**
@@ -304,14 +306,7 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
 
     ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr); // Corrected: use &rank
 
-
-    // Create an ASCII viewer to write log output to file
-    ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, "simulationlog.txt", logviewer);
-
-    LOG_ALLOW(GLOBAL,LOG_INFO," PETSC Logs written \n");
-    
-    // Print PETSc logging results at the end
-    ierr = PetscLogView(*logviewer); CHKERRQ(ierr);
+    PetscBool logActive;
     
     // Destroy DM and vectors for each block
     for (PetscInt bi = 0; bi < block_number; bi++) {
@@ -343,13 +338,18 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
 	LOG_ALLOW(GLOBAL,LOG_DEBUG," Zet Destroyed \n");
 	ierr = VecDestroy(&(user[bi].Aj)); CHKERRQ(ierr);
         ierr = VecDestroy(&(user[bi].lAj)); CHKERRQ(ierr);
-	LOG_ALLOW(GLOBAL,LOG_DEBUG," Ucont Destroyed \n");
+	LOG_ALLOW(GLOBAL,LOG_DEBUG," Aj Destroyed \n");
 	
 	//  ierr = DMDestroy(&(user[bi].fda)); CHKERRQ(ierr);
 	//	LOG_ALLOW(GLOBAL,LOG_DEBUG," fda Destroyed \n");
 
-	LOG_ALLOW(GLOBAL, LOG_INFO, "Finalizing simulation, destroying boundary system.\n");
 	ierr = BoundarySystem_Destroy(&user[bi]); CHKERRQ(ierr);
+
+	LOG_ALLOW(GLOBAL, LOG_INFO, "Boundary system destroyed.\n");
+	
+	if(user[bi].RankCellInfoMap){
+	ierr = PetscFree(user[bi].RankCellInfoMap); CHKERRQ(ierr);
+	}
 	
         ierr = DMDestroy(&(user[bi].da)); CHKERRQ(ierr);
 	LOG_ALLOW(GLOBAL,LOG_DEBUG," da Destroyed \n");
@@ -357,15 +357,29 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
 	LOG_ALLOW(GLOBAL,LOG_DEBUG," swarm Destroyed \n");
     }
 
-   
-    // Free user context
-    ierr = PetscFree(user); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL,LOG_DEBUG," user Destroyed \n");     
+     // Create an ASCII viewer to write log output to file
+       ierr = PetscViewerASCIIOpen(PETSC_COMM_WORLD, "simulationlog.txt", logviewer); CHKERRQ(ierr);
+    
+      ierr = PetscLogIsActive(&logActive); CHKERRQ(ierr);
+     if (logActive) {
+       ierr = PetscLogView(*logviewer); CHKERRQ(ierr);
+     }
+    
+     ierr = PetscViewerDestroy(logviewer); CHKERRQ(ierr);
+
+     LOG_ALLOW(GLOBAL,LOG_INFO," PETSC Logs written \n");   
+    
     // Now free bboxlist on all ranks since all allocated their own copy
     if (bboxlist) {
         free(bboxlist);
         bboxlist = NULL;
     }
+
+    LOG_ALLOW(GLOBAL,LOG_DEBUG," bboxlist Destroyed \n");     
+    
+    // Free user context
+    ierr = PetscFree(user); CHKERRQ(ierr);
+    LOG_ALLOW(GLOBAL,LOG_DEBUG," user Destroyed \n");     
 
     if (allowedFuncs && nAllowed > 0) {
         ierr = FreeAllowedFunctions(allowedFuncs, nAllowed); CHKERRQ(ierr);
@@ -375,7 +389,7 @@ PetscErrorCode FinalizeSimulation(UserCtx *user, PetscInt block_number, Bounding
 
     // Ensure all MPI ranks reach this point before finalizing PETSc
     ierr = MPI_Barrier(PETSC_COMM_WORLD); CHKERRQ(ierr);
-
+    
     // Finalize PETSc
     ierr = PetscFinalize(); CHKERRQ(ierr);
     return 0;
@@ -511,19 +525,29 @@ PetscErrorCode Allocate3DArrayVector(Cmpnts ****array, PetscInt nz, PetscInt ny,
   Cmpnts         ***data;
   Cmpnts         *dataContiguous;
   PetscInt       k, j;
+  PetscMPIInt    rank;
 
   PetscFunctionBegin;
+
+  ierr = MPI_Comm_rank(PETSC_COMM_WORLD,&rank);
+  
   /* Step 1: Allocate memory for nz layer pointers (zeroed) */
   ierr = PetscCalloc1(nz, &data); CHKERRQ(ierr);
 
+  LOG_ALLOW(LOCAL,LOG_DEBUG," [Rank %d] memory allocated for outermost layer (%d k-layer pointers).\n",rank,nz);
+  
   /* Step 2: Allocate memory for all row pointers (nz * ny pointers) */
   ierr = PetscCalloc1(nz * ny, &data[0]); CHKERRQ(ierr);
   for (k = 1; k < nz; k++) {
     data[k] = data[0] + k * ny;
   }
 
+  LOG_ALLOW(LOCAL,LOG_DEBUG,"[Rank %d] memory allocated for %dx%d row pointers.\n",rank,nz,ny);
+  
   /* Step 3: Allocate one contiguous block for nz*ny*nx Cmpnts structures (zeroed) */
   ierr = PetscCalloc1(nz * ny * nx, &dataContiguous); CHKERRQ(ierr);
+
+  LOG_ALLOW(GLOBAL,LOG_DEBUG,"[Rank %d] memory allocated for contigous block of %dx%dx%d Cmpnts structures).\n",rank,nz,ny,nx); 
 
   /* Build the 3D pointer structure for vector data */
   for (k = 0; k < nz; k++) {
@@ -532,6 +556,9 @@ PetscErrorCode Allocate3DArrayVector(Cmpnts ****array, PetscInt nz, PetscInt ny,
       /* The PetscCalloc1 call has already initialized each Cmpnts to zero. */
     }
   }
+
+  LOG_ALLOW(GLOBAL,LOG_DEBUG,"[Rank %d] 3D pointer structure for vector data created. \n",rank);
+  
   *array = data;
   PetscFunctionReturn(0);
 }
@@ -735,6 +762,53 @@ PetscErrorCode GetOwnedCellRange(const DMDALocalInfo *info_nodes,
         }
     }
     PetscFunctionReturn(ierr);
+}
+
+/**
+ * @brief Gets the global cell range for a rank, including boundary cells.
+ *
+ * This function first calls GetOwnedCellRange to get the conservative range of
+ * fully-contained cells. It then extends this range by applying the
+ * "Lower-Rank-Owns-Boundary" principle. A rank claims ownership of the
+ * boundary cells it shares with neighbors in the positive (+x, +y, +z)
+ * directions.
+ *
+ * This results in a final cell range that is gap-free and suitable for building
+ * the definitive particle ownership map.
+ *
+ * @param[in]  info_nodes       Pointer to the DMDALocalInfo struct.
+ * @param[in]  neighbors        Pointer to the RankNeighbors struct containing neighbor info.
+ * @param[in]  dim              The dimension (0 for i/x, 1 for j/y, 2 for k/z).
+ * @param[out] xs_cell_global_out Pointer to store the final starting cell index.
+ * @param[out] xm_cell_local_out  Pointer to store the final number of cells.
+ *
+ * @return PetscErrorCode 0 on success, or an error code on failure.
+ */
+PetscErrorCode GetGhostedCellRange(const DMDALocalInfo *info_nodes,
+                                   const RankNeighbors *neighbors,
+                                   PetscInt dim,
+                                   PetscInt *xs_cell_global_out,
+                                   PetscInt *xm_cell_local_out)
+{
+    PetscErrorCode ierr;
+
+    PetscFunctionBeginUser;
+
+    // --- 1. Get the base, conservative range from the original function ---
+    ierr = GetOwnedCellRange(info_nodes, dim, xs_cell_global_out, xm_cell_local_out); CHKERRQ(ierr);
+
+    // --- 2. Apply the "Lower-Rank-Owns-Boundary" correction ---
+    // A rank owns the boundary if it has a neighbor in the positive direction.
+    // We check if the neighbor's rank is valid (not MPI_PROC_NULL, which is < 0).
+    if (dim == 0 && neighbors->rank_xp > -1) {
+        (*xm_cell_local_out)++;
+    } else if (dim == 1 && neighbors->rank_yp > -1) {
+        (*xm_cell_local_out)++;
+    } else if (dim == 2 && neighbors->rank_zp > -1) {
+        (*xm_cell_local_out)++;
+    }
+
+    PetscFunctionReturn(0);
 }
 
 /**
@@ -980,7 +1054,7 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
     ierr = DMDAGetNeighbors(user->da, &neighbor_ranks_ptr); CHKERRQ(ierr);
 
     // Log the raw values from DMDAGetNeighbors for boundary-relevant directions for debugging
-    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "[CASNR - Rank %d] Raw DMDAGetNeighbors: xm_raw=%d, xp_raw=%d, ym_raw=%d, yp_raw=%d, zm_raw=%d, zp_raw=%d. MPI_PROC_NULL is %d.",
+    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "[Rank %d]Raw DMDAGetNeighbors: xm_raw=%d, xp_raw=%d, ym_raw=%d, yp_raw=%d, zm_raw=%d, zp_raw=%d. MPI_PROC_NULL is %d.\n",
                    rank,
                    neighbor_ranks_ptr[12], neighbor_ranks_ptr[14],
                    neighbor_ranks_ptr[10], neighbor_ranks_ptr[16],
@@ -1008,55 +1082,55 @@ PetscErrorCode ComputeAndStoreNeighborRanks(UserCtx *user)
     PetscMPIInt temp_neighbor;
 
     temp_neighbor = neighbor_ranks_ptr[12]; // xm
-    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid xm neighbor %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+    if (temp_neighbor < 0  || temp_neighbor >= size) {
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid xm neighbor %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_xm = MPI_PROC_NULL;
     } else {
         user->neighbors.rank_xm = temp_neighbor;
     }
 
     temp_neighbor = neighbor_ranks_ptr[14]; // xp
-    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid xp neighbor %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+    if (temp_neighbor < 0 || temp_neighbor >= size) {
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid xp neighbor %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_xp = MPI_PROC_NULL;
     } else {
         user->neighbors.rank_xp = temp_neighbor;
     }
 
     temp_neighbor = neighbor_ranks_ptr[10]; // ym
-    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid ym neighbor %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+    if (temp_neighbor < 0 || temp_neighbor >= size) {
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid ym neighbor %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_ym = MPI_PROC_NULL;
     } else {
         user->neighbors.rank_ym = temp_neighbor;
     }
 
     temp_neighbor = neighbor_ranks_ptr[16]; // yp
-    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
+    if (temp_neighbor < 0 || temp_neighbor >= size) {
         // The log for index 16 was "zm" in your output, should be yp
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid yp neighbor (raw index 16) %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid yp neighbor (raw index 16) %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_yp = MPI_PROC_NULL;
     } else {
         user->neighbors.rank_yp = temp_neighbor;
     }
 
     temp_neighbor = neighbor_ranks_ptr[4]; // zm
-    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid zm neighbor %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+    if (temp_neighbor < 0 || temp_neighbor >= size) {
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid zm neighbor %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_zm = MPI_PROC_NULL;
     } else {
         user->neighbors.rank_zm = temp_neighbor;
     }
 
     temp_neighbor = neighbor_ranks_ptr[22]; // zp
-    if ((temp_neighbor < 0 && temp_neighbor != MPI_PROC_NULL) || temp_neighbor >= size) {
-        LOG_ALLOW(GLOBAL, LOG_WARNING, "[CASNR - Rank %d] Correcting invalid zp neighbor %d to MPI_PROC_NULL (%d).", rank, temp_neighbor, (int)MPI_PROC_NULL);
+    if (temp_neighbor < 0 || temp_neighbor >= size) {
+        LOG_ALLOW(GLOBAL, LOG_WARNING, "[Rank %d] Correcting invalid zp neighbor %d to MPI_PROC_NULL (%d).\n", rank, temp_neighbor, (int)MPI_PROC_NULL);
         user->neighbors.rank_zp = MPI_PROC_NULL;
     } else {
         user->neighbors.rank_zp = temp_neighbor;
     }
 
-    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "[CASNR - Rank %d] Stored user->neighbors: xm=%d, xp=%d, ym=%d, yp=%d, zm=%d, zp=%d\n", rank,
+    LOG_ALLOW_SYNC(GLOBAL, LOG_DEBUG, "[Rank %d] Stored user->neighbors: xm=%d, xp=%d, ym=%d, yp=%d, zm=%d, zp=%d\n", rank,
               user->neighbors.rank_xm, user->neighbors.rank_xp,
               user->neighbors.rank_ym, user->neighbors.rank_yp,
               user->neighbors.rank_zm, user->neighbors.rank_zp);
@@ -1160,19 +1234,23 @@ PetscErrorCode SetupDomainRankInfo(UserCtx *user, BoundingBox **bboxlist)
 
     PetscFunctionBeginUser;
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "SetupDomainRankCommunications: Starting full rank communication setup.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Starting full rank communication setup.\n");
 
     // Step 1: Compute and store neighbor ranks
     ierr = ComputeAndStoreNeighborRanks(user); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL, LOG_INFO, "SetupDomainRankCommunications: Neighbor ranks computed and stored.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Neighbor ranks computed and stored.\n");
 
     // Step 2: Gather all local bounding boxes on rank 0
     ierr = GatherAllBoundingBoxes(user, bboxlist); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL, LOG_INFO, "SetupDomainRankCommunications: Bounding boxes gathered on rank 0.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Bounding boxes gathered on rank 0.\n");
 
     // Step 3: Broadcast bounding box list to all ranks
     ierr = BroadcastAllBoundingBoxes(user, bboxlist); CHKERRQ(ierr);
-    LOG_ALLOW(GLOBAL, LOG_INFO, "SetupDomainRankCommunications: Bounding boxes broadcasted to all ranks.\n");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Bounding boxes broadcasted to all ranks.\n");
+
+    // Step 4: Setup Domain Cell Composition
+    ierr = SetupDomainCellDecompositionMap(user);
+    LOG_ALLOW(GLOBAL,LOG_INFO, "Domain Cell Composition set and broadcasted to all ranks. \n");
 
     LOG_ALLOW(GLOBAL, LOG_INFO, "SetupDomainRankCommunications: Completed successfully.\n");
 
@@ -1365,8 +1443,13 @@ PetscErrorCode SetupBoundaryConditions(UserCtx *user)
     char           bcs_filename_buffer[PETSC_MAX_PATH_LEN];
     PetscFunctionBeginUser;
 
-    LOG_ALLOW(GLOBAL, LOG_INFO, "Starting boundary condition system setup...");
+    ierr = MPI_Barrier(PETSC_COMM_WORLD);
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Starting boundary condition system setup...\n");
 
+    // Set all boundary faces to be zero initially
+    PetscMemzero(user->boundary_faces,6 * sizeof(*user->boundary_faces));
+
+    
     // --- Step 1: Determine the BCs configuration file name ---
     // Set a default name first.
     ierr = PetscStrcpy(bcs_filename_buffer, "bcs.dat"); CHKERRQ(ierr);
@@ -1375,15 +1458,155 @@ PetscErrorCode SetupBoundaryConditions(UserCtx *user)
     ierr = PetscOptionsGetString(NULL, NULL, "-bcs_file", bcs_filename_buffer, sizeof(bcs_filename_buffer), &bcsFileOptionFound); CHKERRQ(ierr);
     
     if (bcsFileOptionFound) {
-        LOG_ALLOW(GLOBAL, LOG_INFO, "Using user-specified boundary conditions file: '%s'", bcs_filename_buffer);
+        LOG_ALLOW(GLOBAL, LOG_INFO, "Using user-specified boundary conditions file: '%s'.\n", bcs_filename_buffer);
     } else {
-        LOG_ALLOW(GLOBAL, LOG_INFO, "No -bcs_file option found. Using default: '%s'", bcs_filename_buffer);
+        LOG_ALLOW(GLOBAL, LOG_INFO, "No -bcs_file option found. Using default: '%s'.\n", bcs_filename_buffer);
     }
 
     // --- Step 2: Call the main creator for the boundary system ---
     // This single call will parse the file, create all handlers, and initialize them.
     ierr = BoundarySystem_Create(user, bcs_filename_buffer); CHKERRQ(ierr);
     
-    LOG_ALLOW(GLOBAL, LOG_INFO, "Boundary condition system setup complete.");
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Boundary condition system setup complete.\n");
+    PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Creates and distributes a map of the domain's cell decomposition to all ranks.
+ * @ingroup DomainInfo
+ *
+ * This function is a critical part of the simulation setup. It determines the global
+ * cell ownership for each MPI rank and makes this information available to all
+ * other ranks. This "decomposition map" is essential for the robust "Walk and Handoff"
+ * particle migration strategy, allowing any rank to quickly identify the owner of a
+ * target cell.
+ *
+ * The process involves:
+ * 1. Each rank gets its own node ownership information from the DMDA.
+ * 2. It converts this node information into cell ownership ranges using the
+ *    `GetOwnedCellRange` helper function.
+ * 3. It participates in an `MPI_Allgather` collective operation to build a complete
+ *    array (`user->RankCellInfoMap`) containing the ownership information for every rank.
+ *
+ * This function should be called once during initialization after the primary DMDA
+ * (user->da) has been set up.
+ *
+ * @param[in,out] user Pointer to the UserCtx structure. The function will allocate and
+ *                     populate `user->RankCellInfoMap` and set `user->num_ranks`.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ *         Errors can occur if input pointers are NULL or if MPI communication fails.
+ */
+PetscErrorCode SetupDomainCellDecompositionMap(UserCtx *user)
+{
+    PetscErrorCode ierr;
+    DMDALocalInfo  local_node_info;
+    RankCellInfo   my_cell_info;
+    PetscMPIInt    rank, size;
+
+    PetscFunctionBeginUser;
+
+    // --- 1. Input Validation and MPI Info ---
+    if (!user) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "UserCtx pointer is NULL in SetupDomainCellDecompositionMap.");
+    }
+    if (!user->da) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONGSTATE, "user->da is not initialized in SetupDomainCellDecompositionMap.");
+    }
+
+    ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRQ(ierr);
+    ierr = MPI_Comm_size(PETSC_COMM_WORLD, &size); CHKERRQ(ierr);
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Setting up domain cell decomposition map for %d ranks.\n", size);
+
+    // --- 2. Determine Local Cell Ownership ---
+    // Get the local node ownership information from the primary DMDA.
+    ierr = DMDAGetLocalInfo(user->da, &local_node_info); CHKERRQ(ierr);
+
+    // Use the robust helper function to convert node ownership to cell ownership.
+    // A cell's index is defined by its origin node.
+    
+    ierr = GetGhostedCellRange(&local_node_info, &user->neighbors, 0, &my_cell_info.xs_cell, &my_cell_info.xm_cell); CHKERRQ(ierr);
+    ierr = GetGhostedCellRange(&local_node_info, &user->neighbors, 1, &my_cell_info.ys_cell, &my_cell_info.ym_cell); CHKERRQ(ierr);
+    ierr = GetGhostedCellRange(&local_node_info, &user->neighbors, 2, &my_cell_info.zs_cell, &my_cell_info.zm_cell); CHKERRQ(ierr);
+    
+    /*
+    ierr = GetOwnedCellRange(&local_node_info, 0, &my_cell_info.xs_cell, &my_cell_info.xm_cell); CHKERRQ(ierr);
+    ierr = GetOwnedCellRange(&local_node_info, 1, &my_cell_info.ys_cell, &my_cell_info.ym_cell); CHKERRQ(ierr);
+    ierr = GetOwnedCellRange(&local_node_info, 2, &my_cell_info.zs_cell, &my_cell_info.zm_cell); CHKERRQ(ierr);
+    */
+    // Log the calculated local ownership for debugging purposes.
+    LOG_ALLOW(LOCAL, LOG_DEBUG, "[Rank %d] Owns cells: i[%d, %d), j[%d, %d), k[%d, %d)\n",
+              rank, my_cell_info.xs_cell, my_cell_info.xs_cell + my_cell_info.xm_cell,
+              my_cell_info.ys_cell, my_cell_info.ys_cell + my_cell_info.ym_cell,
+              my_cell_info.zs_cell, my_cell_info.zs_cell + my_cell_info.zm_cell);
+
+    // --- 3. Allocate and Distribute the Global Map ---
+    // Allocate memory for the global map that will hold information from all ranks.
+    ierr = PetscMalloc1(size, &user->RankCellInfoMap); CHKERRQ(ierr);
+
+    // Perform the collective communication to gather the `RankCellInfo` struct from every rank.
+    // Each rank sends its `my_cell_info` and receives the complete array in `user->RankCellInfoMap`.
+    // We use MPI_BYTE to ensure portability across different systems and struct padding.
+    ierr = MPI_Allgather(&my_cell_info, sizeof(RankCellInfo), MPI_BYTE,
+                         user->RankCellInfoMap, sizeof(RankCellInfo), MPI_BYTE,
+                         PETSC_COMM_WORLD); CHKERRQ(ierr);
+
+    LOG_ALLOW(GLOBAL, LOG_INFO, "Domain cell decomposition map created and distributed successfully.\n");
+
+    PetscFunctionReturn(0);
+}
+
+/**
+ * @brief Performs a binary search for a key in a sorted array of PetscInt64.
+ *
+ * This is a standard binary search algorithm implemented as a PETSc-style helper function.
+ * It efficiently determines if a given `key` exists within a `sorted` array.
+ *
+ * @param[in]  n      The number of elements in the array.
+ * @param[in]  arr    A pointer to the sorted array of PetscInt64 values to be searched.
+ * @param[in]  key    The PetscInt64 value to search for.
+ * @param[out] found  A pointer to a PetscBool that will be set to PETSC_TRUE if the key
+ *                    is found, and PETSC_FALSE otherwise.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ *
+ * @note The input array `arr` **must** be sorted in ascending order for the algorithm
+ *       to work correctly.
+ */
+PetscErrorCode BinarySearchInt64(PetscInt n, const PetscInt64 arr[], PetscInt64 key, PetscBool *found)
+{
+    PetscInt low = 0, high = n - 1;
+
+    PetscFunctionBeginUser;
+
+    // --- 1. Input Validation ---
+    if (!found) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Output pointer 'found' is NULL in PetscBinarySearchInt64.");
+    }
+    if (n > 0 && !arr) {
+        SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_NULL, "Input array 'arr' is NULL for n > 0.");
+    }
+    
+    // Initialize output
+    *found = PETSC_FALSE;
+
+    // --- 2. Binary Search Algorithm ---
+    while (low <= high) {
+        // Use this form to prevent potential integer overflow on very large arrays
+        PetscInt mid = low + (high - low) / 2;
+
+        if (arr[mid] == key) {
+            *found = PETSC_TRUE; // Key found!
+            break;               // Exit the loop
+        }
+        
+        if (arr[mid] < key) {
+            low = mid + 1; // Search in the right half
+        } else {
+            high = mid - 1; // Search in the left half
+        }
+    }
+
     PetscFunctionReturn(0);
 }

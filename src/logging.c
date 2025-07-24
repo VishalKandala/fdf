@@ -32,6 +32,8 @@ static int gNumAllowed = 0;
 
 PetscLogEvent EVENT_Individualwalkingsearch = 0 ; //Individual walking search in (walkingsearch.c/LocateParticleInGrid()
 PetscLogEvent EVENT_walkingsearch = 0 ; // Total walking search in (ParticleSwarm.c/LocateAllParticlesInGrid()
+PetscLogEvent EVENT_GlobalParticleLocation = 0; // Global Particle Location routine (Search + Hand-Off)
+PetscLogEvent EVENT_IndividualLocation = 0;
 
 // --------------------- Function Implementations ---------------------
 
@@ -76,31 +78,38 @@ LogLevel get_log_level() {
  * the corresponding log level name. It helps verify the logging configuration 
  * at runtime.
  *
- * The log levels supported are:
- * - `LOG_PROFILE` (0) : Logs performance profiling details.
- * - `LOG_ERROR`   (1) : Logs only critical errors.
- * - `LOG_WARNING` (2) : Logs warnings and errors.
- * - `LOG_INFO`    (3) : Logs general information, warnings, and errors.
- * - `LOG_DEBUG`   (4) : Logs debugging information, info, warnings, and errors.
- *
  * @note The log level is determined from the `LOG_LEVEL` environment variable.
- * If `LOG_LEVEL` is not set, it defaults to `LOG_INFO`.
+ *       If `LOG_LEVEL` is not set, it defaults to `LOG_INFO`.
  *
  * @see get_log_level()
  */
-void print_log_level() {
-    int level = get_log_level();
-    const char *level_name = (level == LOG_ERROR)   ? "ERROR" :
-                             (level == LOG_WARNING) ? "WARNING" :
-                             (level == LOG_INFO)    ? "INFO" :
-                             (level == LOG_DEBUG)   ? "DEBUG" :
-                             (level == LOG_PROFILE) ? "PROFILE" : "UNKNOWN";
-    
-    PetscPrintf(PETSC_COMM_WORLD,"Current log level: %s (%d)\n", level_name, level);
+PetscErrorCode print_log_level(void)
+{
+  PetscMPIInt     rank;
+  PetscErrorCode  ierr;
+  int             level;
+  const char     *level_name;
+
+  PetscFunctionBeginUser;
+  /* get MPI rank */
+  ierr = MPI_Comm_rank(PETSC_COMM_WORLD, &rank); CHKERRMPI(ierr);
+
+  /* decide level name */
+  level       = get_log_level();
+  level_name = (level == LOG_ERROR)   ? "ERROR"   :
+               (level == LOG_WARNING) ? "WARNING" :
+               (level == LOG_INFO)    ? "INFO"    :
+               (level == LOG_DEBUG)   ? "DEBUG"   :
+               (level == LOG_PROFILE) ? "PROFILE" : "UNKNOWN";
+
+  /* print it out */
+  ierr = PetscPrintf(PETSC_COMM_SELF,
+                     "Current log level: %s (%d) | rank: %d\n",
+                     level_name, level, (int)rank);
+  CHKERRMPI(ierr);
+
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
-
-
-
 
 /**
  * @brief Sets the global list of function names that are allowed to log.
@@ -745,7 +754,7 @@ const char* BCHandlerTypeToString(BCHandlerType handler_type) {
         // Inlet Handlers
         case BC_HANDLER_INLET_CONSTANT_VELOCITY: return "constant_velocity";
         case BC_HANDLER_INLET_PULSANTILE_FLUX:   return "pulsatile_flux";
-        case BC_HANDLER_INLET_DEVELOPED_PROFILE: return "developed_profile";
+        case BC_HANDLER_INLET_PARABOLIC: return "parabolic";
 
         // Outlet Handlers
         case BC_HANDLER_OUTLET_CONSERVATION:     return "conservation";

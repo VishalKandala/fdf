@@ -189,6 +189,32 @@ PetscErrorCode GetOwnedCellRange(const DMDALocalInfo *info_nodes,
                                  PetscInt *xm_cell_local);
 
 /**
+ * @brief Gets the global cell range for a rank, including boundary cells.
+ *
+ * This function first calls GetOwnedCellRange to get the conservative range of
+ * fully-contained cells. It then extends this range by applying the
+ * "Lower-Rank-Owns-Boundary" principle. A rank claims ownership of the
+ * boundary cells it shares with neighbors in the positive (+x, +y, +z)
+ * directions.
+ *
+ * This results in a final cell range that is gap-free and suitable for building
+ * the definitive particle ownership map.
+ *
+ * @param[in]  info_nodes       Pointer to the DMDALocalInfo struct.
+ * @param[in]  neighbors        Pointer to the RankNeighbors struct containing neighbor info.
+ * @param[in]  dim              The dimension (0 for i/x, 1 for j/y, 2 for k/z).
+ * @param[out] xs_cell_global_out Pointer to store the final starting cell index.
+ * @param[out] xm_cell_local_out  Pointer to store the final number of cells.
+ *
+ * @return PetscErrorCode 0 on success, or an error code on failure.
+ */
+PetscErrorCode GetGhostedCellRange(const DMDALocalInfo *info_nodes,
+                                   const RankNeighbors *neighbors,
+                                   PetscInt dim,
+                                   PetscInt *xs_cell_global_out,
+                                   PetscInt *xm_cell_local_out);
+
+/**
  * @brief Updates the local vector (including ghost points) from its corresponding global vector.
  *
  * This function identifies the correct global vector, local vector, and DM based on the
@@ -204,88 +230,6 @@ PetscErrorCode GetOwnedCellRange(const DMDALocalInfo *info_nodes,
  *       been populated with the desired data (including any boundary conditions).
  */
 PetscErrorCode UpdateLocalGhosts(UserCtx* user, const char *fieldName);
-
-/**
- * @brief Initializes or updates all necessary simulation fields for a given timestep.
- *
- * This function handles the logic for either:
- * A) Initializing fields analytically (for the first step or if not reading):
- *    - Sets interior values using SetAnalyticalCartesianField.
- *    - Applies boundary conditions using ApplyAnalyticalBC.
- *    - Updates local vectors with ghosts using UpdateLocalGhosts.
- *    - Optionally writes the initial fields.
- * B) Reading fields from a file for a specific timestep index:
- *    - Reads global vectors using ReadSimulationFields.
- *    - Updates local vectors with ghosts using UpdateLocalGhosts.
- * C) Updating fields using a fluid solver (Placeholder for future integration):
- *    - Calls a placeholder function SolveFluidEquations.
- *    - Applies boundary conditions using ApplyAnalyticalBC.
- *    - Updates local vectors with ghosts using UpdateLocalGhosts.
- *
- * @param user        Pointer to the UserCtx structure.
- * @param step        The current timestep number (0 for initial step).
- * @param time        The current simulation time.
- * @param readFields  Flag indicating whether to read fields from file.
- * @param fieldSource Source for field data (e.g., ANALYTICAL, FILE, SOLVER).
- *                    (Here using readFields bool for simplicity based on original code)
- *
- * @return PetscErrorCode 0 on success, non-zero on failure.
- */
-PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartStep, PetscReal time, PetscBool readFields);
-
-
-/**
- * @brief Performs the complete initial setup for the particle simulation at time t=0.
- *
- * This includes:
- * 1. Initial locating of particles (based on their potentially arbitrary initial assignment).
- * 2. A preliminary migration cycle to ensure particles are on the MPI rank that owns
- *    their initial physical region.
- * 3. If `user->ParticleInitialization == 0` (Surface Init), re-initializes particles on the
- *    designated inlet surface. This ensures particles migrated to an inlet-owning rank
- *    are correctly distributed on that surface.
- * 4. A final locating of all particles to get their correct cell indices and interpolation weights.
- * 5. Interpolation of initial Eulerian fields to the particles.
- * 6. Scattering of particle data to Eulerian fields (if applicable).
- * 7. Outputting initial data if requested.
- *
- * @param user Pointer to the UserCtx structure.
- * @param currentTime The current simulation time (should be StartTime, typically 0.0).
- * @param step The current simulation step (should be StartStep, typically 0).
- * @param readFields Flag indicating if Eulerian fields were read from file (influences output).
- * @param bboxlist Array of BoundingBox structures for domain decomposition.
- * @param OutputFreq Frequency for writing output files.
- * @param StepsToRun Total number of simulation steps planned (used for output logic on setup-only runs).
- * @param StartStep The starting step of the simulation (used for output logic).
- * @return PetscErrorCode 0 on success, non-zero on failure.
- */
-PetscErrorCode PerformInitialSetup(UserCtx *user, PetscReal currentTime, PetscInt step,
-                                   PetscBool readFields, const BoundingBox *bboxlist,
-                                   PetscInt OutputFreq, PetscInt StepsToRun, PetscInt StartStep);
-
-/**
- * @brief Executes the main time-marching loop for the particle simulation.
- *
- * This function performs the following steps repeatedly:
- * 1. Updates/Sets the background fluid velocity field (Ucat) for the current step.
- * 2. Updates particle positions using velocity from the *previous* step's interpolation.
- *    (Note: For the very first step (step=StartStep), the velocity used might be zero
- *     or an initial guess if not handled carefully).
- * 3. Locates particles in the grid based on their *new* positions.
- * 4. Interpolates the fluid velocity (from the *current* Ucat) to the new particle locations.
- * 5. Logs errors and outputs data at specified intervals.
- *
- * @param user         Pointer to the UserCtx structure.
- * @param StartStep    The initial step number (e.g., 0 for a new run, >0 for restart).
- * @param StartTime    The simulation time corresponding to StartStep.
- * @param StepsToRun   The number of steps to execute in this run.
- * @param OutputFreq   Frequency (in number of steps) at which to output data and log errors.
- * @param readFields   Flag indicating whether to read initial fields (only at StartStep).
- * @param bboxlist     A list that contains the bounding boxes of all the ranks.
- *
- * @return PetscErrorCode 0 on success, non-zero on failure.
- */
-PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal StartTime, PetscInt StepsToRun, PetscInt OutputFreq, PetscBool readFields, const BoundingBox *bboxlist);
 
 /**
  * @brief Computes and stores the Cartesian neighbor ranks for the DMDA decomposition.
@@ -389,5 +333,52 @@ PetscErrorCode Contra2Cart(UserCtx *user);
  * @return PetscErrorCode 0 on success.
  */
 PetscErrorCode SetupBoundaryConditions(UserCtx *user);
+
+/**
+ * @brief Creates and distributes a map of the domain's cell decomposition to all ranks.
+ * @ingroup DomainInfo
+ *
+ * This function is a critical part of the simulation setup. It determines the global
+ * cell ownership for each MPI rank and makes this information available to all
+ * other ranks. This "decomposition map" is essential for the robust "Walk and Handoff"
+ * particle migration strategy, allowing any rank to quickly identify the owner of a
+ * target cell.
+ *
+ * The process involves:
+ * 1. Each rank gets its own node ownership information from the DMDA.
+ * 2. It converts this node information into cell ownership ranges using the
+ *    `GetOwnedCellRange` helper function.
+ * 3. It participates in an `MPI_Allgather` collective operation to build a complete
+ *    array (`user->RankCellInfoMap`) containing the ownership information for every rank.
+ *
+ * This function should be called once during initialization after the primary DMDA
+ * (user->da) has been set up.
+ *
+ * @param[in,out] user Pointer to the UserCtx structure. The function will allocate and
+ *                     populate `user->RankCellInfoMap` and set `user->num_ranks`.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ *         Errors can occur if input pointers are NULL or if MPI communication fails.
+ */
+PetscErrorCode SetupDomainCellDecompositionMap(UserCtx *user);
+
+/**
+ * @brief Performs a binary search for a key in a sorted array of PetscInt64.
+ *
+ * This is a standard binary search algorithm implemented as a PETSc-style helper function.
+ * It efficiently determines if a given `key` exists within a `sorted` array.
+ *
+ * @param[in]  n      The number of elements in the array.
+ * @param[in]  arr    A pointer to the sorted array of PetscInt64 values to be searched.
+ * @param[in]  key    The PetscInt64 value to search for.
+ * @param[out] found  A pointer to a PetscBool that will be set to PETSC_TRUE if the key
+ *                    is found, and PETSC_FALSE otherwise.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ *
+ * @note The input array `arr` **must** be sorted in ascending order for the algorithm
+ *       to work correctly.
+ */
+PetscErrorCode BinarySearchInt64(PetscInt n, const PetscInt64 arr[], PetscInt64 key, PetscBool *found);
 
  #endif // SETUP_H

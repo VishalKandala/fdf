@@ -57,6 +57,92 @@ typedef struct {
     PetscReal t, f;
 } FlowWave;
 
+//================================================================================
+//
+//                 2. PARTICLE LOCATION SYSTEM ENUMS
+//
+//================================================================================
+
+/**
+ * @enum  ParticleLocationStatus
+ * @brief Defines the state of a particle with respect to its location and migration
+ *        status during the iterative SettleParticles() process.
+ *
+ * This enum is used to control the logic within the main particle relocation
+ * orchestrator, ensuring that each particle is processed correctly and efficiently.
+ * It is registered as a PETSC_INT field in the DMSwarm.
+ */
+typedef enum {
+    /**
+     * @brief The particle's host cell is unknown or invalid.
+     *
+     * This is the initial state for newly arrived particles on a rank after migration,
+     * or for particles whose location search failed in a previous step. Any particle
+     * in this state is a candidate for processing in the current relocation pass.
+     */
+    NEEDS_LOCATION,
+
+
+
+
+    
+    /**
+     * @brief The particle has been successfully located in a cell owned by the current rank.
+     *
+     * This state indicates that the particle is settled for the current timestep and
+     * does not need further location checks or migration. The orchestrator can skip
+     * this particle in subsequent passes of the do-while loop.
+     */
+    ACTIVE_AND_LOCATED,
+
+    /**
+     * @brief The particle has been identified as needing to move to another rank.
+     *
+     * This status is set by the sending rank during the identification phase. The particle's
+     * `destination_rank` field will be valid. This state is temporary and primarily used
+     * to signal that the particle should be included in the MPI migration step.
+     */
+    MIGRATING_OUT,
+
+    /**
+     * @brief The particle could not be located and is considered lost.
+     *
+     * This status is set when the walk search exceeds its maximum traversal limit or
+     * walks outside the global domain boundaries. Particles in this state are candidates
+     * for removal by the `CheckAndRemoveOutOfBoundsParticles` function.
+     */
+    LOST,
+
+    /**
+     * @brief The default state for a newly created particle before any processing.
+     *
+     * While `NEEDS_LOCATION` is functionally similar for the first pass, having a distinct
+     * initial state can be useful for debugging and initialization logic.
+     */
+    UNINITIALIZED
+
+} ParticleLocationStatus;
+
+/**
+ * @brief Enumerates the six faces of a cubic cell for distance calculations.
+ */
+typedef enum {
+    LEFT = 0,    /**< Left face (x-) */
+    RIGHT,       /**< Right face (x+) */
+    BOTTOM,      /**< Bottom face (y-) */
+    TOP,         /**< Top face (y+) */
+    FRONT,       /**< Front face (z-) */
+    BACK,        /**< Back face (z+) */
+    NUM_FACES    /**< Total number of faces */
+} Face;
+
+
+//================================================================================
+//
+//                 3. PARTICLE LOCATION SYSTEM STRUCTS
+//
+//================================================================================
+
 /** @brief Defines a 3D axis-aligned bounding box. */
 typedef struct {
     Cmpnts min_coords; ///< Minimum x, y, z coordinates of the bounding box.
@@ -75,6 +161,9 @@ typedef struct {
     Cmpnts loc;         ///< Physical location (x,y,z) of the particle.
     Cmpnts vel;         ///< Physical velocity (vx,vy,vz) of the particle.
     Cmpnts weights;     ///< Interpolation weights within its host cell.
+
+    ParticleLocationStatus location_status;  ///< Current state in the location/migration process.
+    PetscMPIInt destination_rank;            ///< Target rank for migration (only valid if status MIGRATING_OUT)
 } Particle;
 
 /** @brief Stores the MPI ranks of neighboring subdomains. */
@@ -84,10 +173,28 @@ typedef struct {
     PetscMPIInt rank_zm, rank_zp; // Neighbors at -z, +z
 } RankNeighbors;
 
+/**
+ * @struct RankCellInfo
+ * @brief A lean struct to hold the global cell ownership range for a single MPI rank.
+ *
+ * This is used to build a map of the entire domain's decomposition, allowing any
+ * rank to quickly look up which rank owns a specific global cell index.
+ */
+typedef struct {
+    PetscInt xs_cell, ys_cell, zs_cell; // Global starting cell indices (inclusive)
+    PetscInt xm_cell, ym_cell, zm_cell; // Number of owned cells in each direction
+} RankCellInfo;
+
+
+/** @brief Information needed to migrate a single particle between MPI ranks. */
+typedef struct {
+    PetscInt local_index;
+    PetscInt target_rank;
+} MigrationInfo;
 
 //================================================================================
 //
-//                 2. BOUNDARY CONDITION SYSTEM ENUMS
+//                 4. BOUNDARY CONDITION SYSTEM ENUMS
 //
 //================================================================================
 
@@ -108,7 +215,7 @@ typedef enum {
 typedef enum {
     BC_HANDLER_UNDEFINED = 0,BC_HANDLER_NOGRAD_COPY_GHOST,
     BC_HANDLER_WALL_NOSLIP, BC_HANDLER_WALL_MOVING,
-    BC_HANDLER_SYMMETRY_PLANE,
+    BC_HANDLER_SYMMETRY_PLANE,BC_HANDLER_INLET_PARABOLIC,
     BC_HANDLER_INLET_CONSTANT_VELOCITY, BC_HANDLER_INLET_PULSANTILE_FLUX, BC_HANDLER_INLET_DEVELOPED_PROFILE,
     BC_HANDLER_OUTLET_CONSERVATION, BC_HANDLER_OUTLET_PRESSURE,
     BC_HANDLER_FARFIELD_NONREFLECTING,
@@ -118,7 +225,7 @@ typedef enum {
 
 //================================================================================
 //
-//               3. BOUNDARY CONDITION SYSTEM STRUCTS
+//               5. BOUNDARY CONDITION SYSTEM STRUCTS
 //
 //================================================================================
 
@@ -160,7 +267,7 @@ struct BoundaryFaceConfig_s {
 
 //================================================================================
 //
-//                4. MAIN USER CONTEXT (GOD) STRUCT
+//                6. MAIN USER CONTEXT (GOD) STRUCT
 //
 //================================================================================
 
@@ -210,6 +317,7 @@ struct UserCtx_s {
     // --- Particle System ---
     DM swarm;                   ///< DMSwarm object for particle data.
     PetscMPIInt *miglist;      ///< List of ranks for particle migration.
+    RankCellInfo *RankCellInfoMap; ///< List of RankCellInfo objects which contain the cells owned by each rank.
     PetscInt NumberofParticles; ///< Total number of particles in the simulation.
     Vec ParticleCount;          ///< Eulerian field to count particles per cell.
     PetscInt ParticleInitialization; ///< Flag controlling how particles are initially placed.
@@ -249,7 +357,7 @@ struct UserCtx_s {
 
 //================================================================================
 //
-//                     5. OTHER MISC. DEFINITIONS
+//                     7. POST PROCESSING STRUCTS
 //
 //================================================================================
 /* --------------------------------------------------------------------
@@ -322,23 +430,5 @@ typedef struct _n_VTKMetaData {
     PetscInt         *offsets;
 } VTKMetaData;
 
-/**
- * @brief Enumerates the six faces of a cubic cell for distance calculations.
- */
-typedef enum {
-    LEFT = 0,    /**< Left face (x-) */
-    RIGHT,       /**< Right face (x+) */
-    BOTTOM,      /**< Bottom face (y-) */
-    TOP,         /**< Top face (y+) */
-    FRONT,       /**< Front face (z-) */
-    BACK,        /**< Back face (z+) */
-    NUM_FACES    /**< Total number of faces */
-} Face;
-
-/** @brief Information needed to migrate a single particle between MPI ranks. */
-typedef struct {
-    PetscInt local_index;
-    PetscInt target_rank;
-} MigrationInfo;
 
 #endif // COMMON_H

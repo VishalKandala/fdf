@@ -49,7 +49,8 @@ typedef enum {
 
 extern PetscLogEvent EVENT_Individualwalkingsearch;
 extern PetscLogEvent EVENT_walkingsearch;
-
+extern PetscLogEvent EVENT_GlobalParticleLocation;
+extern PetscLogEvent EVENT_IndividualLocation;
 
 // --------------------- Logging Macros ---------------------
 
@@ -240,6 +241,7 @@ extern PetscLogEvent EVENT_walkingsearch;
  * LOG_ALLOW_SYNC(GLOBAL, LOG_INFO,  "Synchronized info in %s\n", __func__);
  * \endcode
  */
+/*
 #define LOG_ALLOW_SYNC(scope,level, fmt, ...)                                 \
     do {                                                                       \
         if ((scope != LOCAL && scope != GLOBAL)) {                             \
@@ -249,9 +251,39 @@ extern PetscLogEvent EVENT_walkingsearch;
                   (int)(level) <= (int)get_log_level()) {                      \
             MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
             PetscSynchronizedPrintf(comm, "[%s] " fmt, __func__, ##__VA_ARGS__); \
-            PetscSynchronizedFlush(comm, PETSC_STDOUT);                        \
-        }                                                                      \
+        }
+	PetscSynchronizedFlush(comm, PETSC_STDOUT); 					\
     } while (0)
+*/
+#define LOG_ALLOW_SYNC(scope, level, fmt, ...)                                     \
+do {                                                                               \
+    /* ------------------------------------------------------------------ */      \
+    /* Validate scope and pick communicator *before* any early exits.     */      \
+    /* ------------------------------------------------------------------ */      \
+    MPI_Comm _comm;                                                                \
+    if      ((scope) == LOCAL)  _comm = MPI_COMM_SELF;                             \
+    else if ((scope) == GLOBAL) _comm = MPI_COMM_WORLD;                            \
+    else {                                                                        \
+        fprintf(stderr, "LOG_ALLOW_SYNC ERROR: invalid scope (%d) at %s:%d\n",     \
+                (scope), __FILE__, __LINE__);                                      \
+        MPI_Abort(MPI_COMM_WORLD, 1);                                              \
+    }                                                                              \
+                                                                                   \
+    /* ------------------------------------------------------------------ */      \
+    /* Decide whether *this* rank should actually print.                   */      \
+    /* ------------------------------------------------------------------ */      \
+    PetscBool _doPrint =                                                          \
+        is_function_allowed(__func__) && ((int)(level) <= (int)get_log_level());   \
+                                                                                   \
+    if (_doPrint) {                                                                \
+        PetscSynchronizedPrintf(_comm, "[%s] " fmt, __func__, ##__VA_ARGS__);      \
+    }                                                                              \
+                                                                                   \
+    /* ------------------------------------------------------------------ */      \
+    /* ALL ranks call the flush, even if they printed nothing.            */      \
+    /* ------------------------------------------------------------------ */      \
+    PetscSynchronizedFlush(_comm, PETSC_STDOUT);                                   \
+} while (0)
 
 /**
  * @brief Logs a message inside a loop, but only every `interval` iterations.
@@ -275,6 +307,33 @@ extern PetscLogEvent EVENT_walkingsearch;
                 MPI_Comm comm = (scope == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
                 PetscPrintf(comm, "[%s] [Iter=%d] " fmt,                       \
                             __func__, (iterVar), ##__VA_ARGS__);               \
+            }                                                                  \
+        }                                                                      \
+    } while (0)
+
+/**
+ * @brief Logs a custom message if a variable equals a specific value.
+ *
+ * This is a variadic macro for logging a single event when a condition is met.
+ * It is extremely useful for printing debug information at a specific iteration
+ * of a loop or when a state variable reaches a certain value.
+ *
+ * @param scope   Either LOCAL or GLOBAL.
+ * @param level   The logging level.
+ * @param var     The variable to check (e.g., a loop counter 'k').
+ * @param val     The value that triggers the log (e.g., 6). The log prints if var == val.
+ * @param ...     A printf-style format string and its corresponding arguments.
+ */
+#define LOG_LOOP_ALLOW_EXACT(scope, level, var, val, ...)                         \
+    do {                                                                       \
+        /* First, perform the cheap, standard gatekeeper checks. */            \
+        if (is_function_allowed(__func__) && (int)(level) <= (int)get_log_level()) { \
+            /* Only if those pass, check the user's specific condition. */      \
+            if ((var) == (val)) {                                              \
+                MPI_Comm comm = ((scope) == LOCAL) ? MPI_COMM_SELF : MPI_COMM_WORLD; \
+                /* Print the standard prefix, then the user's custom message. */ \
+                PetscPrintf(comm, "[%s] ", __func__);                           \
+                PetscPrintf(comm, __VA_ARGS__);                                \
             }                                                                  \
         }                                                                      \
     } while (0)
@@ -358,7 +417,6 @@ extern PetscLogEvent EVENT_walkingsearch;
             }                                                                 \
         }                                                                     \
     } while (0)
-
 
 /**
  * @brief Begins timing a function by:
@@ -458,7 +516,7 @@ LogLevel get_log_level();
  *
  * @see get_log_level()
  */
-void print_log_level();
+PetscErrorCode print_log_level(void);
 
 /**
  * @brief Sets the global list of function names that are allowed to log.

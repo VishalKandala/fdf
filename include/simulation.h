@@ -79,11 +79,9 @@ PetscErrorCode PerformInitialSetup(UserCtx *user, PetscReal currentTime, PetscIn
  * @param step        The current timestep number being processed.
  * @param StartStep   The initial timestep number of the simulation.
  * @param time        The current simulation time.
- * @param readFields  A boolean flag. If true, the simulation attempts to read fields
- *                    from files at the StartStep instead of generating them.
  * @return PetscErrorCode 0 on success.
  */
-PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartStep, PetscReal time, PetscBool readFields);
+PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartStep, PetscReal time);
 
 /**
  * @brief Executes the main time-marching loop for the particle simulation.
@@ -117,5 +115,49 @@ PetscErrorCode SetEulerianFields(UserCtx *user, PetscInt step, PetscInt StartSte
 PetscErrorCode AdvanceSimulation(UserCtx *user, PetscInt StartStep, PetscReal StartTime,
                                  PetscInt StepsToRun, PetscInt OutputFreq, PetscBool readFields,
                                  const BoundingBox *bboxlist);
+/**
+ * @brief Executes the main time-marching loop for the particle simulation. [TEST VERSION]
+ *
+ * This version uses the new, integrated `LocateAllParticlesInGrid_TEST` orchestrator
+ * and the `ResetAllParticleStatuses` helper for a clean, robust, and understandable workflow.
+ *
+ * For each timestep, it performs:
+ * 1. Sets the background fluid velocity field (Ucat) for the current step.
+ * 2. Updates particle positions using velocity from the *previous* step's interpolation.
+ * 3. Removes any particles that have left the global domain.
+ * 4. **A single call to `LocateAllParticlesInGrid_TEST`**, which robustly handles all
+ *    particle location and migration until the swarm is fully settled for the current timestep.
+ * 5. Interpolates the current fluid velocity to the newly settled particle locations.
+ * 6. Scatters particle data back to Eulerian fields.
+ * 7. **Resets particle statuses to `NEEDS_LOCATION`** to prepare for the next timestep.
+ * 8. Outputs data at specified intervals.
+ *
+ * @param user Pointer to the UserCtx structure.
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode AdvanceSimulation_TEST(UserCtx *user, PetscInt StartStep, PetscReal StartTime,
+                                      PetscInt StepsToRun, PetscInt OutputFreq, BoundingBox *bboxlist);
 
+/**
+ * @brief Performs the complete initial setup for the particle simulation at time t=0. [TEST VERSION]
+ *
+ * This version uses the new, integrated `LocateAllParticlesInGrid_TEST` orchestrator,
+ * which handles both location and migration in a single, robust, iterative process.
+ *
+ * Its sequential operations are:
+ * 1. A single, comprehensive call to `LocateAllParticlesInGrid_TEST` to sort all particles
+ *    to their correct owner ranks and find their initial host cells.
+ * 2. If `user->ParticleInitialization == 0` (Surface Init), it re-initializes particles on the
+ *    designated inlet surface, now that they are on the correct MPI ranks.
+ * 3. A second call to `LocateAllParticlesInGrid_TEST` is needed after re-initialization to
+ *    find the new, correct host cells for the surface-placed particles.
+ * 4. Interpolates initial Eulerian fields to the settled particles.
+ * 5. Scatters particle data to Eulerian fields (if applicable).
+ * 6. Outputs initial data if requested.
+ *
+ * @param user Pointer to the UserCtx structure.
+ * @return PetscErrorCode 0 on success, non-zero on failure.
+ */
+PetscErrorCode PerformInitialSetup_TEST(UserCtx *user, PetscReal currentTime, PetscInt step,PetscInt OutputFreq,
+                                        PetscInt StepsToRun, PetscInt StartStep,BoundingBox *bboxlist);
 #endif  // SIMULATION_H

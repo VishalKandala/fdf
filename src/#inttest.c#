@@ -90,7 +90,7 @@ int main(int argc, char **argv) {
     
     // DEBUG --------
 
-       LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"Boundary Condition system setup on rank %d! \n",rank);
+    LOG_ALLOW_SYNC(GLOBAL,LOG_INFO,"Boundary Condition system setup on rank %d! \n",rank);
     
     ierr = VecNorm(user->Ucat, NORM_INFINITY, &umax); CHKERRQ(ierr);
     

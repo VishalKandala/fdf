@@ -64,6 +64,31 @@ PetscErrorCode CheckAndRemoveOutOfBoundsParticles(UserCtx *user,
 					      const BoundingBox *bboxlist);
 
 /**
+ * @brief Removes particles that have been definitively flagged as LOST by the location algorithm.
+ *
+ * This function is the designated cleanup utility. It should be called after the
+ * `LocateAllParticlesInGrid` orchestrator has run and every particle's status
+ * has been definitively determined.
+ *
+ * It iterates through all locally owned particles and checks their `DMSwarm_location_status`
+ * field. If a particle's status is `LOST`, it is permanently removed from the simulation
+ * using `DMSwarmRemovePointAtIndex`.
+ *
+ * This approach centralizes the removal logic, making the `DMSwarm_location_status`
+ * the single source of truth for a particle's validity, which is more robust than
+ * relying on secondary geometric checks (like bounding boxes).
+ *
+ * @param[in,out]  user              Pointer to the UserCtx structure containing the swarm.
+ * @param[out]     removedCountLocal Pointer to store the number of particles removed on this rank.
+ * @param[out]     removedCountGlobal Pointer to store the total number of particles removed across all ranks.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ */
+PetscErrorCode CheckAndRemoveLostParticles(UserCtx *user,
+                                           PetscInt *removedCountLocal,
+                                           PetscInt *removedCountGlobal);
+
+/**
  * @brief Defines the basic migration pattern for particles within the swarm.
  *
  * This function establishes the migration pattern that dictates how particles
@@ -215,5 +240,168 @@ PetscErrorCode PerformSingleParticleMigrationCycle(UserCtx *user, const Bounding
  * @return PetscErrorCode 0 on success, non-zero on failure.
  */
 PetscErrorCode ReinitializeParticlesOnInletSurface(UserCtx *user, PetscReal currentTime, PetscInt step);
+
+/**
+ * @brief Creates a sorted snapshot of all Particle IDs (PIDs) from a raw data array.
+ * @ingroup ParticleUtils
+ *
+ * This function is a crucial helper for the migration process. It captures the state of
+ * which particles are on the current MPI rank *before* migration occurs by taking a
+ * pointer to the swarm's raw PID data array. The resulting sorted array can then be used
+ * with an efficient binary search to quickly identify newcomer particles after migration.
+ *
+ * This function does NOT call DMSwarmGetField/RestoreField. It is the caller's
+ * responsibility to acquire the `pid_field` pointer before calling and restore it afterward.
+ *
+ * @param[in]  pid_field         A read-only pointer to the raw array of PIDs for the local swarm.
+ * @param[in]  n_local           The number of particles currently on the local rank.
+ * @param[out] pids_snapshot_out A pointer to a `PetscInt64*` array. This function will
+ *                               allocate memory for this array, and the caller is
+ *                               responsible for freeing it with `PetscFree()` when it
+ *                               is no longer needed.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ */
+PetscErrorCode GetLocalPIDSnapshot(const PetscInt64 pid_field[], 
+                                   PetscInt n_local, 
+                                   PetscInt64 **pids_snapshot_out);
+
+/**
+ * @brief Safely adds a new migration task to a dynamically sized list.
+ *
+ * This utility function manages a dynamic array of MigrationInfo structs. It appends
+ * a new entry to the list and automatically doubles the array's capacity using
+ * `PetscRealloc` if the current capacity is exceeded. This prevents buffer overflows
+ * and avoids the need to know the number of migrating particles in advance.
+ *
+ * @param[in,out] migration_list_p  A pointer to the MigrationInfo array pointer. The function
+ *                                  will update this pointer if the array is reallocated.
+ * @param[in,out] capacity_p        A pointer to an integer holding the current allocated
+ *                                  capacity of the list (in number of elements). This will be
+ *                                  updated upon reallocation.
+ * @param[in,out] count_p           A pointer to an integer holding the current number of
+ *                                  items in the list. This will be incremented by one.
+ * @param[in]     particle_local_idx The local index (from 0 to nlocal-1) of the particle
+ *                                  that needs to be migrated.
+ * @param[in]     destination_rank   The target MPI rank for the particle.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure (e.g., from memory allocation).
+ */
+PetscErrorCode AddToMigrationList(MigrationInfo **migration_list_p,
+                                  PetscInt *capacity_p,
+                                  PetscInt *count_p,
+                                  PetscInt particle_local_idx,
+                                  PetscMPIInt destination_rank);
+
+/**
+ * @brief Identifies newly arrived particles after migration and flags them for a location search.
+ * @ingroup ParticleMotion
+ *
+ * This function is a critical component of the iterative migration process managed by
+ * the main particle settlement orchestrator (e.g., `SettleParticles`). After a
+ * `DMSwarmMigrate` call, each rank's local particle list is a new mix of resident
+ * particles and newly received ones. This function's job is to efficiently identify
+ * these "newcomers" and set their `DMSwarm_location_status` field to `NEEDS_LOCATION`.
+ *
+ * This ensures that in the subsequent pass of the migration `do-while` loop, only the
+ * newly arrived particles are processed by the expensive location algorithm, preventing
+ * redundant work on particles that are already settled on the current rank.
+ *
+ * The identification is done by comparing the PIDs of particles currently on the rank
+ * against a "snapshot" of PIDs taken *before* the migration occurred.
+ *
+ * @param[in] swarm            The DMSwarm object, which has just completed a migration.
+ * @param[in] n_local_before   The number of particles that were on this rank *before* the
+ *                             migration was performed.
+ * @param[in] pids_before      A pre-sorted array of the PIDs that were on this rank before
+ *                             the migration. This is used for fast lookups.
+ *
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ *
+ * @note This function assumes the `pids_before` array is sorted in ascending order to
+ *       enable the use of an efficient binary search.
+ */
+PetscErrorCode FlagNewcomersForLocation(DM swarm,
+                                        PetscInt n_local_before,
+                                        const PetscInt64 pids_before[]);
+
+
+/**
+ * @brief Locates all particles within the grid and calculates their interpolation weights.
+ * @ingroup ParticleLocation
+ *
+ * This function iterates through all particles currently local to this MPI rank.
+ * For each particle, it first checks if the particle is within the rank's
+ * pre-calculated bounding box (`user->bbox`). If it is, it calls the
+ * `LocateParticleInGrid` function to perform the walking search.
+ *
+ * `LocateParticleInGrid` is responsible for finding the containing cell `(i,j,k)`
+ * and calculating the corresponding interpolation weights `(w1,w2,w3)`. It updates
+ * the `particle->cell` and `particle->weights` fields directly upon success.
+ * If the search fails (particle not found within MAX_TRAVERSAL, goes out of bounds,
+ * or gets stuck without resolution), `LocateParticleInGrid` sets the particle's
+ * `cell` to `{-1,-1,-1}` and `weights` to `{0.0, 0.0, 0.0}`.
+ *
+ * After attempting location, this function updates the corresponding entries in the
+ * DMSwarm's "DMSwarm_CellID" and "weight" fields using the potentially modified
+ * data from the `particle` struct.
+ *
+ * @param[in] user Pointer to the UserCtx structure containing grid, swarm, and bounding box info.
+ *
+ * @return PetscErrorCode Returns `0` on success, non-zero on failure (e.g., errors accessing DMSwarm fields).
+ *
+ * @note Assumes `user->bbox` is correctly initialized for the local rank.
+ * @note Assumes `InitializeParticle` correctly populates the temporary `particle` struct.
+ * @note Assumes `UpdateSwarmFields` correctly writes data back to the DMSwarm.
+ */
+PetscErrorCode LocateAllParticlesInGrid(UserCtx *user);
+
+/**
+ * @brief Orchestrates the complete particle location and migration process for one timestep.
+ * @ingroup ParticleLocation
+ *
+ * This function is the master orchestrator for ensuring every particle is on its correct
+ * MPI rank and has a valid host cell index. It is designed to be called once per
+ * timestep after particle positions have been updated.
+ *
+ * The function uses a robust, iterative "Guess and Verify" strategy within a
+ * do-while loop to handle complex particle motion across processor boundaries,
+ * especially on curvilinear grids.
+ *
+ * 1.  **State Snapshot:** At the start of each pass, it captures a list of all Particle IDs (PIDs)
+ *     on the current rank.
+ * 2.  **"Guess" (Heuristic):** For particles that are "lost" (no valid host cell),
+ *     it first attempts a fast, bounding-box-based guess to find a potential new owner rank.
+ * 3.  **"Verify" (Robust Walk):** For all other particles, or if the guess fails,
+ *     it uses a robust cell-walking algorithm (`LocateParticleOrFindMigrationTarget`)
+ *     that determines the particle's status: located locally, needs migration, or is lost.
+ * 4.  **Migration:** After identifying all migrating particles on a pass, it performs the
+ *     MPI communication using the `SetMigrationRanks` and `PerformMigration` helpers.
+ * 5.  **Newcomer Flagging:** After migration, it uses the PID snapshot from step 1 to
+ *     efficiently identify newly arrived particles and flag them for location on the next pass.
+ * 6.  **Iteration:** The process repeats in a `do-while` loop until a pass occurs where
+ *     no particles migrate, ensuring the entire swarm is in a stable, consistent state.
+ *
+ * @param[in,out] user Pointer to the UserCtx, containing the swarm and all necessary
+ *                     domain topology information (bboxlist, RankCellInfoMap, etc.).
+ * @param[in] bboxlist  An array of BoundingBox structures for ALL MPI ranks, indexed 0 to (size-1).
+ *                      This array must be up-to-date and available on all ranks.
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ */
+PetscErrorCode LocateAllParticlesInGrid_TEST(UserCtx *user,BoundingBox *bboxlist);
+
+/**
+ * This function is designed to be called at the end of a full timestep, after all
+ * particle-based calculations are complete. It prepares the swarm for the next
+ * timestep by ensuring that after the next position update, every particle will be
+ * re-evaluated by the LocateAllParticlesInGrid orchestrator.
+ *
+ * It iterates through all locally owned particles and sets their
+ * `DMSwarm_location_status` field to `NEEDS_LOCATION`.
+ *
+ * @param[in,out] user Pointer to the UserCtx containing the swarm.
+ * @return PetscErrorCode 0 on success, or a non-zero PETSc error code on failure.
+ */
+PetscErrorCode ResetAllParticleStatuses(UserCtx *user);
 
  #endif // PARTICLE_MOTION_H

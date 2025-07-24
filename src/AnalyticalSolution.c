@@ -1016,10 +1016,15 @@ PetscErrorCode SetInitialInteriorField(UserCtx *user, const char *fieldName)
     PetscInt xs_cell=0, xm_cell=0, ys_cell=0, ym_cell=0, zs_cell=0, zm_cell=0;
     
     if (user->FieldInitialization == 2) { // Profile 2 (Poiseuille) requires cell centers.
+      /*
         ierr = GetOwnedCellRange(&info, 0, &xs_cell, &xm_cell); CHKERRQ(ierr);
         ierr = GetOwnedCellRange(&info, 1, &ys_cell, &ym_cell); CHKERRQ(ierr);
         ierr = GetOwnedCellRange(&info, 2, &zs_cell, &zm_cell); CHKERRQ(ierr);
-
+      */
+      ierr = GetGhostedCellRange(&info,&user->neighbors,0, &xs_cell, &xm_cell); CHKERRQ(ierr);
+      ierr = GetGhostedCellRange(&info,&user->neighbors,1, &ys_cell, &ym_cell); CHKERRQ(ierr);
+      ierr = GetGhostedCellRange(&info,&user->neighbors,2, &zs_cell, &zm_cell); CHKERRQ(ierr);
+      
         if (xm_cell > 0 && ym_cell > 0 && zm_cell > 0) {
             ierr = Allocate3DArray(&cent_coor, zm_cell, ym_cell, xm_cell); CHKERRQ(ierr);
             ierr = InterpolateFieldFromCornerToCenter(coor_arr, cent_coor, user); CHKERRQ(ierr);
@@ -1075,6 +1080,37 @@ PetscErrorCode SetInitialInteriorField(UserCtx *user, const char *fieldName)
 		      break; 
                         case 2: // Poiseuille Normal Velocity
                             {
+			                                      // This profile assumes flow is aligned with the k-index direction.
+                                // It uses grid indices (i,j) to define the cross-section, which works for bent geometries.
+                                PetscReal u0 = 0.0;
+                                if (user->identifiedInletBCFace <= BC_FACE_POS_X) u0 = uin.x;
+                                else if (user->identifiedInletBCFace <= BC_FACE_POS_Y) u0 = uin.y;
+                                else u0 = uin.z; // Assumes Z-like inlet direction
+
+                                // Define channel geometry in "index space" based on global grid dimensions
+                                // We subtract 2.0 because the interior runs from index 1 to mx-2 (or my-2).
+                                const PetscReal i_width  = (PetscReal)(mx - 2);
+                                const PetscReal j_width  = (PetscReal)(my - 2);
+                                const PetscReal i_center = 1.0 + i_width / 2.0;
+                                const PetscReal j_center = 1.0 + j_width / 2.0;
+
+                                // Create normalized coordinates for the current point (i,j), ranging from -1 to 1
+                                const PetscReal i_norm = (i - i_center) / (i_width / 2.0);
+                                const PetscReal j_norm = (j - j_center) / (j_width / 2.0);
+
+                                // Apply the parabolic profile for a rectangular/square channel
+                                // V(i,j) = V_max * (1 - i_norm^2) * (1 - j_norm^2)
+                                const PetscReal profile_i = 1.0 - i_norm * i_norm;
+                                const PetscReal profile_j = 1.0 - j_norm * j_norm;
+                                normal_velocity_mag = u0 * profile_i * profile_j;
+
+                                // Clamp to zero for any points outside the channel (or due to minor float errors)
+                                if (normal_velocity_mag < 0.0) {
+                                    normal_velocity_mag = 0.0;
+                                }
+                            }
+                            break;
+			    /*
                                 PetscReal r_sq = 0.0;
                                 const PetscInt i_local = i - xs_cell, j_local = j - ys_cell, k_local = k - zs_cell;
                                 if (cent_coor && i_local >= 0 && i_local < xm_cell && j_local >= 0 && j_local < ym_cell && k_local >= 0 && k_local < zm_cell) {
@@ -1082,7 +1118,7 @@ PetscErrorCode SetInitialInteriorField(UserCtx *user, const char *fieldName)
                                     if (user->identifiedInletBCFace <= BC_FACE_POS_X) r_sq = center->y * center->y + center->z * center->z;
                                     else if (user->identifiedInletBCFace <= BC_FACE_POS_Y) r_sq = center->x * center->x + center->z * center->z;
                                     else r_sq = center->x * center->x + center->y * center->y;
-				    /* pick the correct contravariant component for center‐line speed */
+				    // pick the correct contravariant component for center‐line speed 
 				    PetscReal u0;
 				    if (user->identifiedInletBCFace == BC_FACE_NEG_X ||
 					user->identifiedInletBCFace == BC_FACE_POS_X) {
@@ -1093,11 +1129,12 @@ PetscErrorCode SetInitialInteriorField(UserCtx *user, const char *fieldName)
 				    } else {
 				      u0 = uin.z;
 				    }
-				    /* now form the parabolic profile as before */
+				    // now form the parabolic profile as before 
                                     normal_velocity_mag = 2.0 * u0 * (1.0 - 4.0 * r_sq);
                                 }
                             }
                             break;
+			    */
                         default:
                             LOG_ALLOW(LOCAL, LOG_WARNING, "Unrecognized FieldInitialization profile %d. Defaulting to zero.\n", user->FieldInitialization);
                             normal_velocity_mag = 0.0;
