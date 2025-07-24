@@ -1,4 +1,3 @@
-# Makefile for your_project
 # This Makefile builds the project executables, organizes the build process,
 # and includes custom targets for cleaning and generating TAGS for code navigation.
 
