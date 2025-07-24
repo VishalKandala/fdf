@@ -1,7 +1,3 @@
-Of course! Here is the provided information formatted as a clean and professional Markdown `README.md` file.
-
----
-
 # 🌀 PICurv: A Parallel Particle-in-Cell Solver for Curvilinear LES
 
 > **PICurv** is a parallel particle-in-cell (PIC) solver designed for low-Mach-number turbulent flows in complex geometries. Built using PETSc’s `DMDA` and `DMSwarm` infrastructure, it features:
