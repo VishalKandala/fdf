@@ -187,16 +187,6 @@ PICurv follows a node-centered Arakawa C-grid indexing strategy with ghost cells
 
 ![Schematic Grid Layout](schematic%20examle.png)
 
-## Physical Locations of Key Vector and Scalar Quantities
-
-Excellent. This is a very detailed and well-structured breakdown of the solver's data layout. Here is that information formatted into a clean and comprehensive Markdown section, ready to be added to your `README.md`.
-
----
-
-## 💾 Data Layout and Grid Indexing
-
-This section details the physical locations and indexing conventions for key scalar and vector quantities on the staggered Arakawa C-grid used by PICurv.
-
 ### Physical Locations of Key Quantities
 
 The following table outlines where different fields are stored relative to a computational cell `(ic,jc,kc)`.
@@ -280,6 +270,3 @@ The following table outlines where different fields are stored relative to a com
 
 This work is supported by the **National Science Foundation (NSF Award No. 2309630)** and computational resources from the **High-Performance Research Computing (HPRC) center at Texas A\&M University**.
 
----
-
-Let me know if you’d like to add performance benchmarks, case studies, or a “Contributing” section next.
