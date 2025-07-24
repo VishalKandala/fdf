@@ -181,15 +181,15 @@ PICurv follows a node-centered Arakawa C-grid indexing strategy with ghost cells
 
 ### Boundary Cell C(0,0) Layout
 
-![Boundary Cell Layout](images/bd_cell_storage.png)
+![Boundary Cell Layout](bd_cell_storage.png)
 
 ### Interior Cell C(1,1) Layout
 
-![Interior Cell Layout](images/interior_cell_storage.png)
+![Interior Cell Layout](interior_cell_storage.png)
 
 ### Schematic: Physical and Ghost Cells
 
-![Schematic Grid Layout](images/schematic%20examle.png)
+![Schematic Grid Layout](schematic%20examle.png)
 
 ### Index Mapping Table (Node ↔ Cell)
 
