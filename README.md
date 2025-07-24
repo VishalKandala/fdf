@@ -1,1 +1,213 @@
-# 🌀 PICurv: A Parallel Particle-in-Cell Solver for Curvilinear LES **PICurv** is a parallel particle-in-cell (PIC) solver designed for low-Mach-number turbulent flows in complex geometries. Built using PETSc’s `DMDA` and `DMSwarm` infrastructure, it features: * A **fractional-step incompressible Navier–Stokes solver** with **dynamic Smagorinsky LES** * Support for **body-fitted curvilinear grids** and **immersed boundaries (CURVIB)** * Fully **MPI-parallel particle tracking** with two-way Eulerian–Lagrangian coupling * Trilinear interpolation (grid → particle) and conservative face-based projection (particle → grid) The solver has been validated on canonical geometries such as curved pipes and demonstrates scalable performance for **millions of particles** on both structured Cartesian and curvilinear meshes. --- ## 🔧 Key Features * Parallelized 3D particle-in-cell solver with PETSc * Low-Mach number incompressible Navier–Stokes with LES modeling * Two-way coupled Lagrangian particle transport * Trilinear interpolation and deposition kernels * Geometric flexibility via immersed boundary methods (CURVIB) * Modular architecture with plug-and-play routines for scalar transport, stochastic mixing, and particle diagnostics --- ## 🚀 Getting Started ### Dependencies * PETSc 3.20.3 or newer (built with MPI and `DMSWARM` support) ### Building the Project To build the solver and postprocessor: ```bash make inttest       # Builds main solver executable `inttest` make postprocess   # Builds postprocessor executable `postprocess` ``` Ensure PETSc paths are configured correctly in your Makefile or environment. ### Directory Structure ```text . ├── src/           # Source files (*.c) ├── include/       # Header files (*.h) ├── scripts/       # Python utilities ├── params/        # Input files for a run (grid, config, BCs) ├── run/           # Example run directory (created manually) │   ├── control.dat │   ├── params/ │   │   ├── config.dat │   │   ├── bcs.dat │   │   └── grid.dat (optional if using generated grid) │   ├── inttest -> ../inttest (symlink) │   └── postprocess -> ../postprocess (symlink) ``` --- ## ▶️ Running the Code 1. **Create a new `run/` directory**. 2. **Place a `control.dat`** file inside. See below for a sample. 3. **Create symbolic links** to the built executables: ```bash ln -s ../inttest inttest ln -s ../postprocess postprocess ``` 4. Ensure `params/` subdirectory exists with: * `config.dat` * `bcs.dat` * (optional) `grid.dat` if using curvilinear meshes 5. Run the solver: ```bash mpirun -np 4 ./inttest -f control.dat ``` --- ## 📄 Sample `control.dat` Configuration ```plaintext ########################################################################################################################### ### I/O & Management  ### -tio 1 -logfreq 10 -func_config_file "params/config.dat" -grid_file "params/grid_bent_tube.dat" -bcs_file "params/bcs.dat" -Setup_Only 0 ### PARTICLES -numParticles 100 -pinit 0 ### SIMULATION -dt 0.1 -totalsteps 10 -rstart 0 -ti 0.0 -finit 2 -ucont_x 0.0 -ucont_y 0.0 -ucont_z 1.0 ### GRID -grid 0 -xMin 0.00 - xMax 1.00 -yMin 0.00 - yMax 1.00 -zMin 0.00 - zMax 1.00 -nblk 1 -im 20 - jm 20 - km 280 -r_x 1.0 - r_y 1.0 - r_z 1.0 ### PARALLELIZATION -dm_processors_x 2 -dm_processors_y 2 #-dm_processors_z 2 ########################################################################################################################### ``` --- ## 🗖️ Grid File Format (`grid.dat`) To use a pre-generated body-fitted or curvilinear mesh, create a file `grid.dat` in the `params/` directory with the following structure: ```text FDFGRID                # format tag 1                      # number of blocks 20 20 280              # number of cells in i, j, k for the block x0 y0 z0               # node 0 coordinates x1 y1 z1 x2 y2 z2 ... ``` The coordinates specify node positions along the primary directions, and the grid is assumed to be structured and logically rectangular. --- ## 📂 Function-Level Logging (Sample `config.dat`) Use `params/config.dat` to selectively enable logging of specific functions when running with `export LOG_LEVEL=DEBUG`. Example: ```text # ============================================================================ #               Function Logging Allow-List for Phase 1 # ============================================================================ main AdvanceSimulation_TEST PerformInitialSetup_TEST # Boundary condition routines (uncomment to debug): #Create_InletConstantVelocity #Apply_InletConstantVelocity #Initialize_InletConstantVelocity ``` This allows clean and controlled tracing of solver behavior for debugging or testing. --- ## 🧭 Grid Indexing and Layout (Arakawa C-grid) PICurv follows a node-centered Arakawa C-grid indexing strategy with ghost cells and directional velocity storage. The figures below illustrate this storage scheme: ### Boundary Cell C(0,0) Layout ![Boundary Cell Layout](images/bd_cell_storage.png) ### Interior Cell C(1,1) Layout ![Interior Cell Layout](images/interior_cell_storage.png) ### Schematic: Physical and Ghost Cells ![Schematic Grid Layout](images/schematic%20examle.png) ### Index Mapping Table (Node ↔ Cell) | Quantity         | Storage Location             | | ---------------- | ---------------------------- | | Pressure (P)     | Cell Center `P[i][j][k]`     | | Velocity x (u)   | Node `ucat[k][j][i].x`       | | Velocity y (v)   | Node `ucat[k][j][i].y`       | | Velocity z (w)   | Node `ucat[k][j][i].z`       | | Geometry (coord) | Node `coor[k][j][i]`         | | Marker Function  | Cell Center `nvert[i][j][k]` | --- ## 📜 Citation / Acknowledgements This work is supported by the **National Science Foundation (NSF Award No. 2309630)** and computational resources from the **High-Performance Research Computing (HPRC) center at Texas A\&M University**. --- Let me know if you’d like to add performance benchmarks, case studies, or a “Contributing” section next.
+Of course! Here is the provided information formatted as a clean and professional Markdown `README.md` file.
+
+---
+
+# 🌀 PICurv: A Parallel Particle-in-Cell Solver for Curvilinear LES
+
+> **PICurv** is a parallel particle-in-cell (PIC) solver designed for low-Mach-number turbulent flows in complex geometries. Built using PETSc’s `DMDA` and `DMSwarm` infrastructure, it features:
+> * A **fractional-step incompressible Navier–Stokes solver** with **dynamic Smagorinsky LES**
+> * Support for **body-fitted curvilinear grids** and **immersed boundaries (CURVIB)**
+> * Fully **MPI-parallel particle tracking** with two-way Eulerian–Lagrangian coupling
+> * Trilinear interpolation (grid → particle) and conservative face-based projection (particle → grid)
+>
+> The solver has been validated on canonical geometries such as curved pipes and demonstrates scalable performance for **millions of particles** on both structured Cartesian and curvilinear meshes.
+
+---
+
+## 🔧 Key Features
+
+*   **Parallelized 3D particle-in-cell solver** with PETSc
+*   **Low-Mach number incompressible Navier–Stokes** with LES modeling
+*   **Two-way coupled Lagrangian particle transport**
+*   **Trilinear interpolation and deposition kernels**
+*   **Geometric flexibility** via immersed boundary methods (CURVIB)
+*   **Modular architecture** with plug-and-play routines for scalar transport, stochastic mixing, and particle diagnostics
+
+---
+
+## 🚀 Getting Started
+
+### Dependencies
+
+*   PETSc 3.20.3 or newer (built with MPI and `DMSWARM` support)
+
+### Building the Project
+
+To build the solver and postprocessor:
+
+```bash
+make inttest       # Builds main solver executable `inttest`
+make postprocess   # Builds postprocessor executable `postprocess`
+```
+
+Ensure PETSc paths are configured correctly in your Makefile or environment.
+
+### Directory Structure
+
+```text
+.
+├── src/           # Source files (*.c)
+├── include/       # Header files (*.h)
+├── scripts/       # Python utilities
+├── params/        # Input files for a run (grid, config, BCs)
+├── run/           # Example run directory (created manually)
+│   ├── control.dat
+│   ├── params/
+│   │   ├── config.dat
+│   │   ├── bcs.dat
+│   │   └── grid.dat (optional if using generated grid)
+│   ├── inttest -> ../inttest (symlink)
+│   └── postprocess -> ../postprocess (symlink)
+```
+
+---
+
+## ▶️ Running the Code
+
+1.  **Create a new `run/` directory**.
+2.  **Place a `control.dat`** file inside. See below for a sample.
+3.  **Create symbolic links** to the built executables:
+    ```bash
+    ln -s ../inttest inttest
+    ln -s ../postprocess postprocess
+    ```
+4.  Ensure a `params/` subdirectory exists within `run/` with:
+    *   `config.dat`
+    *   `bcs.dat`
+    *   (optional) `grid.dat` if using curvilinear meshes
+5.  Run the solver:
+    ```bash
+    mpirun -np 4 ./inttest -f control.dat
+    ```
+
+---
+
+## 📄 Sample `control.dat` Configuration
+
+```plaintext
+###########################################################################################################################
+### I/O & Management  ###
+-tio 1
+-logfreq 10
+-func_config_file "params/config.dat"
+-grid_file "params/grid_bent_tube.dat"
+-bcs_file "params/bcs.dat"
+-Setup_Only 0
+
+### PARTICLES
+-numParticles 100
+-pinit 0
+
+### SIMULATION
+-dt 0.1
+-totalsteps 10
+-rstart 0
+-ti 0.0
+-finit 2
+-ucont_x 0.0
+-ucont_y 0.0
+-ucont_z 1.0
+
+### GRID
+-grid 0
+-xMin 0.00
+-xMax 1.00
+-yMin 0.00
+-yMax 1.00
+-zMin 0.00
+-zMax 1.00
+-nblk 1
+-im 20
+-jm 20
+-km 280
+-r_x 1.0
+-r_y 1.0
+-r_z 1.0
+
+### PARALLELIZATION
+-dm_processors_x 2
+-dm_processors_y 2
+#-dm_processors_z 2
+###########################################################################################################################
+```
+
+---
+
+## 🗖️ Grid File Format (`grid.dat`)
+
+To use a pre-generated body-fitted or curvilinear mesh, create a file `grid.dat` in the `params/` directory with the following structure:
+
+```text
+FDFGRID                # format tag
+1                      # number of blocks
+20 20 280              # number of cells in i, j, k for the block
+x0 y0 z0               # node 0 coordinates
+x1 y1 z1
+x2 y2 z2
+...
+```
+
+The coordinates specify node positions along the primary directions, and the grid is assumed to be structured and logically rectangular.
+
+---
+
+## 📂 Function-Level Logging (Sample `config.dat`)
+
+Use `params/config.dat` to selectively enable logging of specific functions when running with `export LOG_LEVEL=DEBUG`.
+
+Example:
+
+```text
+# ============================================================================
+#               Function Logging Allow-List for Phase 1
+# ============================================================================
+main
+AdvanceSimulation_TEST
+PerformInitialSetup_TEST
+
+# Boundary condition routines (uncomment to debug):
+#Create_InletConstantVelocity
+#Apply_InletConstantVelocity
+#Initialize_InletConstantVelocity
+```
+
+This allows clean and controlled tracing of solver behavior for debugging or testing.
+
+---
+
+## 🧭 Grid Indexing and Layout (Arakawa C-grid)
+
+PICurv follows a node-centered Arakawa C-grid indexing strategy with ghost cells and directional velocity storage. The figures below illustrate this storage scheme:
+
+### Boundary Cell C(0,0) Layout
+
+![Boundary Cell Layout](images/bd_cell_storage.png)
+
+### Interior Cell C(1,1) Layout
+
+![Interior Cell Layout](images/interior_cell_storage.png)
+
+### Schematic: Physical and Ghost Cells
+
+![Schematic Grid Layout](images/schematic%20examle.png)
+
+### Index Mapping Table (Node ↔ Cell)
+
+| Quantity | Storage Location |
+| :--- | :--- |
+| Pressure (P) | Cell Center `P[i][j][k]` |
+| Velocity x (u) | Node `ucat[k][j][i].x` |
+| Velocity y (v) | Node `ucat[k][j][i].y` |
+| Velocity z (w) | Node `ucat[k][j][i].z` |
+| Geometry (coord) | Node `coor[k][j][i]` |
+| Marker Function | Cell Center `nvert[i][j][k]` |
+
+---
+
+## 📜 Citation / Acknowledgements
+
+This work is supported by the **National Science Foundation (NSF Award No. 2309630)** and computational resources from the **High-Performance Research Computing (HPRC) center at Texas A\&M University**.
+
+---
+
+Let me know if you’d like to add performance benchmarks, case studies, or a “Contributing” section next.
